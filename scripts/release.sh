@@ -15,4 +15,4 @@ NOTARY_PROFILE="${NOTARY_PROFILE:-arrow-switch-notary}" \
 spctl -a -t install "$DMG"
 git push origin HEAD
 gh release create "v$VERSION" "$DMG#Hypernova-$VERSION.dmg" --title "Hypernova $VERSION" \
-    --notes "Download **Hypernova-$VERSION.dmg**, open it and double-click **Install Hypernova.pkg**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Includes the free FOUNDERS PACK."
+    --notes "Download **Hypernova-$VERSION.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Includes the free FOUNDERS PACK."

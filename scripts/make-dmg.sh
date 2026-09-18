@@ -107,10 +107,78 @@ if [[ -n "${NOTARY_PROFILE:-}" && -n "${INSTALLER_SIGN_ID:-}" ]]; then
     xcrun stapler staple "$PKG"
 fi
 
+echo "==> Building the branded installer app"
+APPDIR="$WORK/app"
+mkdir -p "$APPDIR"
+"$ROOT/scripts/build-installer-app.sh" "$PKG" "$APPDIR" "$VERSION" >/dev/null
+INSTALLER_APP="$APPDIR/Install Hypernova.app"
+if [[ -n "${NOTARY_PROFILE:-}" && -n "${APP_SIGN_ID:-}" ]]; then
+    echo "==> Notarizing installer app"
+    ditto -c -k --keepParent "$INSTALLER_APP" "$WORK/installer-app.zip"
+    xcrun notarytool submit "$WORK/installer-app.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+    xcrun stapler staple "$INSTALLER_APP"
+fi
+
 echo "==> Creating DMG"
+# Window: the installer app, the FOUNDERS PACK, and "Everything else" (the .pkg and the read me),
+# over the Hypernova backdrop, with the nova as the volume icon.
+DMG_SRC="$WORK/dmg-src"
+rm -rf "$DMG_SRC"
+mkdir -p "$DMG_SRC/.background" "$DMG_SRC/Everything else"
+cp -R "$INSTALLER_APP" "$DMG_SRC/"
+cp -R "$ROOT/packaging/FOUNDERS PACK" "$DMG_SRC/FOUNDERS PACK"
+mv "$STAGE/Install Hypernova.pkg" "$DMG_SRC/Everything else/"
+cp "$ROOT/packaging/READ ME FIRST.txt" "$DMG_SRC/Everything else/"
+tiffutil -cathidpicheck "$ROOT/packaging/art/dmg-background.png" "$ROOT/packaging/art/dmg-background@2x.png" \
+    -out "$DMG_SRC/.background/background.tiff" >/dev/null
+cp "$ROOT/packaging/art/AppIcon.icns" "$DMG_SRC/.VolumeIcon.icns"
+# Branded folder icons (also travel with the FOUNDERS PACK when people copy it out to share).
+set_icon () { osascript -l JavaScript -e "ObjC.import('AppKit'); \$.NSWorkspace.sharedWorkspace.setIconForFileOptions(\$.NSImage.alloc.initWithContentsOfFile('$1'), '$2', 0)" >/dev/null; }
+set_icon "$ROOT/packaging/art/PackIcon.png" "$DMG_SRC/FOUNDERS PACK"
+set_icon "$ROOT/packaging/art/ExtrasIcon.png" "$DMG_SRC/Everything else"
+
 mkdir -p "$ROOT/dist"
 rm -f "$DMG"
-hdiutil create -volname "Hypernova $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+RW="$WORK/rw.dmg"
+VOLNAME="Hypernova"
+hdiutil info | grep -q "/Volumes/$VOLNAME" && hdiutil detach "/Volumes/$VOLNAME" -force -quiet || true
+hdiutil create -volname "$VOLNAME" -srcfolder "$DMG_SRC" -fs HFS+ -format UDRW -ov "$RW" >/dev/null
+MOUNT="$(hdiutil attach -nobrowse -noautoopen "$RW" | tail -1 | sed 's/.*\(\/Volumes\/.*\)/\1/')"
+SetFile -a C "$MOUNT" 2>/dev/null || true
+osascript - "$MOUNT" <<'APPLESCRIPT' >/dev/null 2>&1 || echo "  (couldn't style the window; shipping the plain one)"
+on run argv
+  set mountPath to item 1 of argv
+  set bgFile to POSIX file (mountPath & "/.background/background.tiff") as alias
+  set volName to do shell script "basename " & quoted form of mountPath
+  tell application "Finder"
+    tell disk volName
+      open
+      set current view of container window to icon view
+      set toolbar visible of container window to false
+      set statusbar visible of container window to false
+      try
+        set pathbar visible of container window to false
+      end try
+      set the bounds of container window to {200, 140, 860, 608}
+      set opts to the icon view options of container window
+      set arrangement of opts to not arranged
+      set icon size of opts to 104
+      set text size of opts to 12
+      set background picture of opts to bgFile
+      set position of item "Install Hypernova.app" of container window to {130, 200}
+      set position of item "FOUNDERS PACK" of container window to {330, 200}
+      set position of item "Everything else" of container window to {530, 200}
+      update without registering applications
+      delay 1
+      close
+    end tell
+  end tell
+end run
+APPLESCRIPT
+sync
+hdiutil detach "$MOUNT" -quiet || hdiutil detach "$MOUNT" -force -quiet
+hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+rm -f "$RW"
 
 if [[ -n "${APP_SIGN_ID:-}" ]]; then
     codesign --force --timestamp --sign "$APP_SIGN_ID" "$DMG"

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Hypernova VERSION 0.2.0)
+project(Hypernova VERSION 0.2.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
@@ -66,3 +66,9 @@ juce_add_console_app(MakeFoundersPack PRODUCT_NAME "MakeFoundersPack")
 target_sources(MakeFoundersPack PRIVATE Tests/MakeFoundersPack.cpp ${HYPERNOVA_SOURCES})
 target_compile_definitions(MakeFoundersPack PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_Name="Hypernova")
 target_link_libraries(MakeFoundersPack PRIVATE juce::juce_audio_utils juce::juce_dsp PUBLIC juce::juce_recommended_config_flags)
+
+# Renders the installer/DMG artwork in the plug-in's own style: MakeInstallerArt <repoRoot>
+juce_add_console_app(MakeInstallerArt PRODUCT_NAME "MakeInstallerArt")
+target_sources(MakeInstallerArt PRIVATE Tests/MakeInstallerArt.cpp)
+target_compile_definitions(MakeInstallerArt PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(MakeInstallerArt PRIVATE juce::juce_gui_basics PUBLIC juce::juce_recommended_config_flags)

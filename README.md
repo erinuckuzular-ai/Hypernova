@@ -25,7 +25,12 @@ Bump `project(Hypernova VERSION ...)` in CMakeLists.txt, commit, then:
 ./scripts/release.sh
 ```
 
-It builds a universal (Apple Silicon + Intel) DMG, signs and notarizes the plug-ins, installer and disk image,
+It builds a universal (Apple Silicon + Intel) DMG with the branded **Install Hypernova** app (SwiftUI, `installer/app`,
+built by `scripts/build-installer-app.sh`; it runs the bundled notarized .pkg with one password prompt), the FOUNDERS PACK
+and an "Everything else" folder (the .pkg and read me), in a designed Finder window. Artwork (DMG backdrop, app/volume/folder
+icons, macOS Installer art) is drawn with the plug-in's own style by `MakeInstallerArt`:
+`cmake --build build --target MakeInstallerArt && ./build/MakeInstallerArt_artefacts/Release/MakeInstallerArt .`
+(then `sips -s dpiHeight 144 -s dpiWidth 144 packaging/resources/background.png`). It signs and notarizes the plug-ins, installer and disk image,
 and publishes a GitHub release. The installer replaces any older Hypernova (and the old "Arrow Bass") and never
 touches the user's saved sounds. The plug-in codes (`Arrw`/`ArBs`) and state tag stay fixed so old sessions keep loading.
 
