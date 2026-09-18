@@ -90,6 +90,73 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // SmokeTest --clicks: for every preset, play a note then the next one back-to-back (and overlapping), and
+    // compare the high-frequency spike right at the change with the steady sound around it. Prints offenders.
+    if (argc >= 2 && juce::String (argv[1]) == "--clicks")
+    {
+        HypernovaAudioProcessor p;
+        const double rate = 48000.0;
+        p.prepareToPlay (rate, 256);
+        int bad = 0;
+        const juce::String only = argc > 2 ? juce::String (argv[2]) : juce::String();
+        for (int i = 1; i < p.getNumPrograms(); ++i)
+        {
+            if (only.isNotEmpty() && p.getProgramName (i) != only) continue;
+            p.setCurrentProgram (i);
+            const juce::String cat = p.getPresetCategory();
+            if (cat == "Synth Drums" || cat == "FX") continue;
+            for (int overlap = 0; overlap < 1; ++overlap)
+            {
+                const int total = (int) (0.9 * rate), change = (int) (0.35 * rate);
+                std::vector<float> x ((size_t) total);
+                for (int pos = 0; pos < total; pos += 256)
+                {
+                    juce::AudioBuffer<float> buf (2, 256);
+                    juce::MidiBuffer midi;
+                    if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 100), 0);
+                    if (change >= pos && change < pos + 256)
+                    {
+                        midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 100), change - pos);
+                        midi.addEvent (juce::MidiMessage::noteOff (1, 45), overlap ? juce::jmin (255, change - pos + 200) : change - pos);
+                    }
+                    p.processBlock (buf, midi);
+                    for (int k = 0; k < 256 && pos + k < total; ++k) x[(size_t) (pos + k)] = 0.5f * (buf.getSample (0, k) + buf.getSample (1, k));
+                }
+                // second difference = strongly high-passed signal; clicks are spikes in it
+                auto hf = [&] (int from, int to)
+                {
+                    float m = 0;
+                    for (int n = juce::jmax (2, from); n < juce::jmin (total, to); ++n)
+                        m = juce::jmax (m, std::abs (x[(size_t) n] - 2 * x[(size_t) n - 1] + x[(size_t) n - 2]));
+                    return m;
+                };
+                const int lat = p.getLatencySamples();
+                const float spike = hf (change + lat - 8, change + lat + 96);
+                // Reference: this sound's own attack from silence (note 1) and its steady tone. A click is a
+                // transition that is clearly sharper than both.
+                const float onset = hf (lat, lat + 104);
+                const float steady = hf (change + lat + 4800, change + lat + 9600);
+                const float ratio = spike / juce::jmax (onset, steady, 1.0e-5f);
+                if (only.isNotEmpty())
+                {
+                    juce::File f (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("hn_click_" + juce::String (overlap) + ".raw"));
+                    f.replaceWithData (x.data(), x.size() * sizeof (float));
+                    std::printf ("dumped %s change at %d (+lat %d)\n", f.getFullPathName().toRawUTF8(), change, lat);
+                }
+                if (ratio > 1.6f)
+                {
+                    ++bad;
+                    std::printf ("%-24s %-16s %s  click %.1fx (%.1f dB)\n", p.getProgramName (i).toRawUTF8(), cat.toRawUTF8(),
+                                 overlap ? "overlap " : "back2back", ratio, 20.0 * std::log10 (ratio));
+                }
+                p.panic();
+                juce::AudioBuffer<float> flush (2, 256); juce::MidiBuffer none; p.processBlock (flush, none);
+            }
+        }
+        std::printf ("%d clicky cases\n", bad);
+        return 0;
+    }
+
     // SmokeTest --bench: CPU under load. Every preset with an 8-note chord held (16 voices in chord presets),
     // reported as % of one core in real time at 48 kHz / 256-sample blocks.
     if (argc == 2 && juce::String (argv[1]) == "--bench")
@@ -116,6 +183,45 @@ int main (int argc, char** argv)
         double total = 0; for (auto& r : results) total += r.first;
         std::printf ("average %.1f%%  median %.1f%%\n", total / results.size(), results[results.size() / 2].first);
         for (size_t i = results.size() - 12; i < results.size(); ++i) std::printf ("%5.1f%%  %s\n", results[i].first, results[i].second.toRawUTF8());
+        return 0;
+    }
+
+    // SmokeTest --lowend: for every bass-category preset, plays C2 for 0.8 s and prints how much of the energy
+    // sits below 110 Hz (dB relative to the full signal). Used to find basses that are light on sub.
+    if (argc == 2 && juce::String (argv[1]) == "--lowend")
+    {
+        HypernovaAudioProcessor p;
+        const double rate = 48000.0;
+        p.prepareToPlay (rate, 256);
+        static const juce::StringArray bassCats { "808", "Sub", "Reese", "Growl & Wobble", "Pluck Bass", "House Bass", "Techno & Euro Bass" };
+        for (int i = 1; i < p.getNumPrograms(); ++i)
+        {
+            p.setCurrentProgram (i);
+            const juce::String cat = p.getPresetCategory();
+            if (! bassCats.contains (cat) && ! cat.containsIgnoreCase ("bass")) continue;
+            const int total = (int) (0.8 * rate);
+            juce::dsp::IIR::Filter<float> lp1, lp2;
+            lp1.coefficients = lp2.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass (rate, 110.0);
+            double all = 0, low = 0;
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 36, (juce::uint8) 100), 0);
+                p.processBlock (buf, midi);
+                for (int s = 0; s < 256; ++s)
+                {
+                    const float m = 0.5f * (buf.getSample (0, s) + buf.getSample (1, s));
+                    const float l = lp2.processSample (lp1.processSample (m));
+                    all += (double) m * m; low += (double) l * l;
+                }
+            }
+            std::printf ("%-24s %-18s sub %6.1f dB\n", p.getProgramName (i).toRawUTF8(), cat.toRawUTF8(),
+                         10.0 * std::log10 ((low + 1e-12) / (all + 1e-12)));
+            p.panic();
+            juce::AudioBuffer<float> flush (2, 256); juce::MidiBuffer none;
+            p.processBlock (flush, none);
+        }
         return 0;
     }
 
@@ -149,7 +255,7 @@ int main (int argc, char** argv)
             {
                 juce::AudioBuffer<float> buf (2, 256);
                 juce::MidiBuffer midi;
-                const bool slow = cat == "Soundscape" || cat == "FX" || cat == "Pads" || cat == "Cinematic" || cat == "Vocal & Choir";
+                const bool slow = cat == "Soundscape" || cat == "FX" || cat == "Pads" || cat == "Cinematic" || cat == "Vocal & Choir" || cat == "Experimental";
                 for (int k = 0; k < 4; ++k)
                 {
                     if (slow && k > 1) break; // pads: two notes held for the whole render

@@ -1,10 +1,10 @@
-Download **Hypernova-0.3.1.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Apple Silicon + Intel.
+Download **Hypernova-0.4.0.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Apple Silicon + Intel.
 
-## New in 0.3.1: higher fidelity, lighter on the CPU
-- **Cleaner oscillators everywhere:** smoother wavetable interpolation and crossfaded band-limits. Plain wavetables measure about 25 dB lower aliasing, and glides no longer step in brightness.
-- **Sound quality setting** (gear menu): **Eco**, **High** (default) and **Ultra**. High and Ultra oversample the voice engine 2x / 4x, but only for patches that actually alias (warps, FM, sync, filter drive). Sync and bend warps measure 7–19 dB cleaner, and the driven filter up to 18 dB cleaner.
-- **Distortion oversampled 4x** for smoother saturation.
-- **Transparent limiter** on the output instead of a soft clipper: loud patches stay clean and never go over -0.3 dBFS.
-- **Smooth knobs and automation:** no more zipper noise when turning or automating cutoff, position, levels and more.
-- **Built for many tracks:** an instance with nothing playing goes to sleep once its effect tails fade, and costs essentially no CPU until the next note.
-- Smaller download.
+## New in 0.4.0
+- **Updates inside the plug-in:** Hypernova now checks for new versions (at most once a day) and shows a banner. One click downloads the new installer and opens it. Turn it off, or check by hand, in the gear menu.
+- **40 new Experimental sounds**, built from what producers keep asking for: evolving drones (Glacier Engine, Rust Bloom), glitch and stutter loops from one held note (Stutter Loom, Chopped Signal), clangy inharmonic FM metal (Foundry Bell, Singing Bowl), talking formant basses (Yoi Machine, Robot Gossip), neuro movement (Arguing Machines), cinematic hits and risers (Braaam Colossus, Event Horizon Riser, Black Hole Impact), broken lo-fi keys (Dying Cassette, Tape Stop Keys), alien percussion (Latex Snap, Insect Kit, Laser Hat) and more.
+- **Real 808s:** every 808 is rebuilt as a proper 808: a clean sine body with a fast pitch knock that rings out and decays naturally instead of holding like an organ. Grit, drive and slides are still on the macros. Two new ones: TR Boom and Long Tail 808.
+- **Heavier basses:** reeses, growls and plucked basses that were light on low end now carry a clean sine sub and more weight under 120 Hz.
+- **No more clicks between notes:** stolen and retriggered voices fade out smoothly, and the output limiter looks ahead so loud attacks no longer crack.
+- **Smoother sound browser:** it opens on the sound you're playing, the category list scrolls, rows highlight on hover, arrow keys work from the search box, stars no longer load the sound, and a click outside closes it. The menus got a new look too.
+- Some sounds renamed (Deep Groove Sub, Rolling Groove Bass, Wooden Marimba Arp) and the World category is now Folk Instruments.

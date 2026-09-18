@@ -1,9 +1,10 @@
 # Hypernova
 
-Wavetable space synth in the Arrow family (JUCE, VST3/AU/Standalone, macOS). Serum-style engine with 320 sounds:
+Wavetable space synth in the Arrow family (JUCE, VST3/AU/Standalone, macOS). Serum-style engine with 362 sounds:
 808s, amapiano log drums (a faithful rebuild of the FL Studio DX10 log drum), subs, reeses, growls and wobbles,
 house stabs, techno and Euro, dub sirens and dancehall, keys, plucks, pads, strings and brass, bells, voices, arps,
-synth drums, cinematic, retro/chip, world, leads and big shimmering soundscapes.
+synth drums, cinematic, retro/chip, folk instruments, leads, big shimmering soundscapes and an Experimental
+bank (evolving drones, glitch loops, inharmonic FM metal, talking formants, alien percussion).
 
 Look: cosmic cinematic. The nebula, stars and black hole behind the panels are a GPU fragment shader
 (`Source/UI/Cosmos.h`), so the animation costs the CPU almost nothing; static layers are cached and the 3D views
@@ -28,6 +29,9 @@ cmake --build build --target SmokeTest && ./build/SmokeTest_artefacts/Release/Sm
 cmake --build build --target UISnapshot && ./build/UISnapshot_artefacts/Release/UISnapshot dist/shots # editor PNGs (all three deck tabs)
 auval -v aumu ArBs Arrw
 ```
+
+Updates: the editor checks GitHub releases at most once a day (`Source/UI/Updater.h`; off switch in the gear menu) and
+shows a banner that downloads the new DMG and opens it. Keep the release asset name ending in `.dmg`.
 
 After changing factory presets, relevel them: `python3 scripts/level_presets.py` (rewrites `Source/PresetTrims.h`).
 After changing the Founders Pack sounds: `./build/MakeFoundersPack_artefacts/Release/MakeFoundersPack "packaging/FOUNDERS PACK"`.

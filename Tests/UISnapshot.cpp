@@ -102,7 +102,7 @@ int main (int argc, char** argv)
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         editor->setBrowserOpen (true);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (350);
         auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
         auto f = outDir.getChildFile ("ui_4_browser.png");
         f.deleteFile();

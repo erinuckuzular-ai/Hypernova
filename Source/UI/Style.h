@@ -139,9 +139,73 @@ public:
 
     void drawPopupMenuBackground (juce::Graphics& g, int width, int height) override
     {
-        g.fillAll (Colours::panelHi);
+        const auto r = juce::Rectangle<float> (0, 0, (float) width, (float) height);
+        g.setGradientFill (juce::ColourGradient (Colours::panelHi.brighter (0.04f), 0, 0, Colours::panelHi.darker (0.15f), 0, (float) height, false));
+        g.fillRect (r);
         g.setColour (Colours::lineHi);
-        g.drawRect (0, 0, width, height, 1);
+        g.drawRect (r, 1.0f);
+    }
+
+    int getPopupMenuBorderSize() override { return 6; }
+
+    void getIdealPopupMenuItemSize (const juce::String& text, bool isSeparator, int standardHeight, int& w, int& h) override
+    {
+        if (isSeparator) { w = 50; h = 9; return; }
+        juce::ignoreUnused (standardHeight);
+        h = 28;
+        w = juce::GlyphArrangement::getStringWidthInt (getPopupMenuFont(), text) + 64;
+    }
+
+    void drawPopupMenuSectionHeader (juce::Graphics& g, const juce::Rectangle<int>& area, const juce::String& name) override
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (font (10.5f, true).withExtraKerningFactor (0.2f));
+        g.drawText (name.toUpperCase(), area.withTrimmedLeft (14).withTrimmedTop (4), juce::Justification::centredLeft, true);
+    }
+
+    void drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area, bool isSeparator, bool isActive, bool isHighlighted,
+                            bool isTicked, bool hasSubMenu, const juce::String& text, const juce::String& shortcutKeyText,
+                            const juce::Drawable*, const juce::Colour*) override
+    {
+        if (isSeparator)
+        {
+            g.setColour (Colours::line);
+            g.fillRect (area.reduced (10, 0).withSizeKeepingCentre (area.getWidth() - 20, 1));
+            return;
+        }
+        auto r = area.toFloat().reduced (4.0f, 1.5f);
+        if (isHighlighted && isActive)
+        {
+            g.setColour (Colours::accent.withAlpha (0.16f));
+            g.fillRoundedRectangle (r, 6.0f);
+            g.setColour (Colours::accent.withAlpha (0.45f));
+            g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+        }
+        if (isTicked)
+        {
+            g.setColour (Colours::accent);
+            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ r.getX() + 11.0f, r.getCentreY() }));
+        }
+        auto textArea = r.withTrimmedLeft (22.0f).withTrimmedRight (hasSubMenu ? 22.0f : 10.0f);
+        if (hasSubMenu)
+        {
+            juce::Path chevron;
+            const float cx = r.getRight() - 12.0f, cy = r.getCentreY();
+            chevron.startNewSubPath (cx - 2.0f, cy - 4.0f);
+            chevron.lineTo (cx + 2.0f, cy);
+            chevron.lineTo (cx - 2.0f, cy + 4.0f);
+            g.setColour (isHighlighted ? Colours::text : Colours::textDim);
+            g.strokePath (chevron, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        g.setFont (font (14.0f, isTicked));
+        g.setColour (! isActive ? Colours::textFaint : (isHighlighted || isTicked) ? Colours::text : Colours::text.withAlpha (0.86f));
+        if (shortcutKeyText.isNotEmpty())
+        {
+            g.setColour (Colours::textFaint);
+            g.drawText (shortcutKeyText, textArea, juce::Justification::centredRight, true);
+        }
+        g.setColour (! isActive ? Colours::textFaint : (isHighlighted || isTicked) ? Colours::text : Colours::text.withAlpha (0.86f));
+        g.drawFittedText (text, textArea.toNearestInt(), juce::Justification::centredLeft, 1, 0.9f);
     }
 
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down) override

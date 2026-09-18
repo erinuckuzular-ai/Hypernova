@@ -42,7 +42,8 @@ inline juce::StringArray modDestNames()
 
 constexpr int NumModSlots = 8;
 constexpr int MaxUnison = 7;
-constexpr int MaxVoices = 16;
+constexpr int MaxVoices = 20;   // 16 playable + spares so a stolen/retriggered voice can fade out instead of clicking
+constexpr int PolyLimit = 16;
 constexpr int SubBlock = 16;
 
 //==============================================================================
@@ -132,16 +133,18 @@ namespace dsp
     {
         enum Stage { Idle, Attack, Decay, Sustain, Release };
         Stage stage = Idle;
-        float value = 0, attInc = 1, decCoef = 0, relCoef = 0, sus = 1;
+        float value = 0, attInc = 1, decCoef = 0, relCoef = 0, sus = 1, fastCoef = 0;
+        bool fast = false; // quick de-click fade, overrides the release time
 
         void set (const EnvSettings& e, double sr)
         {
-            attInc = (float) (1.0 / juce::jmax (1.0, e.a * sr));
+            attInc = (float) (1.0 / juce::jmax (1.0, juce::jmax (0.0015, (double) e.a) * sr)); // 1.5 ms floor: an instant step onto a random phase clicks
             decCoef = (float) std::exp (-6.9078 / juce::jmax (1.0, e.d * sr));
             relCoef = (float) std::exp (-6.9078 / juce::jmax (1.0, e.r * sr));
             sus = e.s;
         }
-        void noteOn() { stage = Attack; }
+        void noteOn() { stage = Attack; fast = false; }
+        void fadeOut (double sr) { if (stage != Idle) { stage = Release; fast = true; fastCoef = (float) std::exp (-6.9078 / (0.004 * sr)); } }
         void noteOff() { if (stage != Idle) stage = Release; }
         void kill() { stage = Idle; value = 0; }
         bool active() const { return stage != Idle; }
@@ -163,7 +166,7 @@ namespace dsp
                     if (sus <= 0.0f) { stage = Idle; value = 0; }
                     break;
                 case Release:
-                    value *= relCoef;
+                    value *= fast ? fastCoef : relCoef;
                     if (value < 1.0e-5f) { value = 0; stage = Idle; }
                     break;
                 case Idle: break;
@@ -334,6 +337,8 @@ public:
     {
         const bool wasActive = isActive();
         startDelay = delaySamples;
+        fading = false;
+        fadeLeft = 0;
         note = midiNote;
         velocity = vel;
         age = stamp;
@@ -382,6 +387,10 @@ public:
     }
 
     void stop() { held = false; ampEnv.noteOff(); modEnv.noteOff(); }
+    // Hand the note over: this voice fades out in ~4 ms while the new note starts on another voice.
+    // Smooth raised-cosine fade (~12 ms): no corner in the waveform, so no click even on a deep sub.
+    void fadeOut() { held = false; fading = true; trigger = -1; fadeLen = fadeLeft = juce::jmax (1, (int) (0.012 * sr)); }
+    bool fading = false;
     float pitchNow() const { return currentPitch; }
 
     void render (float* outL, float* outR, int numSamples, const SynthSettings& s, const GlobalMod& g)
@@ -679,7 +688,13 @@ public:
                     if (s.filterType == FComb) combPos = (combPos + 1) % combSize;
                 }
 
-                const float amp = ampEnv.tick() * velGain * ampMod;
+                float amp = ampEnv.tick() * velGain * ampMod;
+                if (fading)
+                {
+                    const float t = (float) fadeLeft / (float) fadeLen;
+                    amp *= 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi * t);
+                    if (--fadeLeft <= 0) { ampEnv.kill(); modEnv.kill(); fading = false; }
+                }
                 modEnv.tick();
                 outL[start + i] += (fL + dL) * amp;
                 outR[start + i] += (fR + dR) * amp;
@@ -688,6 +703,7 @@ public:
             if (! ampEnv.active())
             {
                 note = -1;
+                fading = false;
                 break;
             }
         }
@@ -703,7 +719,7 @@ private:
     float targetPitch = 60, currentPitch = 60, pitchEnv = 0, noteRandom = 0, noteAge = 0;
     float lfoRateMod[2] {};
     float driftValue = 0, driftTarget = 0;
-    int driftTimer = 0, startDelay = 0;
+    int driftTimer = 0, startDelay = 0, fadeLen = 1, fadeLeft = 0;
     static constexpr int combSize = 4096;
     float comb[2][combSize] {};
     float combDamp[2] {};

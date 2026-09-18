@@ -167,7 +167,12 @@ private:
     int smoothVersion = -1;
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 2> voiceOversampler; // 2x, 4x
     int osFactor = 1, currentQuality = -1;
-    float limiterGain = 1.0f;
+    // Look-ahead peak limiter: audio is delayed limiterLen samples so gain can ramp down before a peak
+    // instead of slamming onto it (an instant gain step is itself a click).
+    float limiterGain = 1.0f, limiterOutGain = 1.0f;
+    int limiterLen = 1, limiterPos = 0, limiterLoud = 0;
+    double limiterSum = 0;
+    std::vector<float> limTarget, limHeld, limDelayL, limDelayR;
     bool sleeping = false;
     int silentSamples = 0;
     std::vector<int> heldNotes;
@@ -183,6 +188,7 @@ private:
     std::array<bool, ab::MaxVoices> sustained {};
     bool sustainPedal = false;
     int lastNote = -1;
+    int monoVoice = 0; // the voice currently playing in Mono/Legato
     juce::uint64 noteCounter = 0;
     double sampleRateNow = 44100.0;
     int maxBlock = 512;

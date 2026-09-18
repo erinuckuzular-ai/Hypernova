@@ -210,6 +210,14 @@ void HypernovaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
                                            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
         voiceOversampler[(size_t) i]->initProcessing ((size_t) maxBlock);
     }
+    limiterLen = juce::jlimit (1, 512, juce::roundToInt (0.0015 * sampleRate));
+    limTarget.assign ((size_t) limiterLen, 1.0f);
+    limHeld.assign ((size_t) limiterLen, 1.0f);
+    limDelayL.assign ((size_t) limiterLen, 0.0f);
+    limDelayR.assign ((size_t) limiterLen, 0.0f);
+    limiterPos = limiterLoud = 0;
+    limiterSum = limiterLen;
+    limiterOutGain = 1.0f;
     currentQuality = -1;
     applyQuality ((int) param ("quality"));
     smoothReady = false;
@@ -384,7 +392,7 @@ void HypernovaAudioProcessor::noteOn (int note, float velocity)
     }
     else
     {
-        auto& v = voices[0];
+        auto& v = voices[(size_t) monoVoice];
         const bool overlapping = heldNotes.size() > 1 && v.isActive();
         // Legato slides without a new attack only while the note is still ringing. Once a plucky sound
         // (log drum, knock 808) has decayed, an overlapping note glides *and* re-hits, otherwise it'd be silent.
@@ -392,31 +400,47 @@ void HypernovaAudioProcessor::noteOn (int note, float velocity)
             v.slideTo (note);
         else
         {
-            v.trigger = note;
             float from = -1.0f;
             if (v.isActive() && (s.mode == ModeMono || overlapping))
                 from = v.pitchNow();
-            v.start (note, velocity, from, true, s, globalMod, noteCounter);
+            // Retriggering a voice that's still sounding would restart its waveform mid-cycle (a click):
+            // fade it out and start the new note on a fresh voice instead.
+            Voice* target = &v;
+            if (v.isActive())
+            {
+                v.fadeOut();
+                target = &allocateVoice();
+                monoVoice = (int) (target - voices.data());
+            }
+            target->start (note, velocity, from, true, s, globalMod, noteCounter);
+            target->trigger = note;
         }
     }
-    if (s.mode != ModePoly) voices[0].trigger = voices[0].note;
+    if (s.mode != ModePoly) voices[(size_t) monoVoice].trigger = voices[(size_t) monoVoice].note;
     lastNote = note;
 }
 
 Voice& HypernovaAudioProcessor::allocateVoice()
 {
+    // Over the polyphony limit: fade the oldest playing voice (released ones first) instead of cutting it.
+    int playing = 0;
+    for (auto& v : voices) if (v.isActive() && ! v.fading) ++playing;
+    if (playing >= PolyLimit)
+    {
+        Voice* victim = nullptr;
+        for (auto& v : voices)
+            if (v.isActive() && ! v.fading && ! v.held && (victim == nullptr || v.age < victim->age)) victim = &v;
+        if (victim == nullptr)
+            for (auto& v : voices)
+                if (v.isActive() && ! v.fading && (victim == nullptr || v.age < victim->age)) victim = &v;
+        if (victim != nullptr) victim->fadeOut();
+    }
+    // A silent slot if there is one; otherwise the fading voice closest to silence.
+    for (auto& v : voices)
+        if (! v.isActive()) return v;
     Voice* target = nullptr;
     for (auto& v : voices)
-        if (! v.isActive()) { target = &v; break; }
-    if (target == nullptr)
-    {
-        // Steal: prefer the oldest released voice, then the oldest held one.
-        for (auto& v : voices)
-            if (! v.held && (target == nullptr || v.age < target->age)) target = &v;
-        if (target == nullptr)
-            for (auto& v : voices)
-                if (target == nullptr || v.age < target->age) target = &v;
-    }
+        if (target == nullptr || v.ampLevel() < target->ampLevel()) target = &v;
     return *target;
 }
 
@@ -437,7 +461,7 @@ void HypernovaAudioProcessor::noteOff (int note)
         return;
     }
 
-    auto& v = voices[0];
+    auto& v = voices[(size_t) monoVoice];
     if (v.note != note || ! v.held) return;
     if (! heldNotes.empty())
     {
@@ -447,7 +471,7 @@ void HypernovaAudioProcessor::noteOff (int note)
     else if (sustainPedal)
     {
         v.held = false;
-        sustained[0] = true;
+        sustained[(size_t) monoVoice] = true;
     }
     else
         v.stop();
@@ -493,7 +517,7 @@ void HypernovaAudioProcessor::applyQuality (int q)
     for (auto& v : voices) v.prepare (sampleRateNow * osFactor);
     auto* os = osFactor > 1 ? voiceOversampler[(size_t) (osFactor == 2 ? 0 : 1)].get() : nullptr;
     if (os != nullptr) os->reset();
-    setLatencySamples (os != nullptr ? juce::roundToInt (os->getLatencyInSamples()) : 0);
+    setLatencySamples ((os != nullptr ? juce::roundToInt (os->getLatencyInSamples()) : 0) + limiterLen);
 }
 
 void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -657,11 +681,13 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         effects.process (chunk, fx);
     }
 
-    // Output: master volume, then a transparent peak limiter at -0.3 dBFS. Gain drops instantly to catch a
-    // peak and recovers over ~80 ms, so loud patches stay clean instead of being clipped.
+    // Output: master volume, then a transparent look-ahead peak limiter at -0.3 dBFS. The required gain is
+    // min-held over the look-ahead window and box-car smoothed across it, so the gain glides down over ~1.5 ms
+    // and reaches each peak's target exactly as that peak leaves the delay line; recovery takes ~80 ms.
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (param ("volume")));
     const float ceiling = 0.966f;
     const float release = std::exp (-1.0f / (0.08f * (float) sampleRateNow));
+    const int N = limiterLen;
     for (int i = 0; i < numSamples; ++i)
     {
         const float g = masterGain.getNextValue();
@@ -670,10 +696,31 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         if (! std::isfinite (r)) r = 0.0f;
         const float peak = juce::jmax (std::abs (l), std::abs (r));
         const float target = peak > ceiling ? ceiling / peak : 1.0f;
-        limiterGain = target < limiterGain ? target : target + release * (limiterGain - target);
-        L[i] = l * limiterGain;
-        R[i] = r * limiterGain;
+
+        const size_t p = (size_t) limiterPos;
+        limiterLoud += (target < 1.0f ? 1 : 0) - (limTarget[p] < 1.0f ? 1 : 0);
+        limTarget[p] = target;
+        float held = 1.0f;
+        if (limiterLoud > 0)
+            for (int k = 0; k < N; ++k) held = juce::jmin (held, limTarget[(size_t) k]);
+        // release only ever raises the held gain slowly; drops pass straight through to the smoother
+        limiterGain = held < limiterGain ? held : held + release * (limiterGain - held);
+        limiterSum += (double) limiterGain - (double) limHeld[p];
+        limHeld[p] = limiterGain;
+        // The sample leaving the delay (written N samples ago) is covered by the box-car as it stood one
+        // sample ago, whose whole window was min-held over that sample's target.
+        const float gain = limiterOutGain;
+        limiterOutGain = juce::jmin (1.0f, (float) (limiterSum / N));
+
+        const float outL = limDelayL[p], outR = limDelayR[p];
+        limDelayL[p] = l;
+        limDelayR[p] = r;
+        L[i] = juce::jlimit (-ceiling, ceiling, outL * gain);
+        R[i] = juce::jlimit (-ceiling, ceiling, outR * gain);
+        limiterPos = limiterPos + 1 < N ? limiterPos + 1 : 0;
     }
+    limiterSum = 0; // re-sum once per block so float round-off can't creep into the box-car
+    for (auto v : limHeld) limiterSum += v;
 
     scope.push (L, R, numSamples);
 

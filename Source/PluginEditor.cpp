@@ -116,7 +116,38 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     browser.onExport = [this] { exportCurrent(); };
     browser.onImport = [this] { importWithChooser(); };
     canvas.addChildComponent (browser);
-    browser.setBounds (24, 86, 1232, 740);
+    browser.setBounds (0, 86, baseWidth, baseHeight - 86);
+
+    // Updates: a banner under the top bar when a newer release is out; one click fetches and opens the installer.
+    canvas.addChildComponent (updateBanner);
+    updateBanner.setBounds ((baseWidth - 440) / 2, 90, 440, 32);
+    updateBanner.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    updater.onAvailable = [this] (const ab::ui::UpdateInfo& info)
+    {
+        updateBanner.setInfo (info);
+        updateBanner.setVisible (true);
+        updateBanner.toFront (false);
+    };
+    updater.onProgress = [this] (float f) { updateBanner.setProgress (f); };
+    updater.onFinished = [this] (bool ok, const juce::String& text)
+    {
+        showMessage (text);
+        if (ok) updateBanner.setVisible (false);
+        else updateBanner.setProgress (-1.0f);
+    };
+    updateBanner.onUpdate = [this]
+    {
+        if (updater.downloading()) return;
+        updateBanner.setProgress (0.0f);
+        updater.downloadAndOpen (updateBanner.getInfo());
+    };
+    updateBanner.onDismiss = [this]
+    {
+        ab::ui::Updater::skip (updateBanner.getInfo().version);
+        updateBanner.setVisible (false);
+    };
+    if (juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_NO_UPDATE_CHECK", {}).isEmpty())
+        updater.check (false);
     prevButton.setTooltip ("Previous preset");
     prevButton.onClick = [this] { processor.stepPreset (-1); };
     nextButton.setTooltip ("Next preset");
@@ -810,13 +841,19 @@ void HypernovaAudioProcessorEditor::showSettingsMenu()
     m.addSubMenu ("Window size", size);
     m.addSubMenu ("Animation", anim);
     m.addSeparator();
+    m.addItem (40, "Check for updates now");
+    m.addItem (41, "Check for updates automatically", true, ab::ui::Updater::autoCheckEnabled());
+    m.addSeparator();
     m.addItem (20, "Show my sounds folder");
+    m.addSectionHeader ("Hypernova " + ab::ui::Updater::currentVersion());
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&gearButton), [this] (int r)
     {
         if (r >= 100) applyScale (r - 100);
         else if (r >= 10 && r <= 12) { processor.uiAnimation = r - 10; glContext.triggerRepaint(); }
         else if (r >= 30 && r <= 32) { processor.setParam ("quality", (float) (r - 30)); showMessage ("Sound quality: " + juce::StringArray { "Eco", "High", "Ultra" }[r - 30]); }
         else if (r == 20) { HypernovaAudioProcessor::userPresetFolder().createDirectory(); HypernovaAudioProcessor::userPresetFolder().revealToUser(); }
+        else if (r == 40) { showMessage ("Checking for updates..."); updater.check (true); }
+        else if (r == 41) ab::ui::Updater::setAutoCheck (! ab::ui::Updater::autoCheckEnabled());
     });
 }
 
@@ -841,10 +878,17 @@ void HypernovaAudioProcessorEditor::setBrowserOpen (bool open)
     if (open)
     {
         browser.refresh();
+        browser.setAlpha (0.0f);
         browser.setVisible (true);
         browser.toFront (false);
+        browser.showCurrent();
         browser.grabSearchFocus();
+        juce::Desktop::getInstance().getAnimator().animateComponent (&browser, browser.getBounds(), 1.0f, 140, false, 1.0, 0.0);
     }
     else
+    {
+        juce::Desktop::getInstance().getAnimator().cancelAnimation (&browser, false);
         browser.setVisible (false);
+        browser.setAlpha (1.0f);
+    }
 }
