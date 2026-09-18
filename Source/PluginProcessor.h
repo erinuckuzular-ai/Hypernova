@@ -125,8 +125,12 @@ public:
     void setMacroName (int i, const juce::String& n);
     std::atomic<int> presetVersion { 0 };
     int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
+    std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
+    std::atomic<int> uiScalePercent { 100 };
 
+    juce::UndoManager undoManager { 30000, 60 }; // declared before apvts, which records into it
     juce::AudioProcessorValueTreeState apvts;
+    void mutate (float amount); // nudge the current sound by up to `amount` of each control's range
     juce::MidiKeyboardState keyboardState;
 
     // Visualiser taps.

@@ -24,6 +24,35 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
 
+    // SmokeTest --bench: CPU under load. Every preset with an 8-note chord held (16 voices in chord presets),
+    // reported as % of one core in real time at 48 kHz / 256-sample blocks.
+    if (argc == 2 && juce::String (argv[1]) == "--bench")
+    {
+        HypernovaAudioProcessor p;
+        const double rate = 48000.0;
+        p.prepareToPlay (rate, 256);
+        std::vector<std::pair<double, juce::String>> results;
+        for (int i = 1; i < p.getNumPrograms(); ++i)
+        {
+            p.setCurrentProgram (i);
+            juce::MidiBuffer midi;
+            for (int k = 0; k < 8; ++k) midi.addEvent (juce::MidiMessage::noteOn (1, 48 + k * 3, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> buf (2, 256);
+            const int blocks = (int) (2.0 * rate / 256);
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            for (int b = 0; b < blocks; ++b) { p.processBlock (buf, midi); midi.clear(); }
+            const double secs = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
+            results.push_back ({ secs / 2.0 * 100.0, p.getProgramName (i) + " (" + juce::String (p.shownVoices.load()) + " voices)" });
+            p.panic();
+            juce::MidiBuffer none; p.processBlock (buf, none);
+        }
+        std::sort (results.begin(), results.end());
+        double total = 0; for (auto& r : results) total += r.first;
+        std::printf ("average %.1f%%  median %.1f%%\n", total / results.size(), results[results.size() / 2].first);
+        for (size_t i = results.size() - 12; i < results.size(); ++i) std::printf ("%5.1f%%  %s\n", results[i].first, results[i].second.toRawUTF8());
+        return 0;
+    }
+
     // SmokeTest --loudness: renders every preset at 0 dB output and prints its loudest 100 ms RMS window,
     // used by scripts/level_presets.py to generate Source/PresetTrims.h.
     if (argc == 2 && juce::String (argv[1]) == "--loudness")
@@ -45,7 +74,8 @@ int main (int argc, char** argv)
             p.setCurrentProgram (i);
             p.setParam ("volume", 0.0f);
             const juce::String cat = p.getPresetCategory();
-            const bool high = cat == "Lead" || cat == "House Stabs" || cat == "Techno & Euro" || cat == "Soundscape" || cat == "FX";
+            static const juce::StringArray lowCats { "808", "Log Drum", "Sub", "Reese", "Growl & Wobble", "Pluck Bass", "House Bass", "Dub & Dancehall" };
+            const bool high = ! lowCats.contains (cat) && cat != "Synth Drums";
             const int base = high ? 60 : 36;
             const int total = (int) (4.0 * rate);
             std::vector<float> mono ((size_t) total);
@@ -53,7 +83,7 @@ int main (int argc, char** argv)
             {
                 juce::AudioBuffer<float> buf (2, 256);
                 juce::MidiBuffer midi;
-                const bool slow = cat == "Soundscape" || cat == "FX";
+                const bool slow = cat == "Soundscape" || cat == "FX" || cat == "Pads" || cat == "Cinematic" || cat == "Vocal & Choir";
                 for (int k = 0; k < 4; ++k)
                 {
                     if (slow && k > 1) break; // pads: two notes held for the whole render

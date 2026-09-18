@@ -1,8 +1,10 @@
-// Install Hypernova: the branded installer app.
+// Install Hypernova: the branded installer (and uninstaller).
 //
-// It carries the notarized Hypernova.pkg and runs it with the macOS `installer` tool (one password prompt,
-// because plug-ins live in /Library). Component choices map onto the package's choices, so an update
-// replaces the old version exactly like the package would. Built by scripts/build-installer-app.sh.
+// Installing runs the bundled, notarized Hypernova.pkg with the macOS `installer` tool (one password prompt,
+// because plug-ins live in /Library); component choices map onto the package's choices, so an update replaces
+// the old version exactly like the package would. Uninstalling removes the same files (and, if asked, the
+// user's own sounds). The same app ships twice in the disk image: "Install Hypernova" and "Uninstall
+// Hypernova" (Info.plist key HNMode = uninstall). Built by scripts/build-installer-app.sh.
 
 import AppKit
 import SwiftUI
@@ -10,16 +12,16 @@ import SwiftUI
 // MARK: - Palette (Source/UI/Style.h)
 
 extension Color {
-    static let bg0 = Color(red: 0.024, green: 0.031, blue: 0.051)
-    static let bg1 = Color(red: 0.043, green: 0.059, blue: 0.090)
-    static let panel = Color(red: 0.067, green: 0.090, blue: 0.141)
-    static let line = Color.white.opacity(0.08)
-    static let textMain = Color(red: 0.914, green: 0.933, blue: 0.973)
-    static let textDim = Color(red: 0.506, green: 0.565, blue: 0.671)
-    static let cyan = Color(red: 0.184, green: 0.953, blue: 0.878)
-    static let violet = Color(red: 0.545, green: 0.424, blue: 1.0)
-    static let pink = Color(red: 1.0, green: 0.361, blue: 0.541)
-    static let mint = Color(red: 0.302, green: 1.0, blue: 0.690)
+    static let bg0 = Color(red: 0.012, green: 0.016, blue: 0.039)
+    static let panel = Color(red: 0.043, green: 0.051, blue: 0.102)
+    static let line = Color.white.opacity(0.1)
+    static let textMain = Color(red: 0.941, green: 0.945, blue: 1.0)
+    static let textDim = Color(red: 0.565, green: 0.584, blue: 0.741)
+    static let ion = Color(red: 0.275, green: 0.910, blue: 1.0)
+    static let violet = Color(red: 0.541, green: 0.361, blue: 1.0)
+    static let gold = Color(red: 1.0, green: 0.663, blue: 0.290)
+    static let plasma = Color(red: 1.0, green: 0.310, blue: 0.604)
+    static let aurora = Color(red: 0.490, green: 1.0, blue: 0.812)
 }
 
 extension Font {
@@ -28,9 +30,9 @@ extension Font {
     static func body(_ s: CGFloat) -> Font { .custom("AvenirNext-Medium", size: s) }
 }
 
-// MARK: - Install logic
+// MARK: - Model
 
-enum Phase: Equatable { case welcome, working, done, failed(String) }
+enum Phase: Equatable { case welcome, working, done, failed(String), uninstallAsk, uninstalling, uninstalled }
 
 struct Part: Identifiable {
     let id: String          // choice id in packaging/distribution.xml
@@ -42,6 +44,7 @@ struct Part: Identifiable {
 @MainActor final class Installer: ObservableObject {
     @Published var phase: Phase = .welcome
     @Published var status = ""
+    @Published var alsoDeleteSounds = false
     @Published var parts: [Part] = [
         Part(id: "vst3", title: "VST3 plug-in", detail: "Ableton Live, FL Studio and most DAWs"),
         Part(id: "au", title: "Audio Unit", detail: "Ableton Live, Logic Pro, GarageBand"),
@@ -50,27 +53,42 @@ struct Part: Identifiable {
     ]
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    let uninstallMode = (Bundle.main.object(forInfoDictionaryKey: "HNMode") as? String) == "uninstall"
+
+    init() { if uninstallMode { phase = .uninstallAsk } }
+
+    nonisolated static let systemItems = [
+        "/Library/Audio/Plug-Ins/VST3/Hypernova.vst3", "/Library/Audio/Plug-Ins/Components/Hypernova.component",
+        "/Applications/Hypernova.app", "/Library/Application Support/Arrow/Hypernova",
+        "/Library/Audio/Plug-Ins/VST3/Arrow Bass.vst3", "/Library/Audio/Plug-Ins/Components/Arrow Bass.component", "/Applications/Arrow Bass.app",
+    ]
+    nonisolated static let userItems = [
+        "Library/Audio/Plug-Ins/VST3/Hypernova.vst3", "Library/Audio/Plug-Ins/Components/Hypernova.component",
+        "Library/Audio/Plug-Ins/VST3/Arrow Bass.vst3", "Library/Audio/Plug-Ins/Components/Arrow Bass.component",
+    ]
+    nonisolated static var soundsFolder: URL { FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Arrow/Hypernova") }
 
     var installedVersion: String? {
-        for path in ["/Library/Audio/Plug-Ins/VST3/Hypernova.vst3", "/Library/Audio/Plug-Ins/Components/Hypernova.component",
-                     "/Applications/Hypernova.app"] {
+        for path in Self.systemItems.prefix(3) {
             if let b = Bundle(path: path), let v = b.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String { return v }
         }
         return nil
     }
 
+    var somethingInstalled: Bool {
+        let fm = FileManager.default, home = fm.homeDirectoryForCurrentUser
+        return Self.systemItems.contains { fm.fileExists(atPath: $0) } || Self.userItems.contains { fm.fileExists(atPath: home.appending(path: $0).path) }
+    }
+
     var hasArrowBass: Bool {
-        let fm = FileManager.default, home = fm.homeDirectoryForCurrentUser.path
-        return ["/Library/Audio/Plug-Ins/VST3/Arrow Bass.vst3", "/Library/Audio/Plug-Ins/Components/Arrow Bass.component",
-                "/Applications/Arrow Bass.app", home + "/Library/Audio/Plug-Ins/VST3/Arrow Bass.vst3",
-                home + "/Library/Audio/Plug-Ins/Components/Arrow Bass.component"].contains { fm.fileExists(atPath: $0) }
+        let fm = FileManager.default
+        return Self.systemItems.filter { $0.contains("Arrow Bass") }.contains { fm.fileExists(atPath: $0) }
     }
 
     var abletonURL: URL? {
         if let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.ableton.live") { return u }
         let apps = (try? FileManager.default.contentsOfDirectory(atPath: "/Applications")) ?? []
-        return apps.filter { $0.hasPrefix("Ableton Live") && $0.hasSuffix(".app") }.sorted().last
-            .map { URL(fileURLWithPath: "/Applications/" + $0) }
+        return apps.filter { $0.hasPrefix("Ableton Live") && $0.hasSuffix(".app") }.sorted().last.map { URL(fileURLWithPath: "/Applications/" + $0) }
     }
 
     var abletonRunning: Bool {
@@ -82,6 +100,8 @@ struct Part: Identifiable {
         return hasArrowBass ? "Replaces Arrow Bass" : "Version \(version)"
     }
 
+    // MARK: Install
+
     func install() {
         guard parts.contains(where: { $0.on }) else { return }
         phase = .working
@@ -91,34 +111,39 @@ struct Part: Identifiable {
             let result = Self.runPackage(choices: choices)
             await MainActor.run {
                 switch result {
-                case .success:
-                    self.cleanUpUserCopies()
-                    self.phase = .done
-                case .failure(let e):
-                    self.phase = e.cancelled ? .welcome : .failed(e.message)
+                case .success: self.removeUserCopies(); self.phase = .done
+                case .failure(let e): self.phase = e.cancelled ? .welcome : .failed(e.message)
                 }
             }
         }
-        // Status lines while the package runs.
-        Task { @MainActor in
-            let lines = ["Installing the plug-ins", "Placing the standalone app", "Unpacking the FOUNDERS PACK", "Telling your DAWs"]
-            var i = 0
-            try? await Task.sleep(for: .seconds(2.5))
-            while self.phase == .working {
-                self.status = lines[i % lines.count]
-                i += 1
-                try? await Task.sleep(for: .seconds(1.4))
-            }
-        }
+        cycleStatus(["Installing the plug-ins", "Placing the standalone app", "Unpacking the FOUNDERS PACK", "Telling your DAWs"], while: .working)
     }
 
     struct InstallError: Error { let message: String; let cancelled: Bool }
+
+    nonisolated static func runAsAdmin(_ shellCommand: String, prompt: String) -> Result<Void, InstallError> {
+        func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+        let script = "do shell script \(q(shellCommand)) with administrator privileges with prompt \(q(prompt))"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        p.arguments = ["-e", script]
+        let err = Pipe()
+        p.standardError = err
+        p.standardOutput = Pipe()
+        do { try p.run() } catch { return .failure(.init(message: error.localizedDescription, cancelled: false)) }
+        p.waitUntilExit()
+        if p.terminationStatus == 0 { return .success(()) }
+        let text = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if text.contains("-128") { return .failure(.init(message: "", cancelled: true)) }
+        return .failure(.init(message: text.isEmpty ? "macOS stopped the operation (\(p.terminationStatus))." : text, cancelled: false))
+    }
+
+    nonisolated static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     nonisolated static func runPackage(choices: [(String, Bool)]) -> Result<Void, InstallError> {
         guard let pkg = Bundle.main.url(forResource: "Hypernova", withExtension: "pkg") else {
             return .failure(.init(message: "The installer is missing its package. Download the DMG again.", cancelled: false))
         }
-        // Choice changes for `installer -applyChoiceChangesXML`.
         let xml = FileManager.default.temporaryDirectory.appending(path: "hypernova-choices.plist")
         let entries: [[String: Any]] = choices.map { ["choiceIdentifier": $0.0, "choiceAttribute": "selected", "attributeSetting": $0.1 ? 1 : 0] }
         do {
@@ -127,46 +152,57 @@ struct Part: Identifiable {
         } catch {
             return .failure(.init(message: "Couldn't prepare the install: \(error.localizedDescription)", cancelled: false))
         }
-
-        func applescriptString(_ s: String) -> String {
-            "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
-        }
-        let script = """
-        do shell script "/usr/sbin/installer -pkg " & quoted form of \(applescriptString(pkg.path)) & " -target / -applyChoiceChangesXML " & quoted form of \(applescriptString(xml.path)) with administrator privileges with prompt "Hypernova needs your password to install its plug-ins."
-        """
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = ["-e", script]
-        let err = Pipe()
-        p.standardError = err
-        p.standardOutput = Pipe()
-        do { try p.run() } catch {
-            return .failure(.init(message: error.localizedDescription, cancelled: false))
-        }
-        p.waitUntilExit()
-        try? FileManager.default.removeItem(at: xml)
-        if p.terminationStatus == 0 { return .success(()) }
-        let text = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        if text.contains("-128") { return .failure(.init(message: "", cancelled: true)) }
-        return .failure(.init(message: text.isEmpty ? "The macOS installer stopped (\(p.terminationStatus))." : text, cancelled: false))
+        defer { try? FileManager.default.removeItem(at: xml) }
+        return runAsAdmin("/usr/sbin/installer -pkg \(shellQuote(pkg.path)) -target / -applyChoiceChangesXML \(shellQuote(xml.path))",
+                          prompt: "Hypernova needs your password to install its plug-ins.")
     }
 
     // Per-user copies (old dev builds, Arrow Bass) would show up twice next to the system-wide install.
-    private func cleanUpUserCopies() {
+    private func removeUserCopies() {
         let fm = FileManager.default, home = fm.homeDirectoryForCurrentUser
-        for rel in ["Library/Audio/Plug-Ins/VST3/Hypernova.vst3", "Library/Audio/Plug-Ins/Components/Hypernova.component",
-                    "Library/Audio/Plug-Ins/VST3/Arrow Bass.vst3", "Library/Audio/Plug-Ins/Components/Arrow Bass.component"] {
-            try? fm.removeItem(at: home.appending(path: rel))
+        for rel in Self.userItems { try? fm.removeItem(at: home.appending(path: rel)) }
+    }
+
+    // MARK: Uninstall
+
+    func uninstall() {
+        phase = .uninstalling
+        status = "Waiting for your password"
+        let deleteSounds = alsoDeleteSounds
+        Task.detached(priority: .userInitiated) {
+            let rm = Self.systemItems.map { "rm -rf " + Self.shellQuote($0) }.joined(separator: "; ")
+            let forget = ["vst3", "au", "app", "pack"].flatMap { ["com.arrow.hypernova.\($0)", "com.arrow.arrowbass.\($0)"] }
+                .map { "pkgutil --forget \($0) >/dev/null 2>&1" }.joined(separator: "; ")
+            let result = Self.runAsAdmin("\(rm); \(forget); killall -9 AudioComponentRegistrar >/dev/null 2>&1; exit 0",
+                                         prompt: "Hypernova needs your password to remove its plug-ins.")
+            await MainActor.run {
+                switch result {
+                case .success:
+                    self.removeUserCopies()
+                    if deleteSounds { try? FileManager.default.removeItem(at: Self.soundsFolder) }
+                    self.phase = .uninstalled
+                case .failure(let e):
+                    self.phase = e.cancelled ? .uninstallAsk : .failed(e.message)
+                }
+            }
+        }
+        cycleStatus(["Removing the plug-ins", "Removing the app and packs", "Tidying up"], while: .uninstalling)
+    }
+
+    private func cycleStatus(_ lines: [String], while phase: Phase) {
+        Task { @MainActor in
+            var i = 0
+            try? await Task.sleep(for: .seconds(2.5))
+            while self.phase == phase {
+                self.status = lines[i % lines.count]
+                i += 1
+                try? await Task.sleep(for: .seconds(1.4))
+            }
         }
     }
 
-    func openAbleton() {
-        if let u = abletonURL { NSWorkspace.shared.openApplication(at: u, configuration: .init()) }
-    }
-
-    func openHypernova() {
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/Applications/Hypernova.app"), configuration: .init())
-    }
+    func openAbleton() { if let u = abletonURL { NSWorkspace.shared.openApplication(at: u, configuration: .init()) } }
+    func openHypernova() { NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/Applications/Hypernova.app"), configuration: .init()) }
 }
 
 // MARK: - App
@@ -180,12 +216,13 @@ struct Part: Identifiable {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
         let dir = URL(fileURLWithPath: args[i + 1])
-        let screens: [(String, Phase)] = [("welcome", .welcome), ("working", .working), ("done", .done), ("failed", .failed("Sample error"))]
+        let screens: [(String, Phase)] = [("welcome", .welcome), ("working", .working), ("done", .done), ("failed", .failed("Sample error")),
+                                          ("uninstall", .uninstallAsk), ("uninstalled", .uninstalled)]
         for (name, phase) in screens {
             let model = Installer()
             model.phase = phase
             model.status = "Installing the plug-ins"
-            let view = InstallerView().environmentObject(model).frame(width: 680, height: 460).preferredColorScheme(.dark)
+            let view = InstallerView().environmentObject(model).frame(width: 720, height: 480).preferredColorScheme(.dark)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             if let img = renderer.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
@@ -197,10 +234,10 @@ struct Part: Identifiable {
     }
 
     var body: some Scene {
-        Window("Install Hypernova", id: "main") {
+        Window(installer.uninstallMode ? "Uninstall Hypernova" : "Install Hypernova", id: "main") {
             InstallerView()
                 .environmentObject(installer)
-                .frame(width: 680, height: 460)
+                .frame(width: 720, height: 480)
                 .background(Color.bg0)
                 .preferredColorScheme(.dark)
         }

@@ -46,6 +46,13 @@ inline PresetValues with (const PresetValues& base, std::initializer_list<std::p
     return v;
 }
 
+} // namespace ab
+
+#include "PresetsMore.h"
+
+namespace ab
+{
+
 inline const std::vector<Preset>& factoryPresets()
 {
     //==========================================================================
@@ -176,7 +183,7 @@ inline const std::vector<Preset>& factoryPresets()
     };
     static const Macros mSiren { "SWEEP", "SPEED", "ECHO", "SPACE" };
 
-    static const std::vector<Preset> presets
+    static const std::vector<Preset> basePresets
     {
         { "Init", "Init", {} },
 
@@ -730,6 +737,13 @@ inline const std::vector<Preset>& factoryPresets()
         { "Wormhole", "FX", with (spaceBase, { { "aTable", 5 }, { "aPos", 0.5f }, { "aUni", 7 }, { "aDetune", 0.5f },
             { "lfo1Shape", 3 }, { "lfo1Rate", 0.25f }, { "mod1Dest", 7 }, { "mod1Amt", 0.5f }, { "verbShimmer", 0.7f } }), mSpace },
     };
+    static const std::vector<Preset> presets = []
+    {
+        auto v = basePresets;
+        auto more = morePresets();
+        v.insert (v.end(), more.begin(), more.end());
+        return v;
+    }();
     return presets;
 }
 

@@ -507,7 +507,7 @@ public:
                 }
             }
             const float combDelay = juce::jlimit (2.0f, (float) combSize - 2.0f, (float) sr / cutoff);
-            const float combFb = res * 0.96f;
+            const float combFb = res * 0.995f;
             const float drive = juce::jlimit (0.0f, 1.0f, s.filterDrive + dst[DDrive]);
             const float driveGain = 1.0f + drive * drive * 15.0f + (s.filterType == FDirty ? 2.0f : 0.0f);
             const float driveNorm = 1.0f / std::sqrt (driveGain);
@@ -580,7 +580,7 @@ public:
                 {
                     noiseState[0] += noiseCoef * (rng.next() - noiseState[0]);
                     noiseState[1] += noiseCoef * (rng.next() - noiseState[1]);
-                    const float nl = noiseState[0] * noiseLevel * 0.8f, nr = noiseState[1] * noiseLevel * 0.8f;
+                    const float nl = noiseState[0] * noiseLevel * 1.6f, nr = noiseState[1] * noiseLevel * 1.6f;
                     if (s.noiseToFilter) { fL += nl; fR += nr; } else { dL += nl; dR += nr; }
                 }
 
@@ -616,9 +616,10 @@ public:
                                 const int i0 = (int) r, i1 = (i0 + 1) % combSize;
                                 const float fr = r - (float) i0;
                                 const float d = comb[c][i0] + fr * (comb[c][i1] - comb[c][i0]);
-                                const float w = x + combFb * d;
+                                combDamp[c] = d + 0.3f * (combDamp[c] - d);   // gentle damping, like a real string
+                                const float w = x + combFb * combDamp[c];
                                 comb[c][combPos] = w;
-                                y = w * (1.0f - combFb * 0.6f);
+                                y = w * (1.0f - combFb * 0.35f);
                                 break;
                             }
                             case FDirty:
@@ -668,6 +669,7 @@ private:
     int driftTimer = 0, startDelay = 0;
     static constexpr int combSize = 4096;
     float comb[2][combSize] {};
+    float combDamp[2] {};
     int combPos = 0;
     double lfoPhase[2] {};
     float lfoHeld[2] {}, lfoPrevHeld[2] {};

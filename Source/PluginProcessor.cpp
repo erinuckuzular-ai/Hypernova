@@ -171,7 +171,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
 //==============================================================================
 HypernovaAudioProcessor::HypernovaAudioProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "ArrowBass", createLayout()) // state tag kept from the Arrow Bass days so old sessions load
+      apvts (*this, &undoManager, "ArrowBass", createLayout()) // state tag kept from the Arrow Bass days so old sessions load
 {
     WavetableBank::get(); // build the tables up front, not on the audio thread
     for (auto* p : getParameters())
@@ -729,6 +729,7 @@ void HypernovaAudioProcessor::applyPresetValues (const std::vector<std::pair<con
 
 void HypernovaAudioProcessor::loadFactoryPreset (int index)
 {
+    undoManager.beginNewTransaction ("Load preset");
     const auto& presets = factoryPresets();
     if (! juce::isPositiveAndBelow (index, (int) presets.size())) return;
     const auto& p = presets[(size_t) index];
@@ -812,6 +813,7 @@ bool HypernovaAudioProcessor::exportPreset (const juce::File& file, const juce::
 bool HypernovaAudioProcessor::loadUserPreset (const juce::File& file)
 {
     if (! isPresetFile (file)) return false;
+    undoManager.beginNewTransaction ("Load preset");
     auto xml = juce::XmlDocument::parse (file);
     if (xml == nullptr) return false;
     auto state = juce::ValueTree::fromXml (*xml);
@@ -879,9 +881,33 @@ void HypernovaAudioProcessor::setMacroName (int i, const juce::String& n)
     ++presetVersion;
 }
 
+// Mutate: move every continuous control a random amount (up to `amount` of its range) from where it is.
+// Levels, volume and structural choices stay put so the sound keeps its identity.
+void HypernovaAudioProcessor::mutate (float amount)
+{
+    undoManager.beginNewTransaction ("Mutate");
+    juce::Random r;
+    static const juce::StringArray keep { "volume", "aLevel", "bLevel", "subLevel", "macro1", "macro2", "macro3", "macro4", "mode",
+                                          "bendRange", "transpose", "tune", "arpOn", "chord", "velSens", "aOct", "bOct", "subOct" };
+    for (auto* p : getParameters())
+    {
+        auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p);
+        if (rp == nullptr || keep.contains (rp->getParameterID())) continue;
+        if (dynamic_cast<juce::AudioParameterFloat*> (rp) == nullptr) continue; // choices/toggles/ints stay
+        const float v = rp->getValue();
+        rp->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v + (r.nextFloat() * 2.0f - 1.0f) * amount));
+    }
+    {
+        const juce::ScopedLock sl (nameLock);
+        if (! presetName.endsWith ("*")) presetName << " *";
+    }
+    ++presetVersion;
+}
+
 // "Happy accident": a random but musical bass patch.
 void HypernovaAudioProcessor::randomize()
 {
+    undoManager.beginNewTransaction ("Randomize");
     juce::Random r;
     auto pick = [&] (std::initializer_list<int> v) { return *(v.begin() + r.nextInt ((int) v.size())); };
     auto range = [&] (float lo, float hi) { return lo + r.nextFloat() * (hi - lo); };
@@ -962,6 +988,8 @@ void HypernovaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         for (int i = 0; i < 4; ++i) state.setProperty ("macro" + juce::String (i + 1) + "Name", macroNames[(size_t) i], nullptr);
     }
     state.setProperty ("program", currentProgram, nullptr);
+    state.setProperty ("uiAnimation", uiAnimation.load(), nullptr);
+    state.setProperty ("uiScale", uiScalePercent.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -979,6 +1007,8 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         for (int i = 0; i < 4; ++i)
             macroNames[(size_t) i] = state.getProperty ("macro" + juce::String (i + 1) + "Name", "MACRO " + juce::String (i + 1)).toString();
         currentProgram = state.getProperty ("program", 0);
+        uiAnimation = (int) state.getProperty ("uiAnimation", 0);
+        uiScalePercent = (int) state.getProperty ("uiScale", 100);
     }
     ++presetVersion;
 }

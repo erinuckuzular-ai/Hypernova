@@ -2,6 +2,8 @@
 
 #include "PluginProcessor.h"
 #include "UI/Components.h"
+#include "UI/Cosmos.h"
+#include "UI/PresetBrowser.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                       public juce::FileDragAndDropTarget,
@@ -20,6 +22,7 @@ public:
     void fileDragEnter (const juce::StringArray&, int, int) override;
     void fileDragExit (const juce::StringArray&) override;
     void setDeckPage (int p) { showDeckPage (p); }
+    void setBrowserOpen (bool open);
     void setSpaceMode (int m) { spaceMode.setSelected (m); space.setMode ((ab::ui::SoundSpace::Mode) m); }
 
     static constexpr int baseWidth = 1280, baseHeight = 914;
@@ -28,6 +31,9 @@ private:
     void timerCallback() override;
     void layoutCanvas();
     void paintCanvas (juce::Graphics&);
+    void paintStatic (juce::Graphics&);
+    void paintDynamic (juce::Graphics&);
+    bool cosmosOnGpu() const { return cosmosRenderer != nullptr && cosmosRenderer->isReady() && glContext.isAttached(); }
     void showPresetMenu();
     void showSaveDialog();
     void refreshPresetInfo();
@@ -35,6 +41,10 @@ private:
     void importWithChooser();
     void importAndReport (const juce::Array<juce::File>&);
     void showMessage (const juce::String&);
+    void showDiceMenu();
+    void showSettingsMenu();
+    void applyScale (int percent);
+    bool keyPressed (const juce::KeyPress&) override;
 
     class Canvas : public juce::Component
     {
@@ -79,6 +89,18 @@ private:
     ab::ui::LookAndFeel lookAndFeel;
     Canvas canvas;
 
+    // Backdrop: GPU shader when OpenGL is available, cached CPU picture otherwise.
+    juce::OpenGLContext glContext;
+    ab::ui::CosmosState cosmos;
+    std::unique_ptr<ab::ui::CosmosRenderer> cosmosRenderer;
+    juce::Image fallbackBackdrop, staticLayer;
+    bool lastGpu = false;
+    int idleTicks = 0, frameTick = 0, lastReadout = -2;
+    bool staticFramePainted = false;
+    int editQuietTicks = 0, lastActionCount = 0;
+    static constexpr float logoHoleRadius = 12.5f;
+    const juce::Point<float> logoHole { 48.0f, 44.0f };
+
     ab::ui::WavetableView viewA, viewB;
     ab::ui::SoundSpace space;
     ab::ui::Segmented spaceMode { { "SPECTRUM", "ORBIT" }, ab::ui::Palette::oscA };
@@ -97,8 +119,10 @@ private:
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
 
     PresetPlate presetPlate;
+    ab::ui::PresetBrowser browser { processor };
     ab::ui::IconButton prevButton { ab::ui::IconButton::Prev }, nextButton { ab::ui::IconButton::Next },
-                       diceButton { ab::ui::IconButton::Dice, ab::ui::Colours::warm }, saveButton { ab::ui::IconButton::Save };
+                       diceButton { ab::ui::IconButton::Dice, ab::ui::Colours::warm }, saveButton { ab::ui::IconButton::Save },
+                       undoButton { ab::ui::IconButton::Undo }, redoButton { ab::ui::IconButton::Redo }, gearButton { ab::ui::IconButton::Gear };
 
     juce::MidiKeyboardComponent keyboard;
     juce::TooltipWindow tooltips { this, 600 };

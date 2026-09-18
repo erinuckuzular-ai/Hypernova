@@ -5,7 +5,9 @@ import subprocess, sys, os
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 exe = os.path.join(root, "build/SmokeTest_artefacts/Release/SmokeTest")
 out = subprocess.run([exe, "--loudness"], capture_output=True, text=True, check=True).stdout
-targets = {"Lead": -12.5, "House Stabs": -12.5, "Techno & Euro": -12.0, "Soundscape": -14.5, "FX": -14.0}
+targets = {"Lead": -12.5, "House Stabs": -12.5, "Techno & Euro": -12.0, "Soundscape": -14.5, "FX": -14.0,
+           "Keys": -12.5, "Plucks": -12.5, "Pads": -14.5, "Strings & Brass": -13.0, "Bells & Mallets": -13.0,
+           "Vocal & Choir": -14.0, "Arps": -12.5, "Synth Drums": -8.0, "Cinematic": -13.0, "Retro & Chip": -13.0, "World": -12.5}
 rows = []
 for line in out.strip().splitlines():
     name, cat, db = line.split("\t")

@@ -25,6 +25,7 @@ INSTALLS TO
   Your sounds  ~/Library/Application Support/Arrow/Hypernova/Presets
 
 UNINSTALL
-  Delete the files above.
+  Open "Uninstall Hypernova" (in this folder), or click "Uninstall..." in Install Hypernova.
+  It asks whether to keep your saved sounds.
 
 Apple Silicon and Intel Macs, macOS 11+.

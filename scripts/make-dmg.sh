@@ -112,11 +112,13 @@ APPDIR="$WORK/app"
 mkdir -p "$APPDIR"
 "$ROOT/scripts/build-installer-app.sh" "$PKG" "$APPDIR" "$VERSION" >/dev/null
 INSTALLER_APP="$APPDIR/Install Hypernova.app"
+UNINSTALLER_APP="$APPDIR/Uninstall Hypernova.app"
 if [[ -n "${NOTARY_PROFILE:-}" && -n "${APP_SIGN_ID:-}" ]]; then
-    echo "==> Notarizing installer app"
-    ditto -c -k --keepParent "$INSTALLER_APP" "$WORK/installer-app.zip"
-    xcrun notarytool submit "$WORK/installer-app.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+    echo "==> Notarizing installer + uninstaller apps"
+    ditto -c -k "$APPDIR" "$WORK/installer-apps.zip"
+    xcrun notarytool submit "$WORK/installer-apps.zip" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$INSTALLER_APP"
+    xcrun stapler staple "$UNINSTALLER_APP"
 fi
 
 echo "==> Creating DMG"
@@ -129,6 +131,7 @@ cp -R "$INSTALLER_APP" "$DMG_SRC/"
 cp -R "$ROOT/packaging/FOUNDERS PACK" "$DMG_SRC/FOUNDERS PACK"
 mv "$STAGE/Install Hypernova.pkg" "$DMG_SRC/Everything else/"
 cp "$ROOT/packaging/READ ME FIRST.txt" "$DMG_SRC/Everything else/"
+cp -R "$UNINSTALLER_APP" "$DMG_SRC/Everything else/"
 tiffutil -cathidpicheck "$ROOT/packaging/art/dmg-background.png" "$ROOT/packaging/art/dmg-background@2x.png" \
     -out "$DMG_SRC/.background/background.tiff" >/dev/null
 cp "$ROOT/packaging/art/AppIcon.icns" "$DMG_SRC/.VolumeIcon.icns"

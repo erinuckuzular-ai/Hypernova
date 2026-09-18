@@ -1,5 +1,6 @@
 #!/bin/bash
-# Builds "Install Hypernova.app", the branded installer, around a (notarized) Hypernova .pkg.
+# Builds "Install Hypernova.app" (the branded installer, around a notarized Hypernova .pkg) and
+# "Uninstall Hypernova.app" (the same app in uninstall mode).
 # Usage: build-installer-app.sh <pkg> <out-dir> <version>
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,6 +20,7 @@ lipo -create "$BUILD/installer-arm64" "$BUILD/installer-x86_64" -output "$APP/Co
 
 cp "$PKG" "$APP/Contents/Resources/Hypernova.pkg"
 cp "$ROOT/packaging/art/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$ROOT/packaging/art/nebula.png" "$ROOT/packaging/art/disk.png" "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,10 +42,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-if [ -n "${APP_SIGN_ID:-}" ]; then
-  codesign --force --options runtime --timestamp --sign "$APP_SIGN_ID" "$APP"
-else
-  codesign --force --sign - "$APP"
-fi
-codesign -v "$APP"
+# The uninstaller is the same app opening straight onto its uninstall screen (no package inside).
+UNAPP="$OUT/Uninstall Hypernova.app"
+rm -rf "$UNAPP"
+cp -R "$APP" "$UNAPP"
+rm -f "$UNAPP/Contents/Resources/Hypernova.pkg"
+plutil -replace CFBundleName -string "Uninstall Hypernova" "$UNAPP/Contents/Info.plist"
+plutil -replace CFBundleDisplayName -string "Uninstall Hypernova" "$UNAPP/Contents/Info.plist"
+plutil -replace CFBundleIdentifier -string "com.arrow.hypernova.uninstaller" "$UNAPP/Contents/Info.plist"
+plutil -insert HNMode -string "uninstall" "$UNAPP/Contents/Info.plist"
+
+for bundle in "$APP" "$UNAPP"; do
+  if [ -n "${APP_SIGN_ID:-}" ]; then
+    codesign --force --options runtime --timestamp --sign "$APP_SIGN_ID" "$bundle"
+  else
+    codesign --force --sign - "$bundle"
+  fi
+  codesign -v "$bundle"
+done
 echo "$APP"

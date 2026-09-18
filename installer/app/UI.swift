@@ -1,31 +1,44 @@
 import SwiftUI
 
-// MARK: - Backdrop: deep navy, two nebula blooms and a slowly twinkling star field.
+// MARK: - Art (rendered by MakeInstallerArt from the plug-in's backdrop shader, bundled in Resources)
 
-struct SpaceBackdrop: View {
+enum Art {
+    static func image(_ name: String) -> NSImage? {
+        Bundle.main.url(forResource: name, withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+    }
+    static let nebula = image("nebula")
+    static let disk = image("disk")
+}
+
+// MARK: - Backdrop: the nebula drifting slowly, stars twinkling. All GPU-composited transforms.
+
+struct Cosmos: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30)) { tl in
-            Canvas { ctx, size in
-                SpaceBackdrop.draw(&ctx, size: size, t: tl.date.timeIntervalSinceReferenceDate)
+            let t = tl.date.timeIntervalSinceReferenceDate
+            ZStack {
+                Color.bg0
+                if let nebula = Art.nebula {
+                    Image(nsImage: nebula)
+                        .resizable()
+                        .scaledToFill()
+                        .scaleEffect(1.12 + 0.03 * sin(t * 0.05))
+                        .offset(x: 14 * sin(t * 0.031), y: 9 * cos(t * 0.027))
+                        .opacity(0.95)
+                }
+                Canvas { ctx, size in
+                    var rng = SplitMix(seed: 7)
+                    for _ in 0..<90 {
+                        let x = rng.next() * Double(size.width), y = rng.next() * Double(size.height)
+                        let s = 0.7 + rng.next() * 1.6, phase = rng.next() * 6.28, speed = 0.5 + rng.next() * 1.8
+                        let a = 0.15 + 0.6 * (0.5 + 0.5 * sin(t * speed + phase))
+                        ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: s, height: s)), with: .color(Color.white.opacity(a)))
+                    }
+                }
+                LinearGradient(colors: [.clear, Color.bg0.opacity(0.55)], startPoint: .center, endPoint: .trailing)
             }
         }
         .ignoresSafeArea()
-    }
-
-    static func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {
-        let all = Path(CGRect(origin: .zero, size: size))
-        ctx.fill(all, with: .linearGradient(Gradient(colors: [Color.bg1, Color.bg0]), startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
-        let violetBloom = Gradient(colors: [Color.violet.opacity(0.22), Color.clear])
-        ctx.fill(all, with: .radialGradient(violetBloom, center: CGPoint(x: 140, y: 50), startRadius: 0, endRadius: 320))
-        let cyanBloom = Gradient(colors: [Color.cyan.opacity(0.14), Color.clear])
-        ctx.fill(all, with: .radialGradient(cyanBloom, center: CGPoint(x: size.width - 60, y: size.height - 60), startRadius: 0, endRadius: 340))
-        var rng = SplitMix(seed: 42)
-        for _ in 0..<130 {
-            let x = rng.next() * Double(size.width), y = rng.next() * Double(size.height)
-            let s = 0.6 + rng.next() * 1.5, phase = rng.next() * 6.28, speed = 0.6 + rng.next() * 1.6
-            let a = 0.1 + 0.35 * (0.5 + 0.5 * sin(t * speed + phase))
-            ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: s, height: s)), with: .color(Color.white.opacity(a)))
-        }
     }
 }
 
@@ -41,92 +54,83 @@ struct SplitMix {
     }
 }
 
-// MARK: - The nova: a four-point star with an orbit ring spinning in 3D.
+// MARK: - The black hole: the accretion disk spins in perspective, the back half passes behind the horizon.
 
-struct Nova: View {
-    var energy: Double = 1   // spins faster while installing
+struct BlackHole: View {
+    var energy: Double = 1   // spins faster while working
+    var size: CGFloat = 300
 
     var body: some View {
-        TimelineView(.animation) { tl in
-            Canvas { ctx, size in
-                Nova.draw(&ctx, size: size, t: tl.date.timeIntervalSinceReferenceDate, energy: energy)
+        TimelineView(.animation(minimumInterval: 1 / 30)) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate
+            let spin = Angle(degrees: (t * 16 * energy).truncatingRemainder(dividingBy: 360))
+            let horizon = size * 0.16
+            ZStack {
+                Circle()
+                    .fill(RadialGradient(colors: [Color.gold.opacity(0.32), Color.plasma.opacity(0.08), .clear],
+                                         center: .center, startRadius: horizon, endRadius: size * 0.55))
+                    .scaleEffect(1 + 0.04 * sin(t * 1.3 * energy))
+                disk(spin, squash: 0.28).mask(fade(topVisible: true))          // far side of the disk, behind
+                disk(spin, squash: 0.95).opacity(0.55).mask(fade(topVisible: true, band: 0.34)) // lensed over the top
+                Circle().fill(Color.black).frame(width: horizon * 2, height: horizon * 2)
+                Circle().stroke(Color(red: 1, green: 0.86, blue: 0.64), lineWidth: 2.2)
+                    .frame(width: horizon * 2.14, height: horizon * 2.14).blur(radius: 1)
+                Circle().stroke(Color.gold.opacity(0.55), lineWidth: 7)
+                    .frame(width: horizon * 2.14, height: horizon * 2.14).blur(radius: 7)
+                disk(spin, squash: 0.28).mask(fade(topVisible: false))         // near side, in front
+            }
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(-10))
+        }
+    }
+
+    private func disk(_ spin: Angle, squash: CGFloat) -> some View {
+        Group {
+            if let d = Art.disk {
+                Image(nsImage: d).resizable().frame(width: size, height: size)
+                    .rotationEffect(spin)
+                    .scaleEffect(x: 1, y: squash)
             }
         }
     }
 
-    static func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double, energy: Double) {
-        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-        let r = Double(min(size.width, size.height)) * 0.42
-        let glowRect = CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
-        let glow = Gradient(colors: [Color.cyan.opacity(0.28), Color.clear])
-        ctx.fill(Path(ellipseIn: glowRect), with: .radialGradient(glow, center: c, startRadius: 0, endRadius: r))
-        let colours: [Color] = [.violet, .cyan, .pink]
-        for k in 0..<3 {
-            let ring = orbit(centre: c, radius: r, yaw: t * 0.5 * energy + Double(k) * 2.1, tilt: 0.35 + 0.2 * Double(k))
-            ctx.stroke(ring, with: .color(colours[k].opacity(0.12)), lineWidth: 7)
-            ctx.stroke(ring, with: .color(colours[k].opacity(0.75)), lineWidth: 1.6)
-        }
-        let s = star(centre: c, radius: r, pulse: 1 + 0.06 * sin(t * 2.2 * energy))
-        ctx.fill(s, with: .color(Color.cyan.opacity(0.22)))
-        ctx.stroke(s, with: .color(Color.cyan.opacity(0.18)), lineWidth: 10)
-        ctx.stroke(s, with: .color(Color.cyan), lineWidth: 2.2)
-        let core = Gradient(colors: [Color.white, Color.cyan.opacity(0)])
-        ctx.fill(Path(ellipseIn: CGRect(x: c.x - 9, y: c.y - 9, width: 18, height: 18)),
-                 with: .radialGradient(core, center: c, startRadius: 0, endRadius: 12))
-    }
-
-    // An ellipse rotated in 3D (yaw), squashed by tilt, with light perspective.
-    static func orbit(centre c: CGPoint, radius r: Double, yaw: Double, tilt: Double) -> Path {
-        var path = Path()
-        let cy = cos(yaw), sy = sin(yaw)
-        for i in 0...96 {
-            let a = Double(i) / 96.0 * 2.0 * Double.pi
-            let x = cos(a) * cy - sin(a) * sy * 0.2
-            let z = cos(a) * sy + sin(a) * cy * 0.2
-            let y = sin(a) * tilt
-            let p = 3.0 / (3.0 + z * 0.6)
-            let px = Double(c.x) + x * r * 0.95 * p
-            let py = Double(c.y) + (y - z * 0.15) * r * 0.95 * p
-            if i == 0 { path.move(to: CGPoint(x: px, y: py)) } else { path.addLine(to: CGPoint(x: px, y: py)) }
-        }
-        return path
-    }
-
-    static func star(centre c: CGPoint, radius r: Double, pulse: Double) -> Path {
-        var path = Path()
-        for i in 0..<8 {
-            let a = Double(i) / 8.0 * 2.0 * Double.pi - Double.pi / 2.0
-            let rr = (i % 2 == 0 ? r * 0.72 : r * 0.1) * pulse
-            let pt = CGPoint(x: Double(c.x) + cos(a) * rr, y: Double(c.y) + sin(a) * rr)
-            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
-        }
-        path.closeSubpath()
-        return path
+    // Soft split at the disk's centre line, so the near and far halves blend instead of cutting.
+    private func fade(topVisible: Bool, band: CGFloat = 0.5) -> some View {
+        LinearGradient(stops: topVisible
+                       ? [.init(color: .white, location: 0), .init(color: .white, location: band - 0.02), .init(color: .clear, location: band + 0.03)]
+                       : [.init(color: .clear, location: 0.47), .init(color: .white, location: 0.52), .init(color: .white, location: 1)],
+                       startPoint: .top, endPoint: .bottom)
+            .frame(width: size, height: size)
     }
 }
 
 // MARK: - Pieces
 
-struct NeonButton: View {
+struct GlowButton: View {
     let title: String
-    var primary = true
+    var style: Style = .primary
     let action: () -> Void
     @State private var hover = false
+    enum Style { case primary, secondary, danger }
 
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.heavy(14)).kerning(2)
-                .foregroundStyle(primary ? Color.bg0 : Color.textMain)
+                .font(.heavy(14)).kerning(2.2)
+                .foregroundStyle(style == .secondary ? Color.textMain : Color.bg0)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background {
-                    if primary {
+                    switch style {
+                    case .primary:
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(LinearGradient(colors: [.cyan, .violet], startPoint: .leading, endPoint: .trailing))
-                            .shadow(color: Color.cyan.opacity(hover ? 0.55 : 0.3), radius: hover ? 16 : 10)
-                    } else {
-                        RoundedRectangle(cornerRadius: 12).fill(Color.panel)
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(hover ? Color.white.opacity(0.2) : Color.line))
+                            .fill(LinearGradient(colors: [.gold, .plasma, .violet], startPoint: .leading, endPoint: .trailing))
+                            .shadow(color: Color.gold.opacity(hover ? 0.55 : 0.3), radius: hover ? 18 : 10)
+                    case .danger:
+                        RoundedRectangle(cornerRadius: 12).fill(Color.plasma)
+                            .shadow(color: Color.plasma.opacity(hover ? 0.55 : 0.3), radius: hover ? 16 : 8)
+                    case .secondary:
+                        RoundedRectangle(cornerRadius: 12).fill(Color.panel.opacity(0.8))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(hover ? Color.white.opacity(0.25) : Color.line))
                     }
                 }
         }
@@ -143,9 +147,9 @@ struct PartToggle: View {
         Button { part.on.toggle() } label: {
             HStack(spacing: 12) {
                 ZStack {
-                    Circle().fill(part.on ? colour : Color.bg0).frame(width: 14, height: 14)
-                        .shadow(color: part.on ? colour.opacity(0.7) : .clear, radius: 6)
-                    Circle().stroke(part.on ? colour : Color.white.opacity(0.2), lineWidth: 1.2).frame(width: 14, height: 14)
+                    Circle().fill(part.on ? colour : Color.bg0).frame(width: 13, height: 13)
+                        .shadow(color: part.on ? colour.opacity(0.8) : .clear, radius: 6)
+                    Circle().stroke(part.on ? colour : Color.white.opacity(0.25), lineWidth: 1.2).frame(width: 13, height: 13)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(part.title).font(.demi(13)).foregroundStyle(part.on ? Color.textMain : Color.textDim)
@@ -153,9 +157,9 @@ struct PartToggle: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 10).fill(part.on ? colour.opacity(0.08) : Color.panel.opacity(0.6)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(part.on ? colour.opacity(0.45) : Color.line))
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.panel.opacity(part.on ? 0.75 : 0.45)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(part.on ? colour.opacity(0.5) : Color.line))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -163,23 +167,26 @@ struct PartToggle: View {
 }
 
 struct Wordmark: View {
+    var subtitle = "WAVETABLE SPACE SYNTH"
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("HYPERNOVA").font(.heavy(30)).kerning(4).foregroundStyle(Color.textMain)
-            Text("WAVETABLE SPACE SYNTH").font(.demi(10)).kerning(3.2).foregroundStyle(Color.textDim)
+        VStack(alignment: .leading, spacing: 3) {
+            Text("HYPERNOVA").font(.heavy(31)).kerning(5)
+                .foregroundStyle(LinearGradient(colors: [.textMain, Color(red: 0.85, green: 0.78, blue: 1.0)], startPoint: .leading, endPoint: .trailing))
+            Text(subtitle).font(.demi(10)).kerning(3.4).foregroundStyle(Color.textDim)
         }
     }
 }
 
 struct SweepBar: View {
+    var colours: [Color] = [.gold, .plasma, .violet]
     var body: some View {
-        TimelineView(.animation) { tl in
+        TimelineView(.animation(minimumInterval: 1 / 30)) { tl in
             GeometryReader { geo in
                 let t = tl.date.timeIntervalSinceReferenceDate
                 let w = geo.size.width, x = (t.truncatingRemainder(dividingBy: 1.6) / 1.6) * (w + 160) - 160
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.panel)
-                    Capsule().fill(LinearGradient(colors: [.clear, .cyan, .violet, .clear], startPoint: .leading, endPoint: .trailing))
+                    Capsule().fill(Color.panel.opacity(0.8))
+                    Capsule().fill(LinearGradient(colors: [.clear] + colours + [.clear], startPoint: .leading, endPoint: .trailing))
                         .frame(width: 160).offset(x: x)
                 }
                 .clipShape(Capsule())
@@ -189,26 +196,42 @@ struct SweepBar: View {
     }
 }
 
+struct Pill: View {
+    let text: String
+    var colour: Color = .gold
+    var body: some View {
+        Text(text.uppercased()).font(.demi(10)).kerning(2).foregroundStyle(colour)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(Capsule().fill(colour.opacity(0.12))).overlay(Capsule().stroke(colour.opacity(0.45)))
+    }
+}
+
 // MARK: - Screens
 
 struct InstallerView: View {
     @EnvironmentObject var installer: Installer
 
+    private var busy: Bool { installer.phase == .working || installer.phase == .uninstalling }
+
     var body: some View {
         ZStack {
-            SpaceBackdrop()
+            Cosmos()
             HStack(spacing: 0) {
-                Nova(energy: installer.phase == .working ? 3 : 1)
-                    .frame(width: 270)
-                    .padding(.leading, 10)
+                BlackHole(energy: busy ? 4 : 1, size: 290)
+                    .frame(width: 300)
+                    .padding(.leading, 6)
                 VStack(alignment: .leading, spacing: 0) {
-                    Wordmark().padding(.top, 38)
+                    Wordmark(subtitle: installer.uninstallMode || installer.phase == .uninstallAsk || installer.phase == .uninstalled
+                             ? "UNINSTALL" : "WAVETABLE SPACE SYNTH").padding(.top, 36)
                     Group {
                         switch installer.phase {
                         case .welcome: welcome
-                        case .working: working
+                        case .working: working("INSTALLING", colour: .gold)
                         case .done: done
                         case .failed(let msg): failed(msg)
+                        case .uninstallAsk: uninstallAsk
+                        case .uninstalling: working("REMOVING", colour: .plasma)
+                        case .uninstalled: uninstalled
                         }
                     }
                     .transition(.opacity)
@@ -220,69 +243,105 @@ struct InstallerView: View {
     }
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(installer.headline.uppercased()).font(.demi(10)).kerning(2).foregroundStyle(Color.cyan)
-                .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(Capsule().fill(Color.cyan.opacity(0.1))).overlay(Capsule().stroke(Color.cyan.opacity(0.4)))
-                .padding(.top, 14).padding(.bottom, 8)
-            let colours: [Color] = [.cyan, .violet, .mint, .pink]
+        VStack(alignment: .leading, spacing: 7) {
+            Pill(text: installer.headline).padding(.top, 14).padding(.bottom, 8)
+            let colours: [Color] = [.ion, .violet, .aurora, .gold]
             ForEach(installer.parts.indices, id: \.self) { i in
                 PartToggle(part: $installer.parts[i], colour: colours[i])
             }
             Spacer(minLength: 10)
-            NeonButton(title: installer.installedVersion == nil ? "INSTALL" : "UPDATE") { installer.install() }
+            GlowButton(title: installer.installedVersion == nil ? "INSTALL" : "UPDATE") { installer.install() }
                 .disabled(!installer.parts.contains { $0.on })
                 .opacity(installer.parts.contains { $0.on } ? 1 : 0.4)
-            Text("Asks for your Mac password once, to put the plug-ins in /Library. Your saved sounds are kept.")
-                .font(.body(10.5)).foregroundStyle(Color.textDim)
-                .fixedSize(horizontal: false, vertical: true).padding(.bottom, 22)
+            HStack {
+                Text("Asks for your Mac password once. Your saved sounds are kept.")
+                    .font(.body(10.5)).foregroundStyle(Color.textDim).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if installer.somethingInstalled {
+                    Button("Uninstall…") { installer.phase = .uninstallAsk }
+                        .buttonStyle(.plain).font(.demi(10.5)).foregroundStyle(Color.plasma.opacity(0.9))
+                }
+            }
+            .padding(.bottom, 22)
         }
     }
 
-    private var working: some View {
+    private func working(_ title: String, colour: Color) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Spacer()
-            Text("INSTALLING").font(.heavy(14)).kerning(3).foregroundStyle(Color.cyan)
-            SweepBar()
+            Text(title).font(.heavy(14)).kerning(3).foregroundStyle(colour)
+            SweepBar(colours: colour == .plasma ? [.plasma, .violet] : [.gold, .plasma, .violet])
             Text(installer.status).font(.body(12.5)).foregroundStyle(Color.textDim)
             Spacer()
         }
     }
 
     private var done: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("READY FOR LIFTOFF").font(.heavy(15)).kerning(3).foregroundStyle(Color.mint).padding(.top, 22)
+        VStack(alignment: .leading, spacing: 11) {
+            Text("READY FOR LIFTOFF").font(.heavy(15)).kerning(3).foregroundStyle(Color.gold).padding(.top, 20)
             VStack(alignment: .leading, spacing: 8) {
                 step("1", "Open Ableton Live > Settings > Plug-Ins and click Rescan.")
                 step("2", "Find it in Browser > Plug-Ins > Arrow > Hypernova.")
-                step("3", "Start with Classic Log, Rager 808 or Hypernova. The FOUNDERS PACK is under Sound Packs.")
-                step("4", "Share sounds: Export from the preset menu. Friends drag the file onto Hypernova.")
+                step("3", "Click the sound name to browse 300+ sounds. The FOUNDERS PACK is in the list.")
+                step("4", "Share sounds: Export in the browser. Friends drag the file onto Hypernova.")
             }
             if installer.abletonRunning {
                 Text("Ableton is open: rescan plug-ins (or restart it) to load the new version.")
-                    .font(.body(11)).foregroundStyle(Color.pink)
+                    .font(.body(11)).foregroundStyle(Color.plasma)
             }
             Spacer(minLength: 8)
             HStack(spacing: 10) {
                 if installer.abletonURL != nil {
-                    NeonButton(title: "OPEN ABLETON") { installer.openAbleton(); NSApp.terminate(nil) }
+                    GlowButton(title: "OPEN ABLETON") { installer.openAbleton(); NSApp.terminate(nil) }
                 } else if installer.parts.first(where: { $0.id == "app" })?.on == true {
-                    NeonButton(title: "OPEN HYPERNOVA") { installer.openHypernova(); NSApp.terminate(nil) }
+                    GlowButton(title: "OPEN HYPERNOVA") { installer.openHypernova(); NSApp.terminate(nil) }
                 }
-                NeonButton(title: "DONE", primary: false) { NSApp.terminate(nil) }
+                GlowButton(title: "DONE", style: .secondary) { NSApp.terminate(nil) }
             }
             .padding(.bottom, 26)
+        }
+    }
+
+    private var uninstallAsk: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Pill(text: installer.somethingInstalled ? "Installed on this Mac" : "Nothing installed", colour: .plasma).padding(.top, 14)
+            Text("This removes the Hypernova VST3 and AU plug-ins, the standalone app and the installed sound packs (and any old Arrow Bass).")
+                .font(.body(12.5)).foregroundStyle(Color.textMain).fixedSize(horizontal: false, vertical: true)
+            PartToggle(part: Binding (get: { Part (id: "sounds", title: "Also delete my saved sounds",
+                                                   detail: "Off keeps them, so they come back if you reinstall.", on: installer.alsoDeleteSounds) },
+                                      set: { installer.alsoDeleteSounds = $0.on }), colour: .plasma)
+            Spacer(minLength: 8)
+            HStack(spacing: 10) {
+                GlowButton(title: "UNINSTALL", style: .danger) { installer.uninstall() }
+                    .disabled(!installer.somethingInstalled).opacity(installer.somethingInstalled ? 1 : 0.4)
+                GlowButton(title: installer.uninstallMode ? "CLOSE" : "BACK", style: .secondary) {
+                    if installer.uninstallMode { NSApp.terminate(nil) } else { installer.phase = .welcome }
+                }
+            }
+            .padding(.bottom, 26)
+        }
+    }
+
+    private var uninstalled: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Spacer()
+            Text("HYPERNOVA REMOVED").font(.heavy(15)).kerning(3).foregroundStyle(Color.aurora)
+            Text(installer.alsoDeleteSounds ? "Everything is gone, including your saved sounds."
+                                            : "Your saved sounds are still in ~/Library/Application Support/Arrow/Hypernova.")
+                .font(.body(12.5)).foregroundStyle(Color.textDim).fixedSize(horizontal: false, vertical: true)
+            GlowButton(title: "DONE", style: .secondary) { NSApp.terminate(nil) }.frame(width: 180)
+            Spacer()
         }
     }
 
     private func failed(_ msg: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Spacer()
-            Text("THAT DIDN'T WORK").font(.heavy(15)).kerning(3).foregroundStyle(Color.pink)
+            Text("THAT DIDN'T WORK").font(.heavy(15)).kerning(3).foregroundStyle(Color.plasma)
             Text(msg).font(.body(12)).foregroundStyle(Color.textDim).fixedSize(horizontal: false, vertical: true).lineLimit(6)
             Text("You can also open \"Everything else\" in the disk image and run Install Hypernova.pkg.")
                 .font(.body(11)).foregroundStyle(Color.textDim)
-            NeonButton(title: "TRY AGAIN") { installer.phase = .welcome }.frame(width: 180)
+            GlowButton(title: "TRY AGAIN") { installer.phase = installer.uninstallMode ? .uninstallAsk : .welcome }.frame(width: 180)
             Spacer()
         }
     }
@@ -290,7 +349,7 @@ struct InstallerView: View {
     private func step(_ n: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(n).font(.heavy(11)).foregroundStyle(Color.bg0).frame(width: 20, height: 20)
-                .background(Circle().fill(Color.cyan))
+                .background(Circle().fill(Color.gold))
             Text(text).font(.body(12.5)).foregroundStyle(Color.textMain).fixedSize(horizontal: false, vertical: true)
         }
     }

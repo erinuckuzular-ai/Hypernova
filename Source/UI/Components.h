@@ -8,14 +8,14 @@ namespace ab::ui
 
 namespace Palette
 {
-    const juce::Colour oscA   { 0xff2ff3e0 };
-    const juce::Colour oscB   { 0xff8b6cff };
-    const juce::Colour sub    { 0xffffb547 };
-    const juce::Colour filter { 0xffff5c8a };
-    const juce::Colour env    { 0xff4dffb0 };
-    const juce::Colour lfo    { 0xff36d6ff };
-    const juce::Colour mod    { 0xff9db4ff };
-    const juce::Colour fx     { 0xffffe066 };
+    const juce::Colour oscA   { 0xff46e8ff };  // ion blue
+    const juce::Colour oscB   { 0xffb07cff };  // nebula violet
+    const juce::Colour sub    { 0xffffa94a };  // accretion gold
+    const juce::Colour filter { 0xffff4f9a };  // plasma magenta
+    const juce::Colour env    { 0xff7dffcf };  // aurora
+    const juce::Colour lfo    { 0xff5aa9ff };  // azure
+    const juce::Colour mod    { 0xffc9a8ff };  // lilac
+    const juce::Colour fx     { 0xffffd36b };  // starlight gold
 }
 
 //==============================================================================
@@ -63,9 +63,10 @@ public:
     }
     void mouseDoubleClick (const juce::MouseEvent&) override { hasUser = false; updateCamera(); repaint(); }
 
-    void tick()
+    // The idle sway only advances while there's sound, so a silent synth draws nothing.
+    void tick (bool animate)
     {
-        time += 1.0f / 30.0f;
+        if (animate) time += 1.0f / 30.0f;
         updateCamera();
     }
 
@@ -97,84 +98,53 @@ public:
         setTooltip ("Drag to spin the wavetable. Double-click to reset the view.");
     }
 
-    void refresh()
+    // Repaints only when something visible changed (table, warp, live position, camera).
+    void refresh (bool sounding)
     {
-        tick();
-        repaint();
+        tick (sounding);
+        const auto k = currentKey();
+        const float pos = proc.shownPos[osc].load();
+        const float warpAmt = proc.apvts.getRawParameterValue (prefix + "WarpAmt")->load();
+        if (k != stackKey || std::abs (pos - lastPos) > 0.0005f || std::abs (warpAmt - lastWarpAmt) > 0.0005f)
+        {
+            lastPos = pos;
+            lastWarpAmt = warpAmt;
+            repaint();
+        }
     }
 
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
-        g.setColour (Colours::inset);
-        g.fillRoundedRectangle (r, 10.0f);
-        g.setColour (Colours::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
-
         const bool on = proc.apvts.getRawParameterValue (prefix + "On")->load() > 0.5f;
         const int tableIndex = (int) proc.apvts.getRawParameterValue (prefix + "Table")->load();
         const int warp = (int) proc.apvts.getRawParameterValue (prefix + "Warp")->load();
         const float warpAmt = proc.apvts.getRawParameterValue (prefix + "WarpAmt")->load();
         const float pos = proc.shownPos[osc].load();
         const auto& wt = WavetableBank::get().table (tableIndex);
-
         cam.centre = { r.getCentreX(), r.getCentreY() + r.getHeight() * 0.06f };
         cam.scale = juce::jmin (r.getWidth() * 0.33f, r.getHeight() * 0.74f);
 
-        const auto base = on ? colour : Colours::textFaint;
+        // The stack of frames and the floor only change with the table or camera: draw once, reuse.
+        const auto k = currentKey();
+        if (k != stackKey || ! stack.isValid())
+        {
+            stackKey = k;
+            const float sc = 2.0f;
+            stack = juce::Image (juce::Image::ARGB, getWidth() * 2, getHeight() * 2, true);
+            juce::Graphics sg (stack);
+            sg.addTransform (juce::AffineTransform::scale (sc));
+            paintStack (sg, r, wt, on);
+        }
+        g.drawImage (stack, r);
+
+        // Live frame: nearest frame with the warp applied, filled and glowing.
         juce::Graphics::ScopedSaveState save (g);
         g.reduceClipRegion (r.reduced (1).toNearestInt());
-
-        // Floor grid for depth.
-        g.setColour (Colours::line);
-        for (int i = 0; i <= 8; ++i)
-        {
-            const float z = -0.75f + 1.5f * i / 8.0f;
-            g.drawLine (juce::Line<float> (cam.project (-1.0f, -0.42f, z), cam.project (1.0f, -0.42f, z)), 0.7f);
-            const float x = -1.0f + 2.0f * i / 8.0f;
-            g.drawLine (juce::Line<float> (cam.project (x, -0.42f, -0.75f), cam.project (x, -0.42f, 0.75f)), 0.7f);
-        }
-
-        constexpr int points = 112;
-        auto framePath = [&] (int f, float z, bool warped, juce::Path* fill)
-        {
-            juce::Path p;
-            const float* d = wt.frame (f, 0);
-            for (int i = 0; i <= points; ++i)
-            {
-                double ph = (double) i / points;
-                if (warped && warp != WarpOff && warp != WarpFm)
-                    ph = juce::jlimit (0.0, 0.9999, dsp::warpPhase (warp, juce::jmin (ph, 0.9999), warpAmt, std::exp2 (8.0f - warpAmt * 6.0f), 0.0f));
-                const float v = d[juce::jlimit (0, wtBaseSize - 1, (int) (ph * wtBaseSize))];
-                const auto pt = cam.project (-1.0f + 2.0f * i / points, v * 0.36f, z);
-                if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
-            }
-            if (fill != nullptr)
-            {
-                *fill = p;
-                fill->lineTo (cam.project (1.0f, 0.0f, z));
-                fill->lineTo (cam.project (-1.0f, 0.0f, z));
-                fill->closeSubPath();
-            }
-            return p;
-        };
-
-        auto zFor = [] (float framePos) { return -0.75f + 1.5f * framePos; }; // frame 0 at the front
-
-        // Back to front: the highest frame index sits furthest away.
         const float livePos = juce::jlimit (0.0f, 1.0f, pos) * (wtFrames - 1);
-        for (int f = wtFrames - 1; f >= 0; --f)
-        {
-            const float dist = std::abs ((float) f - livePos);
-            const float a = on ? juce::jmap (juce::jmin (dist, 10.0f), 0.0f, 10.0f, 0.42f, 0.10f) : 0.08f;
-            g.setColour (base.withAlpha (a));
-            g.strokePath (framePath (f, zFor ((float) f / (wtFrames - 1)), false, nullptr), juce::PathStrokeType (1.0f));
-        }
-
-        // Live frame: nearest frame, with warp shape applied, filled and glowing.
         const int nearest = juce::jlimit (0, wtFrames - 1, juce::roundToInt (livePos));
         juce::Path fill;
-        const auto live = framePath (nearest, zFor (pos), true, &fill);
+        const auto live = framePath (wt, nearest, zFor (pos), warp, warpAmt, &fill, 96);
         if (on)
         {
             const auto top = cam.project (0.0f, 0.36f, zFor (pos)), bottom = cam.project (0.0f, 0.0f, zFor (pos));
@@ -183,7 +153,6 @@ public:
         }
         glowStroke (g, live, on ? colour.brighter (0.3f) : Colours::textFaint, 2.0f, on ? 1.3f : 0.3f);
 
-        // Labels
         g.setColour (Colours::text.withAlpha (on ? 0.9f : 0.4f));
         g.setFont (font (11.0f, true));
         g.drawText (wt.name.toUpperCase(), r.reduced (10, 7).removeFromTop (14), juce::Justification::topLeft, false);
@@ -200,6 +169,72 @@ private:
     int osc;
     juce::Colour colour;
     juce::String prefix;
+    juce::Image stack;
+    juce::String stackKey;
+    float lastPos = -1, lastWarpAmt = -1;
+
+    static float zFor (float framePos) { return -0.75f + 1.5f * framePos; } // frame 0 at the front
+
+    juce::String currentKey() const
+    {
+        const int table = (int) proc.apvts.getRawParameterValue (prefix + "Table")->load();
+        const bool on = proc.apvts.getRawParameterValue (prefix + "On")->load() > 0.5f;
+        return juce::String (table) + (on ? "+" : "-") + juce::String (juce::roundToInt (cam.yaw * 200.0f)) + ":"
+             + juce::String (juce::roundToInt (cam.pitch * 200.0f)) + "@" + juce::String (getWidth()) + "x" + juce::String (getHeight());
+    }
+
+    juce::Path framePath (const Wavetable& wt, int f, float z, int warp, float warpAmt, juce::Path* fill, int points) const
+    {
+        juce::Path p;
+        const float* d = wt.frame (f, 0);
+        for (int i = 0; i <= points; ++i)
+        {
+            double ph = (double) i / points;
+            if (fill != nullptr && warp != WarpOff && warp != WarpFm)
+                ph = juce::jlimit (0.0, 0.9999, dsp::warpPhase (warp, juce::jmin (ph, 0.9999), warpAmt, std::exp2 (8.0f - warpAmt * 6.0f), 0.0f));
+            const float v = d[juce::jlimit (0, wtBaseSize - 1, (int) (ph * wtBaseSize))];
+            const auto pt = cam.project (-1.0f + 2.0f * i / points, v * 0.36f, z);
+            if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+        }
+        if (fill != nullptr)
+        {
+            *fill = p;
+            fill->lineTo (cam.project (1.0f, 0.0f, z));
+            fill->lineTo (cam.project (-1.0f, 0.0f, z));
+            fill->closeSubPath();
+        }
+        return p;
+    }
+
+    void paintStack (juce::Graphics& g, juce::Rectangle<float> r, const Wavetable& wt, bool on) const
+    {
+        g.setColour (Colours::inset);
+        g.fillRoundedRectangle (r, 10.0f);
+        g.setColour (Colours::line);
+        g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
+        juce::Graphics::ScopedSaveState save (g);
+        g.reduceClipRegion (r.reduced (1).toNearestInt());
+
+        juce::Path grid;
+        for (int i = 0; i <= 8; ++i)
+        {
+            const float z = -0.75f + 1.5f * i / 8.0f;
+            grid.startNewSubPath (cam.project (-1.0f, -0.42f, z)); grid.lineTo (cam.project (1.0f, -0.42f, z));
+            const float x = -1.0f + 2.0f * i / 8.0f;
+            grid.startNewSubPath (cam.project (x, -0.42f, -0.75f)); grid.lineTo (cam.project (x, -0.42f, 0.75f));
+        }
+        g.setColour (Colours::line);
+        g.strokePath (grid, juce::PathStrokeType (0.7f));
+
+        // Every other frame, back to front, fading with depth.
+        const auto base = on ? colour : Colours::textFaint;
+        for (int f = wtFrames - 1; f >= 0; f -= 2)
+        {
+            const float depth = (float) f / (wtFrames - 1);
+            g.setColour (base.withAlpha (on ? 0.12f + 0.26f * (1.0f - depth) : 0.08f));
+            g.strokePath (framePath (wt, f, zFor (depth), WarpOff, 0, nullptr, 72), juce::PathStrokeType (1.0f));
+        }
+    }
 };
 
 //==============================================================================
@@ -219,10 +254,18 @@ public:
     void setMode (Mode m) { mode = m; repaint(); }
     Mode getMode() const { return mode; }
 
-    void refresh()
+    // Skips all work when the output has been silent long enough for the waterfall to settle.
+    void refresh (bool sounding)
     {
-        tick();
+        tick (sounding);
         proc.scope.latest (sampL.data(), sampR.data(), fftSize);
+        float peak = 0;
+        for (int i = fftSize - 1024; i < fftSize; ++i) peak = juce::jmax (peak, std::abs (sampL[(size_t) i]));
+        if (peak < 1.0e-4f && ! sounding)
+        {
+            if (++quietFrames > rows + 4) return;
+        }
+        else quietFrames = 0;
 
         // Spectrum row
         for (int i = 0; i < fftSize; ++i)
@@ -272,7 +315,7 @@ public:
     }
 
 private:
-    static constexpr int fftOrder = 11, fftSize = 1 << fftOrder, cols = 72, rows = 34;
+    static constexpr int fftOrder = 11, fftSize = 1 << fftOrder, cols = 60, rows = 26;
     HypernovaAudioProcessor& proc;
     Mode mode = Spectrum;
     juce::dsp::FFT fft { fftOrder };
@@ -280,7 +323,7 @@ private:
     std::array<float, fftSize> sampL {}, sampR {};
     std::array<std::array<float, cols>, rows> history {};
     std::array<float, cols> smoothRow {};
-    int head = 0;
+    int head = 0, quietFrames = 0;
 
     static juce::Colour heat (float v)
     {
@@ -521,7 +564,7 @@ private:
 class IconButton : public juce::Button
 {
 public:
-    enum Kind { Dice, Prev, Next, Save };
+    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear };
     IconButton (Kind k, juce::Colour c = Colours::text) : juce::Button ({}), kind (k), colour (c) {}
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
@@ -553,6 +596,37 @@ public:
                 p.lineTo (icon.getRight() - icon.getWidth() * 0.3f, icon.getCentreY());
                 p.lineTo (icon.getX() + icon.getWidth() * 0.3f, icon.getBottom());
                 break;
+            case Undo:
+            case Redo:
+            {
+                const auto ctr = icon.getCentre();
+                const float rad = icon.getWidth() * 0.36f;
+                const bool redo = kind == Redo;
+                p.addCentredArc (ctr.x, ctr.y, rad, rad, 0.0f, redo ? 2.2f : -2.2f, redo ? -1.4f : 1.4f, true);
+                g.strokePath (p, juce::PathStrokeType (1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                const auto tip = ctr.getPointOnCircumference (rad, redo ? 2.2f : -2.2f);
+                juce::Path head;
+                const float d = redo ? -1.0f : 1.0f;
+                head.addTriangle (tip.x - 4.0f * d, tip.y - 1.5f, tip.x + 3.0f * d, tip.y - 4.0f, tip.x + 0.5f * d, tip.y + 4.0f);
+                g.fillPath (head);
+                return;
+            }
+            case Gear:
+            {
+                const auto ctr = icon.getCentre();
+                const float ro = icon.getWidth() * 0.46f, ri = icon.getWidth() * 0.32f;
+                juce::Path cog;
+                for (int i = 0; i < 16; ++i)
+                {
+                    const float a = juce::MathConstants<float>::twoPi * i / 16.0f;
+                    const auto pt = ctr.getPointOnCircumference ((i / 2) % 2 == 0 ? ro : ri, a);
+                    if (i == 0) cog.startNewSubPath (pt); else cog.lineTo (pt);
+                }
+                cog.closeSubPath();
+                g.strokePath (cog, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.drawEllipse (juce::Rectangle<float> (icon.getWidth() * 0.26f, icon.getWidth() * 0.26f).withCentre (ctr), 1.5f);
+                return;
+            }
             case Save:
                 p.startNewSubPath (icon.getCentreX(), icon.getY());
                 p.lineTo (icon.getCentreX(), icon.getBottom() - icon.getHeight() * 0.3f);

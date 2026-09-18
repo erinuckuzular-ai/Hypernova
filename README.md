@@ -1,8 +1,15 @@
 # Hypernova
 
-Wavetable space synth in the Arrow family (JUCE, VST3/AU/Standalone, macOS). Serum-style engine with 200+ sounds:
+Wavetable space synth in the Arrow family (JUCE, VST3/AU/Standalone, macOS). Serum-style engine with 320 sounds:
 808s, amapiano log drums (a faithful rebuild of the FL Studio DX10 log drum), subs, reeses, growls and wobbles,
-house stabs, techno and Euro, dub sirens and dancehall, leads and big shimmering soundscapes.
+house stabs, techno and Euro, dub sirens and dancehall, keys, plucks, pads, strings and brass, bells, voices, arps,
+synth drums, cinematic, retro/chip, world, leads and big shimmering soundscapes.
+
+Look: cosmic cinematic. The nebula, stars and black hole behind the panels are a GPU fragment shader
+(`Source/UI/Cosmos.h`), so the animation costs the CPU almost nothing; static layers are cached and the 3D views
+only redraw while sound plays. Settings (gear) has window size and Animation Full / Calm / Off.
+Workflow: undo/redo (Cmd+Z), a searchable preset browser with favourites that auditions as you arrow through,
+and a randomiser that can nudge or mutate the current sound.
 
 ## Build
 
@@ -10,6 +17,8 @@ house stabs, techno and Euro, dub sirens and dancehall, leads and big shimmering
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release          # installs VST3/AU to ~/Library/Audio/Plug-Ins
 cmake --build build --target SmokeTest && ./build/SmokeTest_artefacts/Release/SmokeTest dist/demos    # every preset: NaN/silence/CPU, timing, chords, arp, preset files, pack
+./build/SmokeTest_artefacts/Release/SmokeTest --bench                                                   # CPU under load (8-note chords)
+./build/UISnapshot_artefacts/Release/UISnapshot dist/shots --paintbench                                # UI draw cost per component
 cmake --build build --target UISnapshot && ./build/UISnapshot_artefacts/Release/UISnapshot dist/shots # editor PNGs (all three deck tabs)
 auval -v aumu ArBs Arrw
 ```

@@ -18,7 +18,7 @@ namespace
     const juce::Rectangle<int> deckContent { 24, 688, 1232, 136 };
     const juce::Rectangle<int> keysArea    { 24, 840, 1232, 60 };
 
-    const juce::Rectangle<int> messageArea { 334, 68, 476, 16 };
+    const juce::Rectangle<int> messageArea { 334, 68, 496, 16 };
 
     juce::Rectangle<int> at (const juce::Rectangle<int>& panel, int x, int y, int w, int h) { return { panel.getX() + x, panel.getY() + y, w, h }; }
 }
@@ -95,6 +95,7 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
     setLookAndFeel (&lookAndFeel);
+    setOpaque (false);
     addAndMakeVisible (canvas);
     canvas.onPaint = [this] (juce::Graphics& g) { paintCanvas (g); };
 
@@ -104,17 +105,33 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     layoutCanvas();
 
     // Header
-    presetPlate.setTooltip ("Browse presets");
-    presetPlate.onClick = [this] { showPresetMenu(); };
+    presetPlate.setTooltip ("Browse sounds (right-click for the quick menu)");
+    presetPlate.onClick = [this]
+    {
+        if (juce::ModifierKeys::currentModifiers.isPopupMenu()) showPresetMenu();
+        else setBrowserOpen (! browser.isVisible());
+    };
+    browser.onClose = [this] { setBrowserOpen (false); };
+    browser.onSave = [this] { showSaveDialog(); };
+    browser.onExport = [this] { exportCurrent(); };
+    browser.onImport = [this] { importWithChooser(); };
+    canvas.addChildComponent (browser);
+    browser.setBounds (24, 86, 1232, 740);
     prevButton.setTooltip ("Previous preset");
     prevButton.onClick = [this] { processor.stepPreset (-1); };
     nextButton.setTooltip ("Next preset");
     nextButton.onClick = [this] { processor.stepPreset (1); };
-    diceButton.setTooltip ("Happy accident: roll a random bass patch");
-    diceButton.onClick = [this] { processor.randomize(); };
+    diceButton.setTooltip ("Randomise: mutate this sound a little or a lot, or roll a new one");
+    diceButton.onClick = [this] { showDiceMenu(); };
+    undoButton.setTooltip ("Undo (Cmd+Z)");
+    undoButton.onClick = [this] { if (! processor.undoManager.undo()) showMessage ("Nothing to undo"); };
+    redoButton.setTooltip ("Redo (Cmd+Shift+Z)");
+    redoButton.onClick = [this] { if (! processor.undoManager.redo()) showMessage ("Nothing to redo"); };
+    gearButton.setTooltip ("Window size and animation");
+    gearButton.onClick = [this] { showSettingsMenu(); };
     saveButton.setTooltip ("Save this sound to My Sounds (then export it to share with friends)");
     saveButton.onClick = [this] { showSaveDialog(); };
-    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton })
+    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton, &undoButton, &redoButton, &gearButton })
         canvas.addAndMakeVisible (b);
 
     spaceMode.onChange = [this] (int m) { space.setMode ((SoundSpace::Mode) m); };
@@ -141,13 +158,24 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     setResizeLimits (baseWidth / 2, baseHeight / 2, baseWidth * 2, baseHeight * 2);
     if (auto* c = getConstrainer())
         c->setFixedAspectRatio ((double) baseWidth / (double) baseHeight);
-    setSize (1180, juce::roundToInt (1180.0 * baseHeight / baseWidth));
+    setWantsKeyboardFocus (true);
+    applyScale (processor.uiScalePercent.load());
+    // The nebula/black hole shader renders under the components; component painting is cached by JUCE,
+    // so only what actually changes gets redrawn on the CPU.
+    cosmosRenderer = std::make_unique<CosmosRenderer> (glContext, *this, cosmos);
+    glContext.setRenderer (cosmosRenderer.get());
+    glContext.setOpenGLVersionRequired (juce::OpenGLContext::openGL3_2);
+    glContext.setComponentPaintingEnabled (true);
+    glContext.setContinuousRepainting (false);
+    glContext.attachTo (*this);
+
     startTimerHz (30);
 }
 
 HypernovaAudioProcessorEditor::~HypernovaAudioProcessorEditor()
 {
     stopTimer();
+    glContext.detach();
     setLookAndFeel (nullptr);
 }
 
@@ -161,14 +189,17 @@ void HypernovaAudioProcessorEditor::resized()
 void HypernovaAudioProcessorEditor::layoutCanvas()
 {
     // Header
-    prevButton.setBounds (334, 22, 36, 44);
-    presetPlate.setBounds (376, 22, 290, 44);
-    nextButton.setBounds (672, 22, 36, 44);
-    diceButton.setBounds (716, 22, 44, 44);
-    saveButton.setBounds (766, 22, 44, 44);
+    prevButton.setBounds (334, 22, 32, 44);
+    presetPlate.setBounds (370, 22, 226, 44);
+    nextButton.setBounds (600, 22, 32, 44);
+    diceButton.setBounds (640, 22, 40, 44);
+    saveButton.setBounds (684, 22, 40, 44);
+    undoButton.setBounds (732, 22, 30, 44);
+    redoButton.setBounds (764, 22, 30, 44);
+    gearButton.setBounds (798, 22, 32, 44);
     for (int m = 0; m < 4; ++m)
         macroKnobs[(size_t) m] = &knob ("macro" + juce::String (m + 1), "MACRO " + juce::String (m + 1), Palette::fx,
-                                        { 830 + m * 86, 12, 86, 68 }, 40);
+                                        { 842 + m * 84, 12, 84, 68 }, 40);
     knob ("volume", "VOLUME", Colours::text, { 1188, 12, 68, 68 }, 40);
 
     // Oscillators
@@ -252,53 +283,38 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
 }
 
 //==============================================================================
+// The canvas is three layers: the backdrop (GPU shader, or a cached CPU picture when there's no OpenGL),
+// a cached image of everything static (panels, titles, logo type), and a few live bits drawn on top.
 void HypernovaAudioProcessorEditor::paintCanvas (juce::Graphics& g)
 {
-    const auto bounds = juce::Rectangle<float> (0, 0, (float) baseWidth, (float) baseHeight);
-
-    g.setGradientFill (juce::ColourGradient (Colours::bg1, 0, 0, Colours::bg0, 0, bounds.getHeight(), false));
-    g.fillRect (bounds);
+    if (! cosmosOnGpu())
     {
-        juce::ColourGradient bloom (Colours::accent2.withAlpha (0.11f), 200, 60, Colours::accent2.withAlpha (0.0f), 760, 460, true);
-        g.setGradientFill (bloom);
-        g.fillRect (bounds);
-        juce::ColourGradient bloom2 (Colours::accent.withAlpha (0.08f), 1100, 240, Colours::accent.withAlpha (0.0f), 600, 700, true);
-        g.setGradientFill (bloom2);
-        g.fillRect (bounds);
+        if (! fallbackBackdrop.isValid())
+            fallbackBackdrop = renderCosmosFallback (baseWidth, baseHeight, 2.0f, logoHole, logoHoleRadius);
+        g.drawImage (fallbackBackdrop, juce::Rectangle<float> (0, 0, (float) baseWidth, (float) baseHeight));
     }
-    g.setColour (juce::Colours::white.withAlpha (0.022f));
-    for (int y = 12; y < baseHeight; y += 24)
-        for (int x = 12; x < baseWidth; x += 24)
-            g.fillRect ((float) x, (float) y, 1.2f, 1.2f);
 
-    // Logo: the Arrow key-cap, with a sine-wave arrow for the bass.
+    if (! staticLayer.isValid())
     {
-        auto cap = juce::Rectangle<float> (24, 20, 48, 48);
-        glowRect (g, cap, 12.0f, Colours::accent2, 1.2f);
-        g.setGradientFill (juce::ColourGradient (Colours::accent2, cap.getX(), cap.getY(), Colours::accent, cap.getRight(), cap.getBottom(), false));
-        g.fillRoundedRectangle (cap, 12.0f);
-        g.setColour (Colours::bg0.withAlpha (0.85f));
-        g.fillRoundedRectangle (cap.reduced (3.0f), 9.5f);
-        // Nova: a four-point star burst inside an orbit ring.
-        const auto c = cap.getCentre();
-        juce::Path ring;
-        ring.addEllipse (juce::Rectangle<float> (26, 12).withCentre (c));
-        ring.applyTransform (juce::AffineTransform::rotation (-0.45f, c.x, c.y));
-        glowStroke (g, ring, Colours::accent2.brighter (0.3f), 1.2f, 0.6f);
-        juce::Path wave;
-        wave.addStar (c, 4, 2.2f, 13.0f, 0.0f);
-        g.setColour (Colours::accent.withAlpha (0.25f));
-        g.fillPath (wave);
-        glowStroke (g, wave, Colours::accent, 1.6f);
-        g.setColour (Colours::text);
-        g.fillEllipse (juce::Rectangle<float> (4, 4).withCentre (c));
+        staticLayer = juce::Image (juce::Image::ARGB, baseWidth * 2, baseHeight * 2, true);
+        juce::Graphics sg (staticLayer);
+        sg.addTransform (juce::AffineTransform::scale (2.0f));
+        paintStatic (sg);
+    }
+    g.drawImage (staticLayer, juce::Rectangle<float> (0, 0, (float) baseWidth, (float) baseHeight));
+    paintDynamic (g);
+}
 
-        g.setColour (Colours::text);
-        g.setFont (heavy (23.0f).withExtraKerningFactor (0.12f));
-        g.drawText ("HYPERNOVA", juce::Rectangle<float> (84, 20, 240, 28), juce::Justification::centredLeft, false);
+void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
+{
+    // Wordmark next to the black hole (the hole itself is drawn by the backdrop).
+    {
+        g.setGradientFill (juce::ColourGradient (Colours::text, 84, 20, juce::Colour (0xffc7b4ff), 330, 48, false));
+        g.setFont (heavy (24.0f).withExtraKerningFactor (0.16f));
+        g.drawText ("HYPERNOVA", juce::Rectangle<float> (84, 19, 250, 30), juce::Justification::centredLeft, false);
         g.setColour (Colours::textDim);
-        g.setFont (font (9.5f, true).withExtraKerningFactor (0.3f));
-        g.drawText ("WAVETABLE SPACE SYNTH", juce::Rectangle<float> (85, 48, 240, 16), juce::Justification::centredLeft, false);
+        g.setFont (font (9.5f, true).withExtraKerningFactor (0.34f));
+        g.drawText ("WAVETABLE SPACE SYNTH", juce::Rectangle<float> (85, 48, 250, 16), juce::Justification::centredLeft, false);
     }
 
     auto titled = [&] (const juce::Rectangle<int>& r, const juce::String& title, juce::Colour c, int titleX = 14)
@@ -319,44 +335,39 @@ void HypernovaAudioProcessorEditor::paintCanvas (juce::Graphics& g)
     titled (envPanel, "AMP ENV", Palette::env);
     sectionLabel (g, "MOD ENV", juce::Rectangle<float> ((float) envPanel.getX() + 194, (float) envPanel.getY() + 10, 120, 24), Palette::lfo);
     panel (g, deckPanel.toFloat(), 14.0f);
-    {
-        static const char* hints[] = { "LFOs and the mod matrix: any source to any destination, including the effects",
-                                       "effects run top to bottom: distortion > OTT > chorus > delay > space > EQ",
-                                       "arpeggiator, one-key chords, tuning and unison width" };
-        g.setColour (Colours::textFaint);
-        g.setFont (font (10.5f));
-        g.drawText (hints[juce::jlimit (0, 2, processor.uiDeckPage)], juce::Rectangle<float> ((float) deckPanel.getX() + 420, (float) deckPanel.getY() + 9,
-                    (float) deckPanel.getWidth() - 434, 26), juce::Justification::centredRight, false);
-        g.setColour (Colours::line);
-        g.drawHorizontalLine (deckPanel.getY() + 42, (float) deckPanel.getX() + 12, (float) deckPanel.getRight() - 12);
-    }
+    g.setColour (Colours::line);
+    g.drawHorizontalLine (deckPanel.getY() + 42, (float) deckPanel.getX() + 12, (float) deckPanel.getRight() - 12);
 
-    // Space readout
-    {
-        const int note = processor.shownNote.load();
-        const int voices = processor.shownVoices.load();
-        g.setColour (Colours::textDim);
-        g.setFont (mono (10.0f));
-        const juce::String info = note >= 0 ? juce::MidiMessage::getMidiNoteName (note, true, true, 3) + "   " + juce::String (voices) + (voices == 1 ? " voice" : " voices")
-                                            : "play a note";
-        g.drawText (info, juce::Rectangle<float> ((float) spacePanel.getX() + 118, (float) spacePanel.getY() + 10, 104, 24), juce::Justification::centredRight, false);
-    }
+    auto tray = juce::Rectangle<float> (838, 8, 342, 76);
+    g.setColour (Colours::inset.withAlpha (0.55f));
+    g.fillRoundedRectangle (tray, 12.0f);
+    g.setColour (Colours::line);
+    g.drawRoundedRectangle (tray.reduced (0.5f), 12.0f, 1.0f);
+}
 
-    // Status line under the preset bar
+void HypernovaAudioProcessorEditor::paintDynamic (juce::Graphics& g)
+{
+    static const char* hints[] = { "LFOs and the mod matrix: any source to any destination, including the effects",
+                                   "effects run top to bottom: distortion > OTT > chorus > delay > space > EQ",
+                                   "arpeggiator, one-key chords, tuning and unison width" };
+    g.setColour (Colours::textFaint);
+    g.setFont (font (10.5f));
+    g.drawText (hints[juce::jlimit (0, 2, processor.uiDeckPage)], juce::Rectangle<float> ((float) deckPanel.getX() + 420, (float) deckPanel.getY() + 9,
+                (float) deckPanel.getWidth() - 434, 26), juce::Justification::centredRight, false);
+
+    const int note = processor.shownNote.load();
+    const int voices = processor.shownVoices.load();
+    g.setColour (Colours::textDim);
+    g.setFont (mono (10.0f));
+    const juce::String info = note >= 0 ? juce::MidiMessage::getMidiNoteName (note, true, true, 3) + "   " + juce::String (voices) + (voices == 1 ? " voice" : " voices")
+                                        : "play a note";
+    g.drawText (info, juce::Rectangle<float> ((float) spacePanel.getX() + 118, (float) spacePanel.getY() + 10, 104, 24), juce::Justification::centredRight, false);
+
     if (message.isNotEmpty() && juce::Time::currentTimeMillis() < messageUntil)
     {
         g.setColour (Palette::env);
         g.setFont (font (11.0f, true));
         g.drawText (message, messageArea.toFloat(), juce::Justification::centred, true);
-    }
-
-    // Macros tray
-    {
-        auto tray = juce::Rectangle<float> (822, 8, 356, 76);
-        g.setColour (Colours::inset.withAlpha (0.6f));
-        g.fillRoundedRectangle (tray, 12.0f);
-        g.setColour (Colours::line);
-        g.drawRoundedRectangle (tray.reduced (0.5f), 12.0f, 1.0f);
     }
 }
 
@@ -372,6 +383,31 @@ void HypernovaAudioProcessorEditor::refreshPresetInfo()
 
 void HypernovaAudioProcessorEditor::timerCallback()
 {
+    // Backdrop: feed the shader and ask for a frame. When the GPU path comes up (or goes), redraw the canvas
+    // so the CPU fallback picture isn't left underneath.
+    {
+        float l[512], r[512];
+        processor.scope.latest (l, r, 512);
+        double sum = 0;
+        for (int i = 0; i < 512; ++i) sum += (double) (l[i] * l[i] + r[i] * r[i]);
+        const float rms = (float) std::sqrt (sum / 1024.0);
+        cosmos.level = juce::jlimit (0.0f, 1.0f, rms * 3.0f);
+        const float k = (float) getWidth() / (float) baseWidth;
+        cosmos.holeX = logoHole.x * k;
+        cosmos.holeY = logoHole.y * k;
+        cosmos.holeR = logoHoleRadius * k;
+        const bool gpu = cosmosOnGpu();
+        if (gpu != lastGpu) { lastGpu = gpu; canvas.repaint(); }
+        // Backdrop frame rate: 30 fps while notes sound, 12 fps when idle, or per the Animation setting.
+        const int mode = processor.uiAnimation.load(); // 0 full, 1 calm, 2 off
+        const bool busy = processor.shownVoices.load() > 0;
+        const int every = mode == 2 ? 0 : (mode == 1 ? (busy ? 2 : 5) : (busy ? 1 : 3));
+        ++frameTick;
+        if (gpu && every > 0 && frameTick % every == 0) glContext.triggerRepaint();
+        else if (gpu && every == 0 && ! staticFramePainted) { glContext.triggerRepaint(); staticFramePainted = true; }
+        if (every != 0) staticFramePainted = false;
+    }
+
     const int v = processor.presetVersion.load();
     if (v != lastPresetVersion)
     {
@@ -379,15 +415,32 @@ void HypernovaAudioProcessorEditor::timerCallback()
         refreshPresetInfo();
     }
 
-    viewA.refresh();
-    viewB.refresh();
-    space.refresh();
-    filterView.repaint();
-    ampView.repaint();
-    modView.repaint();
-    lfoView1.repaint();
-    lfoView2.repaint();
-    canvas.repaint (spacePanel.getX() + 110, spacePanel.getY() + 8, 120, 28);
+    // Undo: once edits pause for ~0.4 s, close the step so the next change is a new undo.
+    {
+        const int n = processor.undoManager.getNumActionsInCurrentTransaction();
+        if (n != lastActionCount) { lastActionCount = n; editQuietTicks = 0; }
+        else if (n > 0 && ++editQuietTicks > 12) { processor.undoManager.beginNewTransaction(); lastActionCount = 0; }
+    }
+
+    const bool sounding = processor.shownVoices.load() > 0;
+    viewA.refresh (sounding);
+    viewB.refresh (sounding);
+    space.refresh (sounding);
+    // Small views: only while sound plays (their values move), plus a slow tick otherwise for parameter edits.
+    if (sounding || (++idleTicks % 6) == 0)
+    {
+        filterView.repaint();
+        ampView.repaint();
+        modView.repaint();
+        lfoView1.repaint();
+        lfoView2.repaint();
+    }
+    const int readout = processor.shownNote.load() * 100 + processor.shownVoices.load();
+    if (readout != lastReadout)
+    {
+        lastReadout = readout;
+        canvas.repaint (spacePanel.getX() + 110, spacePanel.getY() + 8, 120, 28);
+    }
     if (message.isNotEmpty() && juce::Time::currentTimeMillis() >= messageUntil)
     {
         message.clear();
@@ -529,6 +582,7 @@ void HypernovaAudioProcessorEditor::importAndReport (const juce::Array<juce::Fil
     const int n = processor.importPresets (items, &first);
     if (n == 0) { showMessage ("No Hypernova sounds found there"); return; }
     processor.loadUserPreset (first);
+    if (browser.isVisible()) browser.refresh();
     showMessage ("Imported " + juce::String (n) + (n == 1 ? " sound" : " sounds") + " into My Sounds");
 }
 
@@ -716,4 +770,74 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
     pg->captions.push_back ({ { 938, 50, 282, 20 }, "Chords need Poly mode (Pitch + Voice panel).", Colours::textFaint, false });
     pg->captions.push_back ({ { 938, 70, 282, 20 }, "Double-click any knob to reset it.", Colours::textFaint, false });
     pg->captions.push_back ({ { 938, 90, 282, 20 }, "Drag the 3D views to fly around them.", Colours::textFaint, false });
+}
+
+//==============================================================================
+void HypernovaAudioProcessorEditor::showDiceMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("RANDOMISE");
+    m.addItem (1, "Nudge this sound (a little)");
+    m.addItem (2, "Mutate this sound (a lot)");
+    m.addItem (3, "Roll a brand new bass");
+    m.addSeparator();
+    m.addItem (4, "Undo", processor.undoManager.canUndo());
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&diceButton), [this] (int r)
+    {
+        if (r == 1) processor.mutate (0.06f);
+        else if (r == 2) processor.mutate (0.22f);
+        else if (r == 3) processor.randomize();
+        else if (r == 4) processor.undoManager.undo();
+    });
+}
+
+void HypernovaAudioProcessorEditor::showSettingsMenu()
+{
+    juce::PopupMenu size, anim, m;
+    const int cur = processor.uiScalePercent.load();
+    for (int pct : { 60, 75, 90, 100, 125, 150 })
+        size.addItem (100 + pct, juce::String (pct) + "%", true, cur == pct);
+    const int a = processor.uiAnimation.load();
+    anim.addItem (10, "Full (30 fps while playing)", true, a == 0);
+    anim.addItem (11, "Calm (lighter on the CPU)", true, a == 1);
+    anim.addItem (12, "Off (still backdrop)", true, a == 2);
+    m.addSubMenu ("Window size", size);
+    m.addSubMenu ("Animation", anim);
+    m.addSeparator();
+    m.addItem (20, "Show my sounds folder");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&gearButton), [this] (int r)
+    {
+        if (r >= 100) applyScale (r - 100);
+        else if (r >= 10 && r <= 12) { processor.uiAnimation = r - 10; glContext.triggerRepaint(); }
+        else if (r == 20) { HypernovaAudioProcessor::userPresetFolder().createDirectory(); HypernovaAudioProcessor::userPresetFolder().revealToUser(); }
+    });
+}
+
+void HypernovaAudioProcessorEditor::applyScale (int percent)
+{
+    percent = juce::jlimit (50, 200, percent);
+    processor.uiScalePercent = percent;
+    // 100% is a comfortable laptop size; the canvas scales from its fixed base layout.
+    const int w = juce::roundToInt (1180.0 * percent / 100.0);
+    setSize (w, juce::roundToInt ((double) w * baseHeight / baseWidth));
+}
+
+bool HypernovaAudioProcessorEditor::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) { processor.undoManager.undo(); return true; }
+    if (k == juce::KeyPress ('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)) { processor.undoManager.redo(); return true; }
+    return false;
+}
+
+void HypernovaAudioProcessorEditor::setBrowserOpen (bool open)
+{
+    if (open)
+    {
+        browser.refresh();
+        browser.setVisible (true);
+        browser.toFront (false);
+        browser.grabSearchFocus();
+    }
+    else
+        browser.setVisible (false);
 }
