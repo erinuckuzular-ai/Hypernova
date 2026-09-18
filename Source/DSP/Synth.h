@@ -231,29 +231,66 @@ namespace dsp
 //==============================================================================
 struct FrameCursor
 {
+    // Two neighbouring frames (morph) at two neighbouring band limits (crossfaded as pitch moves, so a glide
+    // never jumps in brightness), read with 4-point Hermite interpolation.
     const float* a = nullptr;
     const float* b = nullptr;
-    float mix = 0;
-    int size = 256;
+    const float* a2 = nullptr;
+    const float* b2 = nullptr;
+    float mix = 0, levelMix = 0;
+    int size = 256, mask = 255, size2 = 256, mask2 = 255;
 
-    void set (const Wavetable& wt, int level, float pos)
+    void set (const Wavetable& wt, double exactLevel, float pos)
     {
         const float fp = juce::jlimit (0.0f, 1.0f, pos) * (wtFrames - 1);
         const int f0 = juce::jmin (wtFrames - 2, (int) fp);
         mix = fp - (float) f0;
-        a = wt.frame (f0, level);
-        b = wt.frame (f0 + 1, level);
-        size = wtLevelSize (level);
+        const int lo = juce::jlimit (0, wtLevels - 1, (int) std::ceil (exactLevel));
+        const int hi = juce::jmin (wtLevels - 1, lo + 1);
+        // Only the last quarter-octave before a switch reads both levels; elsewhere one level is enough.
+        const float t = hi == lo ? 0.0f : juce::jlimit (0.0f, 1.0f, (float) (exactLevel - (double) lo + 1.0));
+        levelMix = juce::jlimit (0.0f, 1.0f, (t - 0.75f) * 4.0f);
+        a = wt.frame (f0, lo);  b = wt.frame (f0 + 1, lo);
+        a2 = wt.frame (f0, hi); b2 = wt.frame (f0 + 1, hi);
+        size = wtLevelSize (lo);  mask = size - 1;
+        size2 = wtLevelSize (hi); mask2 = size2 - 1;
+    }
+
+    static inline float hermite (const float* d, int i, float f, int m)
+    {
+        const float xm1 = d[(i - 1) & m], x0 = d[i & m], x1 = d[(i + 1) & m], x2 = d[(i + 2) & m];
+        const float c = (x1 - xm1) * 0.5f;
+        const float v = x0 - x1;
+        const float w = c + v;
+        const float aa = w + v + (x2 - x0) * 0.5f;
+        const float bb = w + aa;
+        return ((aa * f - bb) * f + c) * f + x0;
+    }
+
+    // Hermite is linear in the samples, so blend the two morph frames tap by tap and interpolate once.
+    inline float readLevel (const float* fa, const float* fb, int sz, int m, double phase) const
+    {
+        const float p = (float) phase * (float) sz;
+        const int i = juce::jlimit (0, sz - 1, (int) p);
+        const float f = p - (float) i;
+        const int im1 = (i - 1) & m, i1 = (i + 1) & m, i2 = (i + 2) & m;
+        const float xm1 = fa[im1] + mix * (fb[im1] - fa[im1]);
+        const float x0  = fa[i]   + mix * (fb[i]   - fa[i]);
+        const float x1  = fa[i1]  + mix * (fb[i1]  - fa[i1]);
+        const float x2  = fa[i2]  + mix * (fb[i2]  - fa[i2]);
+        const float c = (x1 - xm1) * 0.5f;
+        const float v = x0 - x1;
+        const float w = c + v;
+        const float aa = w + v + (x2 - x0) * 0.5f;
+        const float bb = w + aa;
+        return ((aa * f - bb) * f + c) * f + x0;
     }
 
     inline float read (double phase) const
     {
-        const float p = (float) phase * (float) size;
-        const int i = juce::jlimit (0, size - 1, (int) p);
-        const float f = p - (float) i;
-        const float s0 = a[i] + f * (a[i + 1] - a[i]);
-        const float s1 = b[i] + f * (b[i + 1] - b[i]);
-        return s0 + mix * (s1 - s0);
+        const float v = readLevel (a, b, size, mask, phase);
+        if (levelMix < 0.002f) return v;
+        return v + levelMix * (readLevel (a2, b2, size2, mask2, phase) - v);
     }
 };
 
@@ -448,7 +485,7 @@ public:
                 const double freq = 440.0 * std::exp2 ((basePitch + os.pitch - 69.0) / 12.0);
                 const float spreadCents = det * 25.0f + det * det * 35.0f;
                 const float maxDetRatio = std::exp2 (spreadCents / 1200.0f);
-                const int level2 = WavetableBank::levelFor (freq * maxDetRatio * (r.warp == WarpSync ? 1.0 + r.warpAmt * 7.0 : 1.0), sr);
+                const double level2 = WavetableBank::exactLevel (freq * maxDetRatio * (r.warp == WarpSync ? 1.0 + r.warpAmt * 7.0 : 1.0), sr);
                 r.cur.set (bank.table (os.table), level2, pos);
 
                 float norm = 0;

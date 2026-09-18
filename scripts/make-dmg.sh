@@ -180,7 +180,7 @@ end run
 APPLESCRIPT
 sync
 hdiutil detach "$MOUNT" -quiet || hdiutil detach "$MOUNT" -force -quiet
-hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" >/dev/null
+hdiutil convert "$RW" -format ULMO -o "$DMG" >/dev/null   # LZMA: smallest download (macOS 10.15+)
 rm -f "$RW"
 
 if [[ -n "${APP_SIGN_ID:-}" ]]; then

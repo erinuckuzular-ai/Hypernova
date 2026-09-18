@@ -54,14 +54,21 @@ public:
         return { "Analog", "Sync Saw", "Pulse", "808 Body", "Log Drum", "Growl", "Vowel", "Digital", "Fold", "Harmonic", "Metal", "Scream", "Rich Sine", "Glass", "Air" };
     }
 
-    // Smallest mip level whose harmonics all stay under the audible/Nyquist limit at this frequency.
+    // Smallest mip level whose harmonics all stay under the limit at this frequency.
     static int levelFor (double freq, double sampleRate)
     {
-        const double limit = juce::jmin (0.45 * sampleRate, 19500.0);
+        return juce::jlimit (0, wtLevels - 1, (int) std::ceil (exactLevel (freq, sampleRate)));
+    }
+
+    // Continuous level: harmonics up to `limit` Hz. When running oversampled there's room above 20 kHz
+    // (the downsampler removes it), so tables can stay full-bright right up the keyboard.
+    static double exactLevel (double freq, double sampleRate)
+    {
+        const double limit = sampleRate > 60000.0 ? juce::jmin (0.45 * sampleRate, 36000.0) : juce::jmin (0.45 * sampleRate, 19500.0);
         const double h = limit / juce::jmax (1.0, freq);
-        if (h >= wtMaxHarmonics) return 0;
-        if (h < 1.0) return wtLevels - 1;
-        return juce::jlimit (0, wtLevels - 1, (int) std::ceil (std::log2 ((double) wtMaxHarmonics / h)));
+        if (h >= wtMaxHarmonics) return 0.0;
+        if (h < 1.0) return (double) (wtLevels - 1);
+        return juce::jlimit (0.0, (double) (wtLevels - 1), std::log2 ((double) wtMaxHarmonics / h));
     }
 
 private:

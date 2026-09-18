@@ -138,6 +138,7 @@ public:
     std::atomic<float> shownPos[2] {}, shownLfo[2] {}, shownLfoPhase[2] {}, shownEnv { 0 }, shownCutoff { 1000 };
     std::atomic<int> shownVoices { 0 }, shownNote { -1 };
     double getCurrentSampleRate() const { return sampleRateNow; }
+    bool isAsleep() const { return sleeping; }
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void setParam (const juce::String& id, float realValue);
@@ -148,6 +149,9 @@ private:
     ab::FxSettings readFxSettings();
     float param (const char* id) const;
 
+    void processChunk (juce::AudioBuffer<float>&, juce::MidiBuffer&);
+    void applyQuality (int q);
+    void smoothSettings (ab::SynthSettings&, int numSamples);
     void noteOn (int note, float velocity);
     ab::Voice& allocateVoice();
     void runArpeggiator (juce::MidiBuffer& midi, int numSamples, double ppq, bool playing);
@@ -158,7 +162,14 @@ private:
     std::array<ab::Voice, ab::MaxVoices> voices;
     ab::Effects effects;
     ab::GlobalMod globalMod;
-    ab::SynthSettings blockSettings;
+    ab::SynthSettings blockSettings, smoothed;
+    bool smoothReady = false;
+    int smoothVersion = -1;
+    std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 2> voiceOversampler; // 2x, 4x
+    int osFactor = 1, currentQuality = -1;
+    float limiterGain = 1.0f;
+    bool sleeping = false;
+    int silentSamples = 0;
     std::vector<int> heldNotes;
     std::vector<juce::MidiMessageMetadata> midiOrder;
     // Arpeggiator

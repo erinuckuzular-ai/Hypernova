@@ -284,7 +284,7 @@ public:
 
 private:
     double sr = 44100.0;
-    juce::dsp::Oversampling<float> oversampler { 2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true };
+    juce::dsp::Oversampling<float> oversampler { 2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true }; // 4x for the distortion
     juce::dsp::Chorus<float> chorus;
     SpaceReverb reverb;
     juce::dsp::LinkwitzRileyFilter<float> lowSplit, highSplit;

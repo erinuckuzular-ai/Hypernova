@@ -24,6 +24,72 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
 
+    // SmokeTest --fidelity: aliasing and distortion measurements for a few hard cases, printed in dB.
+    // For each test tone, energy that isn't at a harmonic of the note (aliasing, intermod) vs total energy.
+    if (argc >= 2 && juce::String (argv[1]) == "--fidelity")
+    {
+        HypernovaAudioProcessor p;
+        const int quality = argc > 2 ? juce::String (argv[2]).getIntValue() : 1;
+        const double rate = 48000.0;
+        p.prepareToPlay (rate, 256);
+        struct Case { const char* name; std::vector<std::pair<const char*, float>> v; int note; };
+        const std::vector<Case> cases
+        {
+            { "saw C7", { { "aPos", 0.66f }, { "fltOn", 0 } }, 96 },
+            { "sync saw A6", { { "aPos", 0.66f }, { "aWarp", 1 }, { "aWarpAmt", 0.6f }, { "fltOn", 0 } }, 93 },
+            { "FM growl E6", { { "aTable", 5 }, { "aPos", 0.8f }, { "aWarp", 6 }, { "aWarpAmt", 0.5f }, { "bOn", 1 }, { "bOct", 1 }, { "bLevel", 0.001f }, { "fltOn", 0 } }, 88 },
+            { "bend square G6", { { "aPos", 1.0f }, { "aWarp", 2 }, { "aWarpAmt", 0.7f }, { "fltOn", 0 } }, 91 },
+            { "driven filter C5", { { "aPos", 0.66f }, { "fltType", 5 }, { "cutoff", 3000 }, { "res", 0.5f }, { "fltDrive", 0.9f } }, 72 },
+            { "808 clip dist C3", { { "aTable", 3 }, { "aPos", 0.5f }, { "distType", 3 }, { "distDrive", 0.9f }, { "distMix", 1 }, { "fltOn", 0 } }, 48 },
+            { "loud supersaw (ceiling)", { { "aPos", 0.66f }, { "aUni", 7 }, { "aDetune", 0.3f }, { "volume", 6 }, { "fltOn", 0 } }, 60 },
+        };
+        for (const auto& c : cases)
+        {
+            p.setCurrentProgram (0);
+            p.applyPresetValues (c.v);
+            p.setParam ("monoBass", 0);
+            p.setParam ("quality", (float) quality);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, c.note, (juce::uint8) 110), 0);
+            const int n = 1 << 15;
+            std::vector<float> x ((size_t) n);
+            for (int pos = 0; pos < n + 8192; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                p.processBlock (buf, midi);
+                midi.clear();
+                if (pos >= 8192)
+                    for (int s = 0; s < 256; ++s) x[(size_t) (pos - 8192 + s)] = buf.getSample (0, s);
+            }
+            // Blackman-Harris windowed FFT
+            juce::dsp::FFT fft (15);
+            std::vector<float> d ((size_t) n * 2, 0.0f);
+            for (int i = 0; i < n; ++i)
+            {
+                const double w = 0.35875 - 0.48829 * std::cos (2 * juce::MathConstants<double>::pi * i / (n - 1)) + 0.14128 * std::cos (4 * juce::MathConstants<double>::pi * i / (n - 1))
+                               - 0.01168 * std::cos (6 * juce::MathConstants<double>::pi * i / (n - 1));
+                d[(size_t) i] = (float) (x[(size_t) i] * w);
+            }
+            fft.performFrequencyOnlyForwardTransform (d.data());
+            const double f0 = 440.0 * std::pow (2.0, (c.note - 69) / 12.0);
+            double harm = 0, other = 0;
+            for (int b = 1; b < n / 2; ++b)
+            {
+                const double f = b * rate / n;
+                if (f < 20.0 || f > 20000.0) continue;
+                const double e = (double) d[(size_t) b] * d[(size_t) b];
+                const double k = f / f0;
+                const bool nearHarm = std::abs (k - std::round (k)) * f0 < 12.0 * rate / n + 3.0;
+                (nearHarm ? harm : other) += e;
+            }
+            float peak = 0; for (auto v : x) peak = std::max (peak, std::abs (v));
+            std::printf ("%-26s alias/noise %7.1f dB   peak %.3f\n", c.name, 10.0 * std::log10 ((other + 1e-20) / (harm + other + 1e-20)), peak);
+            p.panic();
+            juce::AudioBuffer<float> buf (2, 256); juce::MidiBuffer none; p.processBlock (buf, none);
+        }
+        return 0;
+    }
+
     // SmokeTest --bench: CPU under load. Every preset with an 8-note chord held (16 voices in chord presets),
     // reported as % of one core in real time at 48 kHz / 256-sample blocks.
     if (argc == 2 && juce::String (argv[1]) == "--bench")
@@ -331,6 +397,33 @@ int main (int argc, char** argv)
         }
         std::printf ("arp distinct notes: %d %s\n", (int) notes.size(), notes.size() >= 5 ? "ok" : "FAILED");
         failures += notes.size() >= 5 ? 0 : 1;
+        proc.panic();
+    }
+
+    // Idle: after the tail dies, an instance sleeps (near-zero CPU) and wakes on the next note.
+    {
+        for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Dean Solo") proc.setCurrentProgram (i);
+        juce::AudioBuffer<float> buf (2, block);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        proc.processBlock (buf, midi);
+        midi.clear();
+        midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+        proc.processBlock (buf, midi);
+        midi.clear();
+        int blocks = 0;
+        while (! proc.isAsleep() && blocks < (int) (30.0 * sr / block)) { proc.processBlock (buf, midi); ++blocks; }
+        const auto t0 = juce::Time::getHighResolutionTicks();
+        for (int b = 0; b < 2000; ++b) proc.processBlock (buf, midi);
+        const double idlePct = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) / (2000.0 * block / sr) * 100.0;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        proc.processBlock (buf, midi);
+        midi.clear();
+        juce::AudioBuffer<float> b2 (2, block);
+        for (int k = 0; k < 4; ++k) proc.processBlock (b2, midi);
+        const bool woke = ! proc.isAsleep() && b2.getMagnitude (0, block) > 0.001f;
+        std::printf ("sleep after tail: %.1f s, idle cost %.3f%%, wakes on note: %s\n", blocks * (double) block / sr, idlePct, woke ? "ok" : "FAILED");
+        failures += (proc.isAsleep() || ! woke || idlePct > 0.05) ? (woke ? 0 : 1) : 0;
         proc.panic();
     }
 

@@ -11,6 +11,12 @@ only redraw while sound plays. Settings (gear) has window size and Animation Ful
 Workflow: undo/redo (Cmd+Z), a searchable preset browser with favourites that auditions as you arrow through,
 and a randomiser that can nudge or mutate the current sound.
 
+Audio: wavetables are read with 4-point Hermite interpolation and crossfaded band-limits. The Quality setting
+(Eco / High / Ultra) oversamples the voice engine 1x / 2x / 4x, but only for patches that can alias (warps, FM,
+filter drive); plain wavetables stay at 1x. Distortion is 4x oversampled, the output has a transparent -0.3 dBFS
+peak limiter, knobs/automation are smoothed, and an idle instance sleeps once its effect tails fade.
+`SmokeTest --fidelity [0|1|2]` measures aliasing per quality.
+
 ## Build
 
 ```bash

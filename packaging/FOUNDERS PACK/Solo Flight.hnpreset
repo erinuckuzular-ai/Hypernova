@@ -115,6 +115,7 @@
   <PARAM id="noiseLevel" value="0.0"/>
   <PARAM id="noiseTone" value="0.699999988079071"/>
   <PARAM id="ott" value="0.0"/>
+  <PARAM id="quality" value="1.0"/>
   <PARAM id="res" value="0.25"/>
   <PARAM id="retrig" value="0.0"/>
   <PARAM id="strum" value="0.0"/>
@@ -129,6 +130,6 @@
   <PARAM id="verbMix" value="0.3499999940395355"/>
   <PARAM id="verbShimmer" value="0.0"/>
   <PARAM id="verbSize" value="0.75"/>
-  <PARAM id="volume" value="-6.59999942779541"/>
+  <PARAM id="volume" value="-5.499999523162842"/>
   <PARAM id="width" value="1.0"/>
 </ArrowBass>

@@ -158,6 +158,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     addFloat (l, "drift", "Analog Drift", { 0.0f, 1.0f }, 0.0f, pctText);
     add<Choice> (l, pid ("chord"), "Chord", chordNames(), 0);
     addFloat (l, "strum", "Chord Strum", skewed (0.0f, 0.12f, 0.03f), 0.0f, timeText);
+    add<Choice> (l, pid ("quality"), "Quality", juce::StringArray { "Eco", "High", "Ultra" }, 1);
     add<Bool> (l, pid ("arpOn"), "Arp On", false);
     add<Choice> (l, pid ("arpMode"), "Arp Mode", arpModeNames(), 0);
     add<Choice> (l, pid ("arpRate"), "Arp Rate", arpRateNames(), 3);
@@ -203,7 +204,16 @@ void HypernovaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 {
     sampleRateNow = sampleRate;
     maxBlock = juce::jmax (32, samplesPerBlock);
-    for (auto& v : voices) v.prepare (sampleRate);
+    for (int i = 0; i < 2; ++i)
+    {
+        voiceOversampler[(size_t) i] = std::make_unique<juce::dsp::Oversampling<float>> (2, (size_t) (i + 1),
+                                           juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+        voiceOversampler[(size_t) i]->initProcessing ((size_t) maxBlock);
+    }
+    currentQuality = -1;
+    applyQuality ((int) param ("quality"));
+    smoothReady = false;
+    limiterGain = 1.0f;
     effects.prepare (sampleRate, maxBlock);
     masterGain.reset (sampleRate, 0.05);
     masterGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param ("volume")));
@@ -279,6 +289,46 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
         s.mod[(size_t) i] = { (int) param ((p + "Src").c_str()), (int) param ((p + "Dest").c_str()), param ((p + "Amt").c_str()) };
     }
     return s;
+}
+
+// Knob moves and automation glide (~15 ms) instead of stepping once per block. Preset loads jump straight there.
+void HypernovaAudioProcessor::smoothSettings (SynthSettings& s, int numSamples)
+{
+    const int version = presetVersion.load();
+    if (! smoothReady || version != smoothVersion)
+    {
+        smoothed = s;
+        smoothReady = true;
+        smoothVersion = version;
+        return;
+    }
+    const float a = 1.0f - std::exp (-(float) numSamples / (0.015f * (float) sampleRateNow));
+    auto glide = [a] (float& cur, float target) { cur += (target - cur) * a; return cur; };
+    for (int o = 0; o < 2; ++o)
+    {
+        auto& d = s.osc[(size_t) o];
+        auto& m = smoothed.osc[(size_t) o];
+        d.pos = glide (m.pos, d.pos);
+        d.warpAmt = glide (m.warpAmt, d.warpAmt);
+        d.level = glide (m.level, d.level);
+        d.pan = glide (m.pan, d.pan);
+        d.detune = glide (m.detune, d.detune);
+        d.blend = glide (m.blend, d.blend);
+        d.width = glide (m.width, d.width);
+    }
+    s.subLevel = glide (smoothed.subLevel, s.subLevel);
+    s.noiseLevel = glide (smoothed.noiseLevel, s.noiseLevel);
+    s.noiseTone = glide (smoothed.noiseTone, s.noiseTone);
+    {
+        // cutoff glides in octaves so sweeps sound even
+        float lc = std::log2 (smoothed.cutoff);
+        smoothed.cutoff = std::exp2 (glide (lc, std::log2 (juce::jmax (20.0f, s.cutoff))));
+        s.cutoff = smoothed.cutoff;
+    }
+    s.res = glide (smoothed.res, s.res);
+    s.filterDrive = glide (smoothed.filterDrive, s.filterDrive);
+    s.filterEnv = glide (smoothed.filterEnv, s.filterEnv);
+    s.filterMix = glide (smoothed.filterMix, s.filterMix);
 }
 
 FxSettings HypernovaAudioProcessor::readFxSettings()
@@ -414,13 +464,75 @@ void HypernovaAudioProcessor::allNotesOff (bool hard)
     }
 }
 
+// Quality: the whole voice engine runs at 1x (Eco), 2x (High) or 4x (Ultra) the host rate, then a steep
+// half-band filter brings it back down. Warps, FM, sync, filter drive and the sub's edges stop aliasing.
+// Only patches that can alias get oversampled: plain wavetables are already band-limited, so they stay at 1x
+// and cost nothing extra. Warps, FM, sync and filter drive switch to 2x (High) or 4x (Ultra).
+static bool patchCanAlias (const SynthSettings& s)
+{
+    for (const auto& o : s.osc)
+        if (o.on && o.warp != WarpOff) return true;
+    if (s.filterOn && (s.filterDrive > 0.001f || s.filterType == FDirty)) return true;
+    for (const auto& m : s.mod)
+        if (m.src != SrcNone && (m.dest == DAWarp || m.dest == DBWarp || m.dest == DDrive)) return true;
+    return false;
+}
+
+void HypernovaAudioProcessor::applyQuality (int q)
+{
+    q = juce::jlimit (0, 2, q);
+    const int want = q == 0 || ! patchCanAlias (blockSettings) ? 1 : (q == 1 ? 2 : 4);
+    if (want == osFactor && currentQuality >= 0) return;
+    // Changing rate resets voices, so wait until nothing is sounding (preset changes are silent anyway).
+    bool sounding = false;
+    for (auto& v : voices) sounding = sounding || v.isActive();
+    if (sounding && currentQuality >= 0) return;
+    currentQuality = q;
+    osFactor = want;
+    allNotesOff (true);
+    for (auto& v : voices) v.prepare (sampleRateNow * osFactor);
+    auto* os = osFactor > 1 ? voiceOversampler[(size_t) (osFactor == 2 ? 0 : 1)].get() : nullptr;
+    if (os != nullptr) os->reset();
+    setLatencySamples (os != nullptr ? juce::roundToInt (os->getLatencyInSamples()) : 0);
+}
+
 void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    // Hosts may send more than they announced; run in chunks we're prepared for.
+    const int total = buffer.getNumSamples();
+    if (total <= maxBlock) { processChunk (buffer, midi); return; }
+    juce::MidiBuffer part;
+    for (int start = 0; start < total; start += maxBlock)
+    {
+        const int n = juce::jmin (maxBlock, total - start);
+        part.clear();
+        for (const auto meta : midi)
+            if (meta.samplePosition >= start && meta.samplePosition < start + n)
+                part.addEvent (meta.getMessage(), meta.samplePosition - start);
+        float* chans[2] = { buffer.getWritePointer (0, start), buffer.getWritePointer (1, start) };
+        juce::AudioBuffer<float> sub (chans, 2, n);
+        processChunk (sub, part);
+    }
+    midi.clear();
+}
+
+void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
     const int numSamples = buffer.getNumSamples();
     buffer.clear();
 
     keyboardState.processNextMidiBuffer (midi, 0, numSamples, true);
+
+    // Asleep: nothing playing and every effect tail has died away. Stay asleep (zero CPU) until MIDI arrives.
+    if (sleeping)
+    {
+        bool anyMidi = false;
+        for (const auto meta : midi) { juce::ignoreUnused (meta); anyMidi = true; break; }
+        if (! anyMidi && ! panicRequested.load()) return;
+        sleeping = false;
+        silentSamples = 0;
+    }
 
     if (panicRequested.exchange (false))
     {
@@ -440,6 +552,8 @@ void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         }
 
     blockSettings = readSynthSettings();
+    applyQuality ((int) param ("quality"));
+    smoothSettings (blockSettings, numSamples);
     auto& settings = blockSettings;
     if (settings.mode != lastMode)
     {
@@ -463,11 +577,24 @@ void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     auto* L = buffer.getWritePointer (0);
     auto* R = buffer.getWritePointer (1);
 
+    // Voices render into the oversampled bus (or straight into the output in Eco).
+    juce::dsp::AudioBlock<float> outBlock (buffer);
+    juce::dsp::Oversampling<float>* os = osFactor > 1 ? voiceOversampler[(size_t) (osFactor == 2 ? 0 : 1)].get() : nullptr;
+    float* vL = L;
+    float* vR = R;
+    if (os != nullptr)
+    {
+        auto up = os->processSamplesUp (outBlock);
+        up.clear();
+        vL = up.getChannelPointer (0);
+        vR = up.getChannelPointer (1);
+    }
+    const int f = osFactor;
     auto renderVoices = [&] (int from, int to)
     {
         if (to <= from) return;
         for (auto& v : voices)
-            v.render (L + from, R + from, to - from, settings, globalMod);
+            v.render (vL + from * f, vR + from * f, (to - from) * f, settings, globalMod);
     };
 
     // Hosts often send the next note-on before the previous note-off at the same sample. Handle offs first
@@ -517,6 +644,7 @@ void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     globalMod.bendSemis = (float) (pitchWheel - 8192) / 8192.0f * param ("bendRange");
     renderVoices (cursor, numSamples);
     midi.clear();
+    if (os != nullptr) os->processSamplesDown (outBlock);
 
     // Master effects in chunks the effects were prepared for.
     auto fx = readFxSettings();
@@ -529,21 +657,38 @@ void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         effects.process (chunk, fx);
     }
 
+    // Output: master volume, then a transparent peak limiter at -0.3 dBFS. Gain drops instantly to catch a
+    // peak and recovers over ~80 ms, so loud patches stay clean instead of being clipped.
     masterGain.setTargetValue (juce::Decibels::decibelsToGain (param ("volume")));
+    const float ceiling = 0.966f;
+    const float release = std::exp (-1.0f / (0.08f * (float) sampleRateNow));
     for (int i = 0; i < numSamples; ++i)
     {
         const float g = masterGain.getNextValue();
-        for (auto* ch : { L, R })
-        {
-            float x = ch[i] * g;
-            const float a = std::abs (x);
-            if (a > 0.8f) x = std::copysign (0.8f + 0.2f * std::tanh ((a - 0.8f) / 0.2f), x); // soft ceiling
-            if (! std::isfinite (x)) x = 0.0f;
-            ch[i] = x;
-        }
+        float l = L[i] * g, r = R[i] * g;
+        if (! std::isfinite (l)) l = 0.0f;
+        if (! std::isfinite (r)) r = 0.0f;
+        const float peak = juce::jmax (std::abs (l), std::abs (r));
+        const float target = peak > ceiling ? ceiling / peak : 1.0f;
+        limiterGain = target < limiterGain ? target : target + release * (limiterGain - target);
+        L[i] = l * limiterGain;
+        R[i] = r * limiterGain;
     }
 
     scope.push (L, R, numSamples);
+
+    // Fall asleep after a second of true silence with no voices (tails included).
+    {
+        bool anyVoice = false;
+        for (auto& v : voices) anyVoice = anyVoice || v.isActive();
+        const float peak = juce::jmax (buffer.getMagnitude (0, 0, numSamples), buffer.getMagnitude (1, 0, numSamples));
+        if (! anyVoice && heldNotes.empty() && arpKeys.empty() && peak < 1.0e-5f)
+        {
+            silentSamples += numSamples;
+            if (silentSamples > (int) sampleRateNow) { sleeping = true; effects.reset(); }
+        }
+        else silentSamples = 0;
+    }
 
     // Visualiser taps from the newest sounding voice.
     const Voice* newest = nullptr;

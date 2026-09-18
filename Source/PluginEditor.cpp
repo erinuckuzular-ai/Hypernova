@@ -127,7 +127,7 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     undoButton.onClick = [this] { if (! processor.undoManager.undo()) showMessage ("Nothing to undo"); };
     redoButton.setTooltip ("Redo (Cmd+Shift+Z)");
     redoButton.onClick = [this] { if (! processor.undoManager.redo()) showMessage ("Nothing to redo"); };
-    gearButton.setTooltip ("Window size and animation");
+    gearButton.setTooltip ("Sound quality, window size and animation");
     gearButton.onClick = [this] { showSettingsMenu(); };
     saveButton.setTooltip ("Save this sound to My Sounds (then export it to share with friends)");
     saveButton.onClick = [this] { showSaveDialog(); };
@@ -801,6 +801,12 @@ void HypernovaAudioProcessorEditor::showSettingsMenu()
     anim.addItem (10, "Full (30 fps while playing)", true, a == 0);
     anim.addItem (11, "Calm (lighter on the CPU)", true, a == 1);
     anim.addItem (12, "Off (still backdrop)", true, a == 2);
+    juce::PopupMenu quality;
+    const int qv = (int) processor.apvts.getRawParameterValue ("quality")->load();
+    quality.addItem (30, "Eco (lightest CPU)", true, qv == 0);
+    quality.addItem (31, "High (default: oversamples only patches that need it)", true, qv == 1);
+    quality.addItem (32, "Ultra (4x oversampling, cleanest)", true, qv == 2);
+    m.addSubMenu ("Sound quality", quality);
     m.addSubMenu ("Window size", size);
     m.addSubMenu ("Animation", anim);
     m.addSeparator();
@@ -809,6 +815,7 @@ void HypernovaAudioProcessorEditor::showSettingsMenu()
     {
         if (r >= 100) applyScale (r - 100);
         else if (r >= 10 && r <= 12) { processor.uiAnimation = r - 10; glContext.triggerRepaint(); }
+        else if (r >= 30 && r <= 32) { processor.setParam ("quality", (float) (r - 30)); showMessage ("Sound quality: " + juce::StringArray { "Eco", "High", "Ultra" }[r - 30]); }
         else if (r == 20) { HypernovaAudioProcessor::userPresetFolder().createDirectory(); HypernovaAudioProcessor::userPresetFolder().revealToUser(); }
     });
 }
