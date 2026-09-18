@@ -1,0 +1,30 @@
+HYPERNOVA
+
+INSTALL
+  1. Double-click "Install Hypernova.pkg".
+     A newer version installs straight over an older one. Your own sounds are kept.
+  2. Ableton Live: Settings > Plug-Ins > Rescan.
+     Find it in Browser > Plug-Ins > Arrow > Hypernova.
+
+FOUNDERS PACK
+  22 exclusive sounds, free. The installer adds them to the preset menu under Sound Packs.
+  The "FOUNDERS PACK" folder here is the same pack, for sharing or for importing by hand:
+  drag the folder (or any .hnpreset file) onto the Hypernova window,
+  or use the preset menu > "Import sounds or a pack...".
+
+SHARE YOUR SOUNDS
+  Preset menu > "Save current sound..."  (keeps it in My Sounds)
+  Preset menu > "Export current sound to share..."  (writes a .hnpreset file)
+  Send the file to a friend. They drag it onto Hypernova and it's in their My Sounds.
+
+INSTALLS TO
+  VST3   /Library/Audio/Plug-Ins/VST3/Hypernova.vst3
+  AU     /Library/Audio/Plug-Ins/Components/Hypernova.component
+  App    /Applications/Hypernova.app
+  Pack   /Library/Application Support/Arrow/Hypernova/Packs
+  Your sounds  ~/Library/Application Support/Arrow/Hypernova/Presets
+
+UNINSTALL
+  Delete the files above.
+
+Apple Silicon and Intel Macs, macOS 11+.

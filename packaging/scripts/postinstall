@@ -1,0 +1,6 @@
+#!/bin/bash
+# Make hosts notice the new Audio Unit and clear any download quarantine flags.
+xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/Hypernova.component" 2>/dev/null || true
+xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/Hypernova.vst3" 2>/dev/null || true
+killall -9 AudioComponentRegistrar 2>/dev/null || true
+exit 0

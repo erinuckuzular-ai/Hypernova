@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Hypernova @VERSION@</title>
+    <organization>com.arrow</organization>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <domains enable_localSystem="true"/>
+    <os-version min="11.0"/>
+
+    <choices-outline>
+        <line choice="vst3"/>
+        <line choice="au"/>
+        <line choice="app"/>
+        <line choice="pack"/>
+    </choices-outline>
+
+    <choice id="vst3" title="VST3 plug-in" description="For Ableton Live, FL Studio and most DAWs.">
+        <pkg-ref id="com.arrow.hypernova.vst3"/>
+    </choice>
+    <choice id="au" title="Audio Unit (AU) plug-in" description="For Ableton Live, Logic Pro and GarageBand.">
+        <pkg-ref id="com.arrow.hypernova.au"/>
+    </choice>
+    <choice id="app" title="Standalone app" description="Play Hypernova without a DAW.">
+        <pkg-ref id="com.arrow.hypernova.app"/>
+    </choice>
+    <choice id="pack" title="FOUNDERS PACK" description="22 exclusive sounds, free. They appear under Sound Packs in the preset menu.">
+        <pkg-ref id="com.arrow.hypernova.pack"/>
+    </choice>
+
+    <pkg-ref id="com.arrow.hypernova.vst3" version="@VERSION@">Hypernova-vst3.pkg</pkg-ref>
+    <pkg-ref id="com.arrow.hypernova.au" version="@VERSION@">Hypernova-au.pkg</pkg-ref>
+    <pkg-ref id="com.arrow.hypernova.app" version="@VERSION@">Hypernova-app.pkg</pkg-ref>
+    <pkg-ref id="com.arrow.hypernova.pack" version="@VERSION@">Hypernova-pack.pkg</pkg-ref>
+</installer-gui-script>
