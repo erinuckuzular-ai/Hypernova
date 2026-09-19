@@ -66,7 +66,7 @@ struct Part: Identifiable {
         "Library/Audio/Plug-Ins/VST3/Hypernova.vst3", "Library/Audio/Plug-Ins/Components/Hypernova.component",
         "Library/Audio/Plug-Ins/VST3/Arrow Bass.vst3", "Library/Audio/Plug-Ins/Components/Arrow Bass.component",
     ]
-    nonisolated static var soundsFolder: URL { FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Arrow/Hypernova") }
+    nonisolated static var soundsFolder: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Arrow/Hypernova") }
 
     var installedVersion: String? {
         for path in Self.systemItems.prefix(3) {
@@ -77,7 +77,7 @@ struct Part: Identifiable {
 
     var somethingInstalled: Bool {
         let fm = FileManager.default, home = fm.homeDirectoryForCurrentUser
-        return Self.systemItems.contains { fm.fileExists(atPath: $0) } || Self.userItems.contains { fm.fileExists(atPath: home.appending(path: $0).path) }
+        return Self.systemItems.contains { fm.fileExists(atPath: $0) } || Self.userItems.contains { fm.fileExists(atPath: home.appendingPathComponent($0).path) }
     }
 
     var hasArrowBass: Bool {
@@ -144,7 +144,7 @@ struct Part: Identifiable {
         guard let pkg = Bundle.main.url(forResource: "Hypernova", withExtension: "pkg") else {
             return .failure(.init(message: "The installer is missing its package. Download the DMG again.", cancelled: false))
         }
-        let xml = FileManager.default.temporaryDirectory.appending(path: "hypernova-choices.plist")
+        let xml = FileManager.default.temporaryDirectory.appendingPathComponent("hypernova-choices.plist")
         let entries: [[String: Any]] = choices.map { ["choiceIdentifier": $0.0, "choiceAttribute": "selected", "attributeSetting": $0.1 ? 1 : 0] }
         do {
             let data = try PropertyListSerialization.data(fromPropertyList: entries, format: .xml, options: 0)
@@ -160,7 +160,7 @@ struct Part: Identifiable {
     // Per-user copies (old dev builds, Arrow Bass) would show up twice next to the system-wide install.
     private func removeUserCopies() {
         let fm = FileManager.default, home = fm.homeDirectoryForCurrentUser
-        for rel in Self.userItems { try? fm.removeItem(at: home.appending(path: rel)) }
+        for rel in Self.userItems { try? fm.removeItem(at: home.appendingPathComponent(rel)) }
     }
 
     // MARK: Uninstall
@@ -192,11 +192,11 @@ struct Part: Identifiable {
     private func cycleStatus(_ lines: [String], while phase: Phase) {
         Task { @MainActor in
             var i = 0
-            try? await Task.sleep(for: .seconds(2.5))
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
             while self.phase == phase {
                 self.status = lines[i % lines.count]
                 i += 1
-                try? await Task.sleep(for: .seconds(1.4))
+                try? await Task.sleep(nanoseconds: 1_400_000_000)
             }
         }
     }
@@ -215,6 +215,7 @@ struct Part: Identifiable {
     init() {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
+        guard #available(macOS 13.0, *) else { exit(1) } // snapshots use ImageRenderer; the installer itself runs on macOS 12
         let dir = URL(fileURLWithPath: args[i + 1])
         let screens: [(String, Phase)] = [("welcome", .welcome), ("working", .working), ("done", .done), ("failed", .failed("Sample error")),
                                           ("uninstall", .uninstallAsk), ("uninstalled", .uninstalled)]
@@ -227,14 +228,16 @@ struct Part: Identifiable {
             renderer.scale = 2
             if let img = renderer.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
                let png = rep.representation(using: .png, properties: [:]) {
-                try? png.write(to: dir.appending(path: "installer-\(name).png"))
+                try? png.write(to: dir.appendingPathComponent("installer-\(name).png"))
             }
         }
         exit(0)
     }
 
     var body: some Scene {
-        Window(installer.uninstallMode ? "Uninstall Hypernova" : "Install Hypernova", id: "main") {
+        // WindowGroup rather than Window (macOS 13+) so the installer opens on macOS 12 too; File > New is removed
+        // and the delegate makes the window fixed-size.
+        WindowGroup(installer.uninstallMode ? "Uninstall Hypernova" : "Install Hypernova") {
             InstallerView()
                 .environmentObject(installer)
                 .frame(width: 720, height: 480)
@@ -242,7 +245,7 @@ struct Part: Identifiable {
                 .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .commands { CommandGroup(replacing: .newItem) {} }
     }
 }
 
@@ -250,6 +253,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first?.isMovableByWindowBackground = true
+        DispatchQueue.main.async {
+            for w in NSApp.windows {
+                w.isMovableByWindowBackground = true
+                w.styleMask.remove(.resizable)
+                w.standardWindowButton(.zoomButton)?.isEnabled = false
+            }
+        }
     }
 }

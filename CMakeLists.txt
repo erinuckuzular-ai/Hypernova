@@ -1,9 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Hypernova VERSION 0.4.0)
+# Must be set before project(): afterwards CMake ignores it and builds for the SDK's own macOS version.
+# 10.13 High Sierra covers older Intel Macs; the arm64 slice is always 11.0+.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Oldest macOS supported")
+
+project(Hypernova VERSION 0.4.1)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "")
 option(HYPERNOVA_COPY_PLUGINS "Install plug-ins into ~/Library/Audio/Plug-Ins after building" ON)
 
 include(FetchContent)

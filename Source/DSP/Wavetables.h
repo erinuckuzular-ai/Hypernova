@@ -240,11 +240,27 @@ private:
         };
         blurbs[TAir] = "dense breathy partials, dark to shimmering";
 
+        // One FFT plan (and its scale) per mip level, shared by every frame of every table: making plans per
+        // frame was most of the plug-in's open time, which matters on older Intel Macs.
+        Plans plans;
+        for (int l = 0; l < wtLevels; ++l)
+        {
+            const int size = wtLevelSize (l);
+            plans.inv.push_back (std::make_unique<juce::dsp::FFT> ((int) std::round (std::log2 ((double) size))));
+            plans.scale.push_back (inverseScale (*plans.inv.back(), size));
+        }
         for (int i = 0; i < NumTables; ++i)
-            tables.push_back (build (n[i], blurbs[(size_t) i], gens[(size_t) i]));
+            tables.push_back (build (n[i], blurbs[(size_t) i], gens[(size_t) i], plans));
     }
 
-    static Wavetable build (const juce::String& name, const juce::String& blurb, const Gen& gen)
+    struct Plans
+    {
+        juce::dsp::FFT fwd { 11 }; // 2048
+        std::vector<std::unique_ptr<juce::dsp::FFT>> inv;
+        std::vector<float> scale;
+    };
+
+    static Wavetable build (const juce::String& name, const juce::String& blurb, const Gen& gen, Plans& plans)
     {
         Wavetable wt;
         wt.name = name;
@@ -259,19 +275,17 @@ private:
         wt.data.assign (wt.frameStride * wtFrames, 0.0f);
 
         using C = std::complex<float>;
-        const int baseOrder = 11; // 2048
-        juce::dsp::FFT fwd (baseOrder);
-        std::vector<C> in ((size_t) wtBaseSize), spec ((size_t) wtBaseSize);
+        std::vector<C> in ((size_t) wtBaseSize), spec ((size_t) wtBaseSize), s ((size_t) wtBaseSize), out ((size_t) wtBaseSize);
+        std::vector<C> harm ((size_t) wtMaxHarmonics + 1);
 
         for (int f = 0; f < wtFrames; ++f)
         {
             const double t = (double) f / (wtFrames - 1);
             for (int i = 0; i < wtBaseSize; ++i)
                 in[(size_t) i] = C ((float) gen (t, (double) i / wtBaseSize), 0.0f);
-            fwd.perform (in.data(), spec.data(), false);
+            plans.fwd.perform (in.data(), spec.data(), false);
 
             // Harmonic k as complex amplitude: x(n) = Re(sum c_k e^{i 2pi k n / N}) with c_k = 2 X_k / N.
-            std::vector<C> harm ((size_t) wtMaxHarmonics + 1);
             for (int k = 1; k <= wtMaxHarmonics; ++k)
                 harm[(size_t) k] = spec[(size_t) k] * (2.0f / (float) wtBaseSize);
 
@@ -281,14 +295,12 @@ private:
                 const int size = wtLevelSize (l), maxH = wtLevelHarmonics (l);
                 float* dst = wt.data.data() + (size_t) f * wt.frameStride + wt.levelOffset[(size_t) l];
                 // Direct resynthesis via inverse FFT at this level's size.
-                const int order = (int) std::round (std::log2 ((double) size));
-                juce::dsp::FFT inv (order);
-                std::vector<C> s ((size_t) size), out ((size_t) size);
+                std::fill (s.begin(), s.begin() + size, C());
                 for (int k = 1; k <= maxH && k < size / 2; ++k)
                     s[(size_t) k] = harm[(size_t) k];
-                inv.perform (s.data(), out.data(), true);
-                // JUCE's inverse may or may not scale by 1/N; recover the scale from a known unit harmonic.
-                const float scale = inverseScale (inv, size);
+                plans.inv[(size_t) l]->perform (s.data(), out.data(), true);
+                // JUCE's inverse may or may not scale by 1/N; the scale was recovered from a known unit harmonic.
+                const float scale = plans.scale[(size_t) l];
                 for (int i = 0; i < size; ++i)
                     dst[i] = out[(size_t) i].real() * scale;
 

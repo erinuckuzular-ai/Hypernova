@@ -14,7 +14,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 BUILD="$(mktemp -d)"; trap 'rm -rf "$BUILD"' EXIT
 for arch in arm64 x86_64; do
-  swiftc -O -target "$arch-apple-macos13.0" -parse-as-library "$SRC/main.swift" "$SRC/UI.swift" -o "$BUILD/installer-$arch"
+  swiftc -O -target "$arch-apple-macos12.0" -parse-as-library "$SRC/main.swift" "$SRC/UI.swift" -o "$BUILD/installer-$arch"
 done
 lipo -create "$BUILD/installer-arm64" "$BUILD/installer-x86_64" -output "$APP/Contents/MacOS/HypernovaInstaller"
 
@@ -34,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
