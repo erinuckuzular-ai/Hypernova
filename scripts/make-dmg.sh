@@ -22,7 +22,7 @@ DMG="$ROOT/dist/Hypernova-$VERSION.dmg"
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
     echo "==> Building Hypernova $VERSION (universal)"
-    cmake -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DHYPERNOVA_COPY_PLUGINS=OFF
+    cmake -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DHYPERNOVA_COPY_PLUGINS=OFF
     cmake --build "$BUILD" --config Release --target Hypernova_VST3 Hypernova_AU Hypernova_Standalone -j"$(sysctl -n hw.ncpu)"
 fi
 

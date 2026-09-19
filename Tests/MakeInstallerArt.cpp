@@ -148,12 +148,14 @@ namespace
             g.setFont (font (8.5f, true).withExtraKerningFactor (0.2f));
             g.drawText (p.caption, juce::Rectangle<float> (170, 16).withCentre ({ p.x, 306 }), juce::Justification::centred, false);
         }
-        g.setColour (Colours::text.withAlpha (0.75f));
+        g.setColour (juce::Colours::black.withAlpha (0.45f)); // keeps the notes readable over the bright nebula
+        g.fillRoundedRectangle (juce::Rectangle<float> (40, 362, 580, 50), 12.0f);
+        g.setColour (Colours::text.withAlpha (0.85f));
         g.setFont (font (11.0f));
         g.drawText ("Installs the VST3 + AU for Ableton Live, the standalone app and the FOUNDERS PACK. Updates replace the old version.",
                     juce::Rectangle<float> (24, 368, 612, 18), juce::Justification::centred, false);
-        g.setColour (Colours::textDim);
-        g.drawText ("Share your sounds: drag .hnpreset files onto Hypernova to import them.",
+        g.setColour (Colours::text.withAlpha (0.85f));
+        g.drawText ("Older Mac (macOS 10.13 to 11)? Open Everything else and double-click Install Hypernova.pkg.",
                     juce::Rectangle<float> (24, 388, 612, 18), juce::Justification::centred, false);
         return img;
     }

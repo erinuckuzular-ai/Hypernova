@@ -8,7 +8,7 @@
     <conclusion file="conclusion.html" mime-type="text/html"/>
     <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <domains enable_localSystem="true"/>
-    <os-version min="11.0"/>
+    <os-version min="10.13"/>
 
     <choices-outline>
         <line choice="vst3"/>

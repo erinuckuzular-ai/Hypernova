@@ -186,6 +186,21 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // SmokeTest --opentime: how long building the wavetables and one processor takes (plug-in open time).
+    if (argc == 2 && juce::String (argv[1]) == "--opentime")
+    {
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        ab::WavetableBank::get();
+        const auto t1 = juce::Time::getMillisecondCounterHiRes();
+        { HypernovaAudioProcessor p; }
+        const auto t2 = juce::Time::getMillisecondCounterHiRes();
+        double sum = 0;
+        for (int i = 0; i < ab::NumTables; ++i)
+            for (auto v : ab::WavetableBank::get().table (i).data) sum += std::abs ((double) v);
+        std::printf ("wavetables %.0f ms, processor %.0f ms, checksum %.6f\n", t1 - t0, t2 - t1, sum);
+        return 0;
+    }
+
     // SmokeTest --lowend: for every bass-category preset, plays C2 for 0.8 s and prints how much of the energy
     // sits below 110 Hz (dB relative to the full signal). Used to find basses that are light on sub.
     if (argc == 2 && juce::String (argv[1]) == "--lowend")
