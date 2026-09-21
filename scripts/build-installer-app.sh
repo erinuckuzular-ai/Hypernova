@@ -20,7 +20,8 @@ lipo -create "$BUILD/installer-arm64" "$BUILD/installer-x86_64" -output "$APP/Co
 
 cp "$PKG" "$APP/Contents/Resources/Hypernova.pkg"
 cp "$ROOT/packaging/art/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp "$ROOT/packaging/art/nebula.png" "$ROOT/packaging/art/disk.png" "$APP/Contents/Resources/"
+# Brand type for the installer window (SIL Open Font License).
+cp "$ROOT/Resources/Fonts/SpaceGrotesk-var.ttf" "$ROOT/Resources/Fonts/SpaceMono-Regular.ttf" "$ROOT/Resources/Fonts/SpaceMono-Bold.ttf" "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

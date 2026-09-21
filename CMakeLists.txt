@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 # 10.13 High Sierra covers older Intel Macs; the arm64 slice is always 11.0+.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Oldest macOS supported")
 
-project(Hypernova VERSION 0.5.0)
+project(Hypernova VERSION 0.5.1)
 
 set(CMAKE_CXX_STANDARD 17)
 option(HYPERNOVA_COPY_PLUGINS "Install plug-ins into ~/Library/Audio/Plug-Ins after building" ON)
@@ -22,6 +22,7 @@ juce_add_plugin(Hypernova
     PLUGIN_CODE ArBs
     FORMATS AU VST3 Standalone
     PRODUCT_NAME "Hypernova"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/packaging/art/AppIcon.png"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE

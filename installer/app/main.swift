@@ -9,25 +9,17 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Palette (Source/UI/Style.h)
+// MARK: - Palette (the Paper house style: docs/style.css, the plug-in's Paper theme)
 
 extension Color {
-    static let bg0 = Color(red: 0.012, green: 0.016, blue: 0.039)
-    static let panel = Color(red: 0.043, green: 0.051, blue: 0.102)
-    static let line = Color.white.opacity(0.1)
-    static let textMain = Color(red: 0.941, green: 0.945, blue: 1.0)
-    static let textDim = Color(red: 0.565, green: 0.584, blue: 0.741)
-    static let ion = Color(red: 0.275, green: 0.910, blue: 1.0)
-    static let violet = Color(red: 0.541, green: 0.361, blue: 1.0)
-    static let gold = Color(red: 1.0, green: 0.663, blue: 0.290)
-    static let plasma = Color(red: 1.0, green: 0.310, blue: 0.604)
-    static let aurora = Color(red: 0.490, green: 1.0, blue: 0.812)
-}
-
-extension Font {
-    static func heavy(_ s: CGFloat) -> Font { .custom("AvenirNext-Heavy", size: s) }
-    static func demi(_ s: CGFloat) -> Font { .custom("AvenirNext-DemiBold", size: s) }
-    static func body(_ s: CGFloat) -> Font { .custom("AvenirNext-Medium", size: s) }
+    init(hex: UInt32) { self.init(red: Double((hex >> 16) & 0xff) / 255, green: Double((hex >> 8) & 0xff) / 255, blue: Double(hex & 0xff) / 255) }
+    static let paper = Color(hex: 0xf2f1ee)   // background
+    static let card = Color(hex: 0xffffff)
+    static let rule = Color(hex: 0xd9d8d3)    // 1px borders
+    static let ink = Color(hex: 0x111111)
+    static let ink2 = Color(hex: 0x4a4a4a)    // secondary text
+    static let ink3 = Color(hex: 0x8b8b88)    // faint
+    static let accent = Color(hex: 0xff5a1f)  // the one orange
 }
 
 // MARK: - Model
@@ -46,10 +38,10 @@ struct Part: Identifiable {
     @Published var status = ""
     @Published var alsoDeleteSounds = false
     @Published var parts: [Part] = [
-        Part(id: "vst3", title: "VST3 plug-in", detail: "Ableton Live, FL Studio and most DAWs"),
-        Part(id: "au", title: "Audio Unit", detail: "Ableton Live, Logic Pro, GarageBand"),
-        Part(id: "app", title: "Standalone app", detail: "play Hypernova without a DAW"),
-        Part(id: "pack", title: "FOUNDERS PACK", detail: "22 exclusive sounds, free"),
+        Part(id: "vst3", title: "vst3 plug-in", detail: "ableton live, fl studio and most daws"),
+        Part(id: "au", title: "audio unit", detail: "ableton live, logic pro, garageband"),
+        Part(id: "app", title: "standalone app", detail: "play hypernova without a daw"),
+        Part(id: "pack", title: "founders pack", detail: "22 exclusive sounds. free."),
     ]
 
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
@@ -96,8 +88,8 @@ struct Part: Identifiable {
     }
 
     var headline: String {
-        if let v = installedVersion { return v == version ? "Reinstall \(version)" : "Update \(v) → \(version)" }
-        return hasArrowBass ? "Replaces Arrow Bass" : "Version \(version)"
+        if let v = installedVersion { return v == version ? "reinstall \(version)" : "update \(v) → \(version)" }
+        return hasArrowBass ? "replaces arrow bass" : "version \(version)"
     }
 
     // MARK: Install
@@ -105,7 +97,7 @@ struct Part: Identifiable {
     func install() {
         guard parts.contains(where: { $0.on }) else { return }
         phase = .working
-        status = "Waiting for your password"
+        status = "waiting for your password"
         let choices = parts.map { ($0.id, $0.on) }
         Task.detached(priority: .userInitiated) {
             let result = Self.runPackage(choices: choices)
@@ -116,7 +108,7 @@ struct Part: Identifiable {
                 }
             }
         }
-        cycleStatus(["Installing the plug-ins", "Placing the standalone app", "Unpacking the FOUNDERS PACK", "Telling your DAWs"], while: .working)
+        cycleStatus(["installing the plug-ins", "placing the standalone app", "unpacking the founders pack", "telling your daws"], while: .working)
     }
 
     struct InstallError: Error { let message: String; let cancelled: Bool }
@@ -142,7 +134,7 @@ struct Part: Identifiable {
 
     nonisolated static func runPackage(choices: [(String, Bool)]) -> Result<Void, InstallError> {
         guard let pkg = Bundle.main.url(forResource: "Hypernova", withExtension: "pkg") else {
-            return .failure(.init(message: "The installer is missing its package. Download the DMG again.", cancelled: false))
+            return .failure(.init(message: "the installer is missing its package. download the dmg again.", cancelled: false))
         }
         let xml = FileManager.default.temporaryDirectory.appendingPathComponent("hypernova-choices.plist")
         let entries: [[String: Any]] = choices.map { ["choiceIdentifier": $0.0, "choiceAttribute": "selected", "attributeSetting": $0.1 ? 1 : 0] }
@@ -150,11 +142,11 @@ struct Part: Identifiable {
             let data = try PropertyListSerialization.data(fromPropertyList: entries, format: .xml, options: 0)
             try data.write(to: xml)
         } catch {
-            return .failure(.init(message: "Couldn't prepare the install: \(error.localizedDescription)", cancelled: false))
+            return .failure(.init(message: "couldn't prepare the install: \(error.localizedDescription)", cancelled: false))
         }
         defer { try? FileManager.default.removeItem(at: xml) }
         return runAsAdmin("/usr/sbin/installer -pkg \(shellQuote(pkg.path)) -target / -applyChoiceChangesXML \(shellQuote(xml.path))",
-                          prompt: "Hypernova needs your password to install its plug-ins.")
+                          prompt: "hypernova needs your password to install its plug-ins.")
     }
 
     // Per-user copies (old dev builds, Arrow Bass) would show up twice next to the system-wide install.
@@ -167,14 +159,14 @@ struct Part: Identifiable {
 
     func uninstall() {
         phase = .uninstalling
-        status = "Waiting for your password"
+        status = "waiting for your password"
         let deleteSounds = alsoDeleteSounds
         Task.detached(priority: .userInitiated) {
             let rm = Self.systemItems.map { "rm -rf " + Self.shellQuote($0) }.joined(separator: "; ")
             let forget = ["vst3", "au", "app", "pack"].flatMap { ["com.arrow.hypernova.\($0)", "com.arrow.arrowbass.\($0)"] }
                 .map { "pkgutil --forget \($0) >/dev/null 2>&1" }.joined(separator: "; ")
             let result = Self.runAsAdmin("\(rm); \(forget); killall -9 AudioComponentRegistrar >/dev/null 2>&1; exit 0",
-                                         prompt: "Hypernova needs your password to remove its plug-ins.")
+                                         prompt: "hypernova needs your password to remove its plug-ins.")
             await MainActor.run {
                 switch result {
                 case .success:
@@ -186,7 +178,7 @@ struct Part: Identifiable {
                 }
             }
         }
-        cycleStatus(["Removing the plug-ins", "Removing the app and packs", "Tidying up"], while: .uninstalling)
+        cycleStatus(["removing the plug-ins", "removing the app and packs", "tidying up"], while: .uninstalling)
     }
 
     private func cycleStatus(_ lines: [String], while phase: Phase) {
@@ -213,17 +205,18 @@ struct Part: Identifiable {
 
     // `--snapshot <dir>` renders every screen to PNG and quits (used to check the design).
     init() {
+        Brand.registerFonts()
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
         guard #available(macOS 13.0, *) else { exit(1) } // snapshots use ImageRenderer; the installer itself runs on macOS 12
         let dir = URL(fileURLWithPath: args[i + 1])
-        let screens: [(String, Phase)] = [("welcome", .welcome), ("working", .working), ("done", .done), ("failed", .failed("Sample error")),
+        let screens: [(String, Phase)] = [("welcome", .welcome), ("working", .working), ("done", .done), ("failed", .failed("installer: The install failed. (The Installer encountered an error that caused the installation to fail. Contact the software manufacturer for assistance.)")),
                                           ("uninstall", .uninstallAsk), ("uninstalled", .uninstalled)]
         for (name, phase) in screens {
             let model = Installer()
             model.phase = phase
-            model.status = "Installing the plug-ins"
-            let view = InstallerView().environmentObject(model).frame(width: 720, height: 480).preferredColorScheme(.dark)
+            model.status = "installing the plug-ins"
+            let view = InstallerView().environmentObject(model).frame(width: 720, height: 480).background(Color.paper).preferredColorScheme(.light)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             if let img = renderer.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
@@ -241,8 +234,8 @@ struct Part: Identifiable {
             InstallerView()
                 .environmentObject(installer)
                 .frame(width: 720, height: 480)
-                .background(Color.bg0)
-                .preferredColorScheme(.dark)
+                .background(Color.paper)
+                .preferredColorScheme(.light)
         }
         .windowStyle(.hiddenTitleBar)
         .commands { CommandGroup(replacing: .newItem) {} }
