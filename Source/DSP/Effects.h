@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_dsp/juce_dsp.h>
+#include "ExtraFx.h"
 #include <cmath>
 #include <array>
 #include <vector>
@@ -34,6 +35,22 @@ struct FxSettings
     float bpm = 120.0f;
     // Per-effect bypass (clicking an effect's name in the UI). Default on so older sessions are unchanged.
     bool distOn = true, ottOn = true, chorusOn = true, delayOn = true, reverbOn = true, eqOn = true;
+
+    // Movement, character and pitch (the second effects page). All default to silent/neutral.
+    int chorusMode = 0;                                    // classic / ensemble / dimension
+    int delayStyle = 0;                                    // digital / reverse / granular
+    int reverbMode = 0;                                    // space / plate / spring / room
+    float flangerMix = 0, flangerRate = 0.3f, flangerDepth = 0.5f, flangerFeedback = 0.4f;
+    float tapeWobble = 0, tapeNoise = 0, tapeSat = 0;
+    float gateDepth = 0, gateShape = 0.3f, panDepth = 0;
+    int gateRate = 6, gatePattern = 0, panRate = 4;
+    int fxFilterType = 0;
+    float fxFilterFreq = 1000.0f, fxFilterRes = 0.2f, fxFilterDepth = 0;
+    int fxFilterRate = 4;
+    float pitchSemis = 0, pitchMix = 0;
+    bool flangerOn = true, tapeOn = true, gateOn = true, fxFilterOn = true, pitchOn = true;
+    double ppq = 0;
+    bool playing = false;
 };
 
 // 8-line feedback delay network with input diffusion, slow modulation, damping and an optional
@@ -64,20 +81,31 @@ public:
     }
 
     // Processes in place, adding the wet signal scaled by mix.
-    void process (float* L, float* R, int n, float size, float mix, float shimmer)
+    // mode: 0 space (the big FDN), 1 plate (dense and bright), 2 spring (boingy, dispersive), 3 room (short, dark).
+    void process (float* L, float* R, int n, float size, float mix, float shimmer, int mode = 0)
     {
         static const float baseMs[8] = { 37.3f, 41.9f, 47.1f, 53.3f, 59.9f, 67.7f, 73.1f, 79.3f };
         static const float diffMs[4] = { 4.7f, 3.6f, 12.7f, 9.3f };
-        const float scale = 0.7f + 0.9f * size;
-        const float rt60 = 0.4f * std::pow (40.0f, size);
+        // Each mode is the same network with different proportions: line lengths, decay, damping and pre-delay.
+        const float sizeScale[4] = { 1.0f, 0.55f, 0.32f, 0.45f };
+        const float decayScale[4] = { 1.0f, 0.7f, 0.5f, 0.35f };
+        const float m = (float) juce::jlimit (0, 3, mode);
+        const int mi = juce::jlimit (0, 3, mode);
+        const float scale = (0.7f + 0.9f * size) * sizeScale[mi];
+        const float rt60 = 0.4f * std::pow (40.0f, size) * decayScale[mi];
         float len[8], gain[8];
         for (int i = 0; i < 8; ++i)
         {
             len[i] = baseMs[i] * scale * 0.001f * (float) sr;
             gain[i] = std::pow (10.0f, -3.0f * len[i] / (rt60 * (float) sr));
         }
-        const float dampC = std::exp (-juce::MathConstants<float>::twoPi * (9000.0f - 3500.0f * size) / (float) sr);
-        const int preDelay = (int) ((0.008f + 0.035f * size) * (float) sr);
+        const float dampHz = mi == 1 ? 12000.0f - 3000.0f * size       // plate: bright
+                           : mi == 2 ? 4500.0f - 1500.0f * size        // spring: dark and metallic
+                           : mi == 3 ? 6000.0f - 2000.0f * size        // room
+                                     : 9000.0f - 3500.0f * size;
+        const float dampC = std::exp (-juce::MathConstants<float>::twoPi * dampHz / (float) sr);
+        const int preDelay = (int) ((0.008f + 0.035f * size) * (mi == 0 ? 1.0f : 0.3f) * (float) sr);
+        juce::ignoreUnused (m);
         const int lineSize = (int) lines[0].size();
         const int shimSize = (int) shimmerBuf.size();
         const float shimWindow = 0.1f * (float) sr;
@@ -233,6 +261,12 @@ public:
         delaySmoothed = -1;
         for (auto& s : delayFilt) s = 0;
 
+        flanger.prepare (sampleRate);
+        tape.prepare (sampleRate);
+        gate.prepare (sampleRate);
+        fxFilter.prepare (sampleRate);
+        shifter.prepare (sampleRate);
+
         scratch.setSize (2, blockSize);
         for (auto& f : eqLowF) f.reset();
         for (auto& f : eqHighF) f.reset();
@@ -249,6 +283,10 @@ public:
         chorus.reset();
         reverb.reset();
         for (auto& d : delayLine) std::fill (d.begin(), d.end(), 0.0f);
+        flanger.reset();
+        tape.reset();
+        fxFilter.reset();
+        shifter.reset();
     }
 
     void process (juce::AudioBuffer<float>& buffer, const FxSettings& s)
@@ -258,20 +296,35 @@ public:
         auto* R = buffer.getWritePointer (1);
 
         if (s.distOn && s.distMix > 0.001f) distortion (buffer, s);
+        if (s.tapeOn && (s.tapeWobble > 0.001f || s.tapeNoise > 0.001f || s.tapeSat > 0.001f))
+            tape.process (L, R, n, s.tapeWobble, s.tapeNoise, s.tapeSat);
         if (s.ottOn && s.ott > 0.001f) ott (L, R, n, s.ott);
+        if (s.pitchOn && s.pitchMix > 0.001f) shifter.process (L, R, n, s.pitchSemis, s.pitchMix);
 
         if (s.chorusOn && s.chorusMix > 0.001f)
         {
-            chorus.setRate (s.chorusRate);
-            chorus.setMix (s.chorusMix * 0.5f);
+            // Classic is the original; ensemble is deeper and slower; dimension is a fixed shallow wobble.
+            const float rate = s.chorusMode == 1 ? s.chorusRate * 0.6f : s.chorusMode == 2 ? 0.4f : s.chorusRate;
+            chorus.setRate (juce::jlimit (0.01f, 20.0f, rate));
+            chorus.setDepth (s.chorusMode == 1 ? 0.65f : s.chorusMode == 2 ? 0.22f : 0.35f);
+            chorus.setCentreDelay (s.chorusMode == 1 ? 14.0f : s.chorusMode == 2 ? 5.0f : 7.0f);
+            chorus.setFeedback (s.chorusMode == 1 ? 0.12f : 0.0f);
+            chorus.setMix (s.chorusMix * (s.chorusMode == 2 ? 0.35f : 0.5f));
             juce::dsp::AudioBlock<float> block (buffer);
             chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
         }
 
+        if (s.flangerOn && s.flangerMix > 0.001f)
+            flanger.process (L, R, n, s.flangerRate, s.flangerDepth, s.flangerFeedback, s.flangerMix);
+        if (s.fxFilterOn && (s.fxFilterFreq < 19000.0f || s.fxFilterDepth > 0.001f || s.fxFilterType != 0))
+            fxFilter.process (L, R, n, s.fxFilterType, s.fxFilterFreq, s.fxFilterRes, s.fxFilterDepth, s.fxFilterRate, s.ppq, s.bpm, s.playing);
+        if (s.gateOn && (s.gateDepth > 0.001f || s.panDepth > 0.001f))
+            gate.process (L, R, n, s.ppq, s.bpm, s.playing, s.gateDepth, s.gateRate, s.gatePattern, s.gateShape, s.panDepth, s.panRate);
+
         if (s.delayOn && s.delayMix > 0.001f) delay (L, R, n, s);
         else delaySmoothed = -1;
 
-        if (s.reverbOn && s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer);
+        if (s.reverbOn && s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer, s.reverbMode);
 
         if (s.eqOn && (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f)) eq (L, R, n, s);
         if (std::abs (s.width - 1.0f) > 0.001f)
@@ -288,12 +341,22 @@ private:
     double sr = 44100.0;
     juce::dsp::Oversampling<float> oversampler { 2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true }; // 4x for the distortion
     juce::dsp::Chorus<float> chorus;
+    ab::dsp::Flanger flanger;
+    ab::dsp::TapeDegrade tape;
+    ab::dsp::GateAndPan gate;
+    ab::dsp::FxFilter fxFilter;
+    ab::dsp::PitchShifter shifter;
+    int grainWrite = 0;
+    std::array<float, 4> grainPos {}, grainRate {};
+    std::array<int, 4> grainLeft {};
+    int grainTimer = 0;
+    juce::uint32 grainRng = 0x51f2c3u;
     SpaceReverb reverb;
     juce::dsp::LinkwitzRileyFilter<float> lowSplit, highSplit;
     float ottEnv[3] {};
     std::vector<float> delayLine[2];
     int delayWrite = 0;
-    float delaySmoothed = -1;
+    float delaySmoothed = -1, reversePos = 0;
     float delayFilt[4] {};
     juce::AudioBuffer<float> scratch;
     float dcX[2] {}, dcY[2] {};
@@ -432,6 +495,60 @@ private:
             const float tapL = delayLine[0][(size_t) i0] + fr * (delayLine[0][(size_t) i1] - delayLine[0][(size_t) i0]);
             const float tapR = delayLine[1][(size_t) i0] + fr * (delayLine[1][(size_t) i1] - delayLine[1][(size_t) i0]);
 
+            // Reverse and granular read the same buffer in a different order; the feedback path is shared.
+            float outL = tapL, outR = tapR;
+            if (s.delayStyle == 1)
+            {
+                // Reverse: play the last delay-length window backwards, so notes swim in tail-first.
+                const float d = delaySmoothed;
+                reversePos += 1.0f;
+                if (reversePos >= d) reversePos -= d;
+                float rrp = (float) delayWrite - (d - reversePos);
+                if (rrp < 0) rrp += (float) size;
+                const int r0 = (int) rrp, r1 = (r0 + 1) % size;
+                const float rf = rrp - (float) r0;
+                // fade the seam so the wrap doesn't click
+                const float edge = juce::jmin (reversePos, d - reversePos) / juce::jmax (1.0f, d * 0.08f);
+                const float w = juce::jlimit (0.0f, 1.0f, edge);
+                outL = (delayLine[0][(size_t) r0] + rf * (delayLine[0][(size_t) r1] - delayLine[0][(size_t) r0])) * w;
+                outR = (delayLine[1][(size_t) r0] + rf * (delayLine[1][(size_t) r1] - delayLine[1][(size_t) r0])) * w;
+            }
+            else if (s.delayStyle == 2)
+            {
+                // Granular: short windowed grains taken from anywhere in the buffer, some at half or double speed.
+                if (--grainTimer <= 0)
+                {
+                    grainTimer = (int) (0.045 * sr);
+                    for (size_t gi = 0; gi < grainPos.size(); ++gi)
+                        if (grainLeft[gi] <= 0)
+                        {
+                            grainRng ^= grainRng << 13; grainRng ^= grainRng >> 17; grainRng ^= grainRng << 5;
+                            const float r01 = (float) grainRng / 4294967295.0f;
+                            grainLeft[gi] = (int) (0.12 * sr);
+                            grainPos[gi] = delaySmoothed * (0.1f + 0.9f * r01);
+                            grainRate[gi] = r01 < 0.25f ? 0.5f : r01 > 0.85f ? 2.0f : 1.0f;
+                            break;
+                        }
+                }
+                float gl = 0, gr = 0;
+                for (size_t gi = 0; gi < grainPos.size(); ++gi)
+                {
+                    if (grainLeft[gi] <= 0) continue;
+                    const float life = (float) grainLeft[gi] / (float) (0.12 * sr);
+                    const float win = std::sin (juce::MathConstants<float>::pi * (1.0f - life));
+                    float grp = (float) delayWrite - grainPos[gi];
+                    while (grp < 0) grp += (float) size;
+                    const int g0 = (int) grp, g1 = (g0 + 1) % size;
+                    const float gf = grp - (float) g0;
+                    gl += win * (delayLine[0][(size_t) g0] + gf * (delayLine[0][(size_t) g1] - delayLine[0][(size_t) g0]));
+                    gr += win * (delayLine[1][(size_t) g0] + gf * (delayLine[1][(size_t) g1] - delayLine[1][(size_t) g0]));
+                    grainPos[gi] -= grainRate[gi] - 1.0f;
+                    --grainLeft[gi];
+                }
+                outL = gl * 0.7f;
+                outR = gr * 0.7f;
+            }
+
             // Ping-pong: the mono input enters left, each repeat swaps sides. Band-limited like a dub delay.
             const float in = (L[i] + R[i]) * 0.5f;
             float fbL = (s.delayPing ? tapR : tapL) * fb, fbR = (s.delayPing ? tapL : tapR) * fb;
@@ -446,8 +563,8 @@ private:
             delayLine[1][(size_t) delayWrite] = (s.delayPing ? 0.0f : R[i]) + fbR;
             delayWrite = (delayWrite + 1) % size;
 
-            L[i] += tapL * s.delayMix;
-            R[i] += tapR * s.delayMix;
+            L[i] += outL * s.delayMix;
+            R[i] += outR * s.delayMix;
         }
     }
 

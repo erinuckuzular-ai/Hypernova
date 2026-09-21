@@ -542,11 +542,13 @@ private:
 };
 
 //==============================================================================
-class Knob : public juce::Component
+// A knob, and a drop target for modulation: drag an LFO or envelope chip onto it to modulate it. The ring
+// around the knob shows how much modulation is arriving and from where.
+class Knob : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     Knob (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& label, juce::Colour c, int knobSize = 44)
-        : name (label), colour (c), size (knobSize)
+        : name (label), colour (c), size (knobSize), id (paramId)
     {
         slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
         slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -565,6 +567,12 @@ public:
         slider.onValueChange = [this] { repaint(); };
     }
 
+    // Set by the editor: what modulation is reaching this knob, and what to do when a source is dropped on it.
+    struct ModInfo { float depth = 0; juce::Colour colour; int slot = -1; };
+    std::function<ModInfo (const juce::String& paramId)> modLookup;
+    std::function<void (const juce::String& source, const juce::String& paramId)> onModDrop;
+    std::function<void (const juce::String& paramId)> onModMenu;
+
     void resized() override
     {
         auto r = getLocalBounds();
@@ -573,7 +581,8 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat();
+        auto full = getLocalBounds().toFloat();
+        auto r = full;
         r.removeFromTop ((float) size - 1.0f);
         const bool active = slider.isMouseOverOrDragging();
         g.setColour (active ? Colours::text : Colours::textDim);
@@ -585,22 +594,99 @@ public:
             g.setFont (mono (9.5f));
             g.drawText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r.removeFromTop (12), juce::Justification::centred, false);
         }
+
+        // Modulation ring: an arc from the knob's own value, in the source's colour.
+        const auto info = modLookup ? modLookup (id) : ModInfo();
+        if (std::abs (info.depth) > 0.001f || dropHover)
+        {
+            const auto knobArea = slider.getBounds().toFloat().reduced (2.0f);
+            const float radius = juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f + 3.0f;
+            const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
+            const float here = a0 + (a1 - a0) * (float) slider.valueToProportionOfLength (slider.getValue());
+            const float to = juce::jlimit (a0, a1, here + (a1 - a0) * info.depth);
+            juce::Path arc;
+            arc.addCentredArc (knobArea.getCentreX(), knobArea.getCentreY(), radius, radius, 0.0f,
+                               juce::jmin (here, to), juce::jmax (here, to), true);
+            g.setColour ((dropHover ? Colours::accent : info.colour).withAlpha (dropHover ? 0.9f : 0.75f));
+            g.strokePath (arc, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        if (dropHover)
+        {
+            g.setColour (Colours::accent.withAlpha (0.5f));
+            g.drawRoundedRectangle (full.reduced (1.0f), 8.0f, 1.2f);
+        }
     }
 
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
     void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu() && onModMenu) onModMenu (id);
+    }
+
+    // Drag and drop: chips carry "mod:<source index>".
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("mod:"); }
+    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDropped (const SourceDetails& d) override
+    {
+        dropHover = false;
+        if (onModDrop) onModDrop (d.description.toString(), id);
+        repaint();
+    }
 
     void setShowValue (bool b) { showValue = b; }
     void setLabel (const juce::String& s) { if (s != name) { name = s; repaint(); } }
+    const juce::String& paramId() const { return id; }
     juce::Slider slider;
 
 private:
     juce::String name;
     juce::Colour colour;
     int size;
-    bool showValue = true;
+    juce::String id;
+    bool showValue = true, dropHover = false;
     juce::RangedAudioParameter* param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+};
+
+//==============================================================================
+// The little grab handle on a modulation source. Drag it onto any knob to modulate that knob.
+class ModChip : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    ModChip (const juce::String& labelText, int sourceIndex, juce::Colour c)
+        : label (labelText), source (sourceIndex), colour (c)
+    {
+        setTooltip ("Drag onto any knob to modulate it");
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (colour.withAlpha (isMouseOver() ? 0.3f : 0.16f));
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        g.setColour (colour.withAlpha (isMouseOver() ? 0.95f : 0.6f));
+        g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+        g.setFont (font (9.0f, true).withExtraKerningFactor (0.12f));
+        g.drawText (label, r, juce::Justification::centred, false);
+    }
+
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+
+    void mouseDrag (const juce::MouseEvent&) override
+    {
+        if (auto* c = juce::DragAndDropContainer::findParentDragContainerFor (this))
+            if (! c->isDragAndDropActive())
+                c->startDragging ("mod:" + juce::String (source), this);
+    }
+
+private:
+    juce::String label;
+    int source;
+    juce::Colour colour;
 };
 
 //==============================================================================

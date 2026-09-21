@@ -14,6 +14,7 @@ struct CosmosState
 {
     std::atomic<float> level { 0.0f };          // output loudness 0..1, makes the nebula and disk breathe
     std::atomic<float> holeX { 0 }, holeY { 0 }, holeR { 0 }; // black hole centre/radius in component pixels
+    std::atomic<float> flare { 0.0f };          // one-shot burst when the logo is clicked, decays to 0
 };
 
 class CosmosRenderer : public juce::OpenGLRenderer
@@ -57,6 +58,7 @@ public:
         shader->setUniform ("time", t);
         smoothedLevel += (state.level.load() - smoothedLevel) * 0.15f;
         shader->setUniform ("level", smoothedLevel);
+        shader->setUniform ("flare", state.flare.load());
         shader->setUniform ("pixelScale", scale);
         shader->setUniform ("hole", state.holeX.load() * scale, (float) h - state.holeY.load() * scale, state.holeR.load() * scale);
 
@@ -96,6 +98,7 @@ private:
         uniform vec2 resolution;
         uniform float time;
         uniform float level;
+        uniform float flare;
         uniform float pixelScale;
         uniform vec3 hole;
 
@@ -129,7 +132,7 @@ private:
             col += magenta * smoothstep (0.42, 0.95, n * w.x * 1.8) * 0.65;
             col += ion * smoothstep (0.55, 0.95, n2) * 0.40;
             col += gold * smoothstep (0.72, 1.0, n * n2 * 1.9) * 0.25;
-            col *= 0.78 + 0.45 * level;
+            col *= 0.78 + 0.45 * level + 0.9 * flare;
 
             // Stars: two layers drifting at different speeds (parallax), twinkling.
             for (int L = 0; L < 2; L++)
@@ -163,11 +166,11 @@ private:
                 vec3 diskCol = mix (gold, magenta, clamp (rd - 1.3, 0.0, 1.0));
                 float r = length (p) / R;
                 float front = p.y < 0.0 ? 1.0 : 0.0;
-                vec3 glow = gold * exp (-max (r - 1.0, 0.0) * 1.2) * 0.22 * (1.0 + level);
+                vec3 glow = gold * exp (-max (r - 1.0, 0.0) * 1.2) * 0.22 * (1.0 + level + 6.0 * flare);
                 col += glow;
                 col += vec3 (1.0, 0.82, 0.58) * exp (-pow ((r - 1.06) * 9.0, 2.0)) * 0.95;           // photon ring
                 col = mix (col, vec3 (0.0), smoothstep (1.02, 0.9, r));                               // event horizon
-                col += diskCol * disk * streak * doppler * (1.05 + 0.7 * level) * (front > 0.5 ? 1.0 : (r > 1.0 ? 1.0 : 0.25));
+                col += diskCol * disk * streak * doppler * (1.05 + 0.7 * level + 3.0 * flare) * (front > 0.5 ? 1.0 : (r > 1.0 ? 1.0 : 0.25));
             }
 
             vec2 v = gl_FragCoord.xy / resolution - 0.5;

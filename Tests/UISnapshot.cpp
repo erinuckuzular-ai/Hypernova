@@ -97,7 +97,8 @@ int main (int argc, char** argv)
 
     snap ("ui_1_rager808_mod.png", "Rager 808", 0, 0);
     snap ("ui_2_classiclog_fx.png", "Classic Log", 1, 1);
-    snap ("ui_3_hypernova_play.png", "Hypernova", 0, 2);
+    snap ("ui_3_hypernova_play.png", "Hypernova", 0, 3);
+    snap ("ui_5_morefx.png", "Trance Pluck", 0, 2);
     {
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);

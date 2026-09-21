@@ -40,6 +40,23 @@ inline juce::StringArray modDestNames()
              "LFO 1 Rate", "LFO 2 Rate", "FX Distortion", "FX OTT", "FX Chorus", "FX Delay", "FX Reverb", "FX Shimmer" };
 }
 
+// The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
+// and so every knob can draw the depth reaching it. Destinations with no single knob map to an empty string.
+inline juce::String modDestParam (int dest)
+{
+    static const char* ids[] = { "", "aPos", "bPos", "aWarpAmt", "bWarpAmt", "aLevel", "bLevel", "", "cutoff", "res",
+                                 "fltDrive", "subLevel", "noiseLevel", "aDetune", "bDetune", "", "",
+                                 "lfo1Rate", "lfo2Rate", "distDrive", "ott", "chorusMix", "dlyMix", "verbMix", "verbShimmer" };
+    return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
+}
+
+inline int modDestForParam (const juce::String& paramId)
+{
+    for (int d = 1; d < modDestNames().size(); ++d)
+        if (modDestParam (d) == paramId) return d;
+    return 0;
+}
+
 constexpr int NumModSlots = 8;
 constexpr int MaxUnison = 7;
 constexpr int MaxVoices = 20;   // 16 playable + spares so a stolen/retriggered voice can fade out instead of clicking

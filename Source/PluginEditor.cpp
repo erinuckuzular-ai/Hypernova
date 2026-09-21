@@ -55,6 +55,9 @@ Knob& HypernovaAudioProcessorEditor::knob (const juce::String& id, const juce::S
 {
     knobs.push_back (std::make_unique<Knob> (processor.apvts, id, label, c, size));
     auto& k = *knobs.back();
+    k.modLookup = [this] (const juce::String& p) { return modInfoFor (p); };
+    k.onModDrop = [this] (const juce::String& src, const juce::String& p) { assignMod (src, p); };
+    k.onModMenu = [this] (const juce::String& p) { showModMenu (p); };
     (parent != nullptr ? *parent : canvas).addAndMakeVisible (k);
     k.setBounds (bounds);
     return k;
@@ -119,6 +122,22 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     browser.onImport = [this] { importWithChooser(); };
     canvas.addChildComponent (browser);
     browser.setBounds (0, 86, baseWidth, baseHeight - 86);
+
+    // Clicking the logo flares the black hole.
+    logoButton.setButtonText ({});
+    logoButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    logoButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+    logoButton.setTooltip ("Hypernova");
+    logoButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    logoButton.onClick = [this]
+    {
+        logoFlare = 1.0f;
+        static const char* lines[] = { "Hypernova.", "Collapse. Ignite.", "Light bends here.", "Event horizon crossed.", "Made by Arrow." };
+        showMessage (lines[juce::Random::getSystemRandom().nextInt (5)]);
+        glContext.triggerRepaint();
+    };
+    canvas.addAndMakeVisible (logoButton);
+    logoButton.setBounds (20, 16, 360, 58);
 
     // Updates: a banner under the top bar when a newer release is out; one click fetches and opens the installer.
     canvas.addChildComponent (updateBanner);
@@ -274,10 +293,10 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     toggle (std::make_unique<PillToggle> ("FILTER", Colours::textDim), "noiseFilter", at (subPanel, 128, 152, 104, 22), "Send the noise through the filter");
 
     // Pitch + voice
-    knob ("dropAmt", "DROP", Palette::sub, at (voicePanel, 10, 38, 59, 68));
-    knob ("dropTime", "DROP TIME", Palette::sub, at (voicePanel, 69, 38, 59, 68));
-    knob ("glide", "GLIDE", Palette::sub, at (voicePanel, 128, 38, 59, 68));
-    knob ("bendRange", "BEND", Palette::sub, at (voicePanel, 187, 38, 59, 68));
+    knob ("dropAmt", "DROP", Palette::sub, at (voicePanel, 10, 30, 59, 68));
+    knob ("dropTime", "DROP TIME", Palette::sub, at (voicePanel, 69, 30, 59, 68));
+    knob ("glide", "GLIDE", Palette::sub, at (voicePanel, 128, 30, 59, 68));
+    knob ("bendRange", "BEND", Palette::sub, at (voicePanel, 187, 30, 59, 68));
     combo ("mode", voiceModeNames(), at (voicePanel, 12, 118, 100, 24))
         .setTooltip ("Poly: chords. Mono: one note at a time. Legato: one note, and overlapping notes slide using GLIDE.");
     toggle (std::make_unique<PillToggle> ("RETRIG", Palette::sub), "retrig", at (voicePanel, 12, 150, 100, 22),
@@ -296,6 +315,13 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     // Envelopes
     ampView.setBounds (at (envPanel, 12, 36, 164, 64));
     modView.setBounds (at (envPanel, 192, 36, 164, 64));
+    modChips.push_back (std::make_unique<ModChip> ("DRAG", 3, Palette::lfo));
+    canvas.addAndMakeVisible (*modChips.back());
+    modChips.back()->setBounds (at (envPanel, 268, 12, 52, 20));
+    modChips.push_back (std::make_unique<ModChip> ("DRAG VEL", 4, Palette::sub));
+    canvas.addAndMakeVisible (*modChips.back());
+    modChips.back()->setBounds (at (voicePanel, 190, 150, 56, 20));
+
     const char* adsr[] = { "A", "D", "S", "R" };
     for (int i = 0; i < 4; ++i)
     {
@@ -309,11 +335,12 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         canvas.addChildComponent (pg);
         pg.setBounds (deckContent);
     }
-    deckTabs.setBounds (deckPanel.getX() + 12, deckPanel.getY() + 9, 390, 26);
+    deckTabs.setBounds (deckPanel.getX() + 12, deckPanel.getY() + 9, 500, 26);
     deckTabs.onChange = [this] (int i) { showDeckPage (i); };
     canvas.addAndMakeVisible (deckTabs);
     layoutModPage();
     layoutFxPage();
+    layoutMoreFxPage();
     layoutPlayPage();
 }
 
@@ -366,9 +393,7 @@ void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
     g.setColour (Colours::line);
     g.drawVerticalLine (subPanel.getX() + 121, (float) subPanel.getY() + 14, (float) subPanel.getBottom() - 14);
     titled (voicePanel, "PITCH", Palette::sub);
-    sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> ((float) voicePanel.getX() + 12, (float) voicePanel.getY() + 96, 240, 20), Palette::sub);
-    g.setColour (Colours::line);
-    g.drawHorizontalLine (voicePanel.getY() + 92, (float) voicePanel.getX() + 12, (float) voicePanel.getRight() - 12);
+    sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> ((float) voicePanel.getX() + 12, (float) voicePanel.getY() + 98, 240, 18), Palette::sub);
     titled (filterPanel, "FILTER", Palette::filter, 38);
     titled (envPanel, "AMP ENV", Palette::env);
     sectionLabel (g, "MOD ENV", juce::Rectangle<float> ((float) envPanel.getX() + 194, (float) envPanel.getY() + 10, 120, 24), Palette::lfo);
@@ -385,12 +410,28 @@ void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::paintDynamic (juce::Graphics& g)
 {
+    // Logo flare: a burst of light around the black hole, on top of whatever the backdrop is doing.
+    if (logoFlare > 0.002f)
+    {
+        const float f = logoFlare;
+        const auto c = logoHole;
+        for (int i = 3; i >= 1; --i)
+        {
+            const float rad = logoHoleRadius * (1.6f + 2.6f * i) * (1.0f + 1.4f * (1.0f - f));
+            g.setColour (Colours::warm.withAlpha (0.22f * f / (float) i));
+            g.fillEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (c));
+        }
+        g.setColour (juce::Colours::white.withAlpha (0.5f * f));
+        g.fillEllipse (juce::Rectangle<float> (logoHoleRadius * 1.5f, logoHoleRadius * 1.5f).withCentre (c));
+    }
+
     static const char* hints[] = { "LFOs and the mod matrix: any source to any destination, including the effects",
-                                   "effects run top to bottom: distortion > OTT > chorus > delay > space > EQ",
-                                   "arpeggiator, one-key chords, tuning and unison width" };
+                                   "the main rack: distortion, OTT, chorus, delay, space, EQ",
+                                   "movement and character: click any name to switch that effect off",
+                                   "arpeggiator, one-key chords, tuning, unison width and cross modulation" };
     g.setColour (Colours::textFaint);
     g.setFont (font (10.5f));
-    g.drawText (hints[juce::jlimit (0, 2, processor.uiDeckPage)], juce::Rectangle<float> ((float) deckPanel.getX() + 420, (float) deckPanel.getY() + 9,
+    g.drawText (hints[juce::jlimit (0, 3, processor.uiDeckPage)], juce::Rectangle<float> ((float) deckPanel.getX() + 420, (float) deckPanel.getY() + 9,
                 (float) deckPanel.getWidth() - 434, 26), juce::Justification::centredRight, false);
 
     const int note = processor.shownNote.load();
@@ -431,6 +472,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
         const float rms = (float) std::sqrt (sum / 1024.0);
         cosmos.level = juce::jlimit (0.0f, 1.0f, rms * 3.0f);
         const float k = (float) getWidth() / (float) baseWidth;
+        cosmos.flare = logoFlare;
         cosmos.holeX = logoHole.x * k;
         cosmos.holeY = logoHole.y * k;
         cosmos.holeR = logoHoleRadius * k;
@@ -441,6 +483,15 @@ void HypernovaAudioProcessorEditor::timerCallback()
         const bool busy = processor.shownVoices.load() > 0;
         const int every = mode == 2 ? 0 : (mode == 1 ? (busy ? 2 : 5) : (busy ? 1 : 3));
         ++frameTick;
+        // While the flare fades, draw every frame whatever the animation setting says.
+        if (logoFlare > 0.002f)
+        {
+            logoFlare *= 0.90f;
+            if (logoFlare <= 0.002f) logoFlare = 0.0f;
+            if (gpu) glContext.triggerRepaint();
+            else canvas.repaint (0, 0, getWidth(), 120);
+            staticFramePainted = false;
+        }
         if (gpu && every > 0 && frameTick % every == 0) glContext.triggerRepaint();
         else if (gpu && every == 0 && ! staticFramePainted) { glContext.triggerRepaint(); staticFramePainted = true; }
         if (every != 0) staticFramePainted = false;
@@ -685,7 +736,7 @@ void HypernovaAudioProcessorEditor::DeckPage::paint (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::showDeckPage (int page)
 {
-    processor.uiDeckPage = juce::jlimit (0, 2, page);
+    processor.uiDeckPage = juce::jlimit (0, 3, page);
     for (int i = 0; i < 3; ++i)
         pages[(size_t) i].setVisible (i == processor.uiDeckPage);
     deckTabs.setSelected (processor.uiDeckPage);
@@ -709,6 +760,10 @@ void HypernovaAudioProcessorEditor::layoutModPage()
         knob (p + "Fade", "FADE IN", Palette::lfo, { x + 222, 32, 58, 68 }, 40, pg);
         toggle (std::make_unique<PillToggle> ("RETRIGGER", Palette::lfo), p + "Retrig", { x, 106, 160, 22 },
                 "Restart the LFO on each note. Off = free-running, locked to the song when synced.", pg);
+        // Drag this onto any knob to have the LFO move it.
+        modChips.push_back (std::make_unique<ModChip> ("DRAG LFO " + juce::String (l + 1), l + 1, Palette::lfo));
+        pg->addAndMakeVisible (*modChips.back());
+        modChips.back()->setBounds (x + 168, 106, 112, 22);
         if (l == 0) pg->captions.push_back ({ { x + 290, 4, 1, 124 }, {}, {}, true });
     }
 
@@ -778,9 +833,68 @@ void HypernovaAudioProcessorEditor::layoutFxPage()
     pg->captions.pop_back(); // no divider after the last group
 }
 
-void HypernovaAudioProcessorEditor::layoutPlayPage()
+// Second effects page: movement, character and pitch. Same rules as the first: the name is the on/off switch.
+void HypernovaAudioProcessorEditor::layoutMoreFxPage()
 {
     auto* pg = &pages[2];
+    constexpr int cell = 58, knobY = 36, gap = 16;
+    int x = 12;
+    auto group = [&] (const juce::String& title, int cells, const char* onParam) -> int
+    {
+        const int start = x;
+        toggle (std::make_unique<ab::ui::SectionToggle> (title, Palette::fx), onParam, { x, 4, juce::jmin (cells * cell, 104), 24 },
+                "Click to switch " + title.toLowerCase() + " off and on", pg);
+        x += cells * cell + gap;
+        pg->captions.push_back ({ { x - gap / 2, 6, 1, 122 }, {}, {}, true });
+        return start;
+    };
+    auto fxKnob = [&] (const char* id, const char* label, int gx, int i) { knob (id, label, Palette::fx, { gx + i * cell, knobY, cell, 72 }, 42, pg); };
+
+    int g = group ("FLANGER", 4, "flangOn");
+    fxKnob ("flangRate", "RATE", g, 0);
+    fxKnob ("flangDepth", "DEPTH", g, 1);
+    fxKnob ("flangFb", "FEEDBACK", g, 2);
+    fxKnob ("flangMix", "MIX", g, 3);
+
+    g = group ("TAPE", 3, "tapeOn");
+    fxKnob ("tapeWow", "WOBBLE", g, 0);
+    fxKnob ("tapeNoise", "NOISE", g, 1);
+    fxKnob ("tapeSat", "SATURATE", g, 2);
+
+    g = group ("GATE", 4, "gateOn");
+    combo ("gateRate", ab::dsp::syncRateNames(), { g + 104, 4, 62, 24 }, pg);
+    combo ("gatePattern", ab::dsp::GateAndPan::patternNames(), { g + 170, 4, 4 * cell - 170, 24 }, pg);
+    fxKnob ("gateDepth", "GATE", g, 0);
+    fxKnob ("gateShape", "SHAPE", g, 1);
+    fxKnob ("panDepth", "AUTO PAN", g, 2);
+    combo ("panRate", ab::dsp::syncRateNames(), { g + 3 * cell, knobY + 22, cell - 2, 24 }, pg);
+
+    g = group ("FILTER", 4, "fxFltOn");
+    combo ("fxFltType", ab::dsp::FxFilter::typeNames(), { g + 104, 4, 4 * cell - 104, 24 }, pg);
+    fxKnob ("fxFltFreq", "FREQ", g, 0);
+    fxKnob ("fxFltRes", "RES", g, 1);
+    fxKnob ("fxFltDepth", "SWEEP", g, 2);
+    combo ("fxFltRate", ab::dsp::syncRateNames(), { g + 3 * cell, knobY + 22, cell - 2, 24 }, pg);
+
+    g = group ("PITCH", 2, "shiftOn");
+    fxKnob ("shiftSemis", "SHIFT", g, 0);
+    fxKnob ("shiftMix", "MIX", g, 1);
+
+    // Styles for the effects on the first page, kept here so each page stays readable.
+    pg->captions.push_back ({ { x, 4, 160, 24 }, "STYLES", Colours::textDim, false });
+    auto styleCombo = [&] (const char* id, const juce::StringArray& items, const char* label, int row)
+    {
+        pg->captions.push_back ({ { x, 34 + row * 32, 50, 22 }, label, Colours::textFaint, false });
+        combo (id, items, { x + 50, 32 + row * 32, 104, 24 }, pg);
+    };
+    styleCombo ("chorusMode", juce::StringArray { "Classic", "Ensemble", "Dimension" }, "CHORUS", 0);
+    styleCombo ("dlyStyle", juce::StringArray { "Digital", "Reverse", "Granular" }, "DELAY", 1);
+    styleCombo ("verbMode", juce::StringArray { "Space", "Plate", "Spring", "Room" }, "SPACE", 2);
+}
+
+void HypernovaAudioProcessorEditor::layoutPlayPage()
+{
+    auto* pg = &pages[3];
     constexpr int cell = 68, knobY = 36;
     const auto c = Palette::env;
 
@@ -824,6 +938,113 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
 }
 
 //==============================================================================
+// Colour per modulation source, so a knob's ring says where its movement comes from.
+static juce::Colour modSourceColour (int src)
+{
+    switch (src)
+    {
+        case 1: case 2: return Palette::lfo;   // LFO 1 / 2
+        case 3:         return Palette::env;   // mod envelope
+        case 4:         return Palette::sub;   // velocity
+        case 11:        return Palette::oscB;  // random
+        default:        return Palette::mod;   // macros, mod wheel, note
+    }
+}
+
+// What modulation is reaching this knob: the strongest slot pointing at it.
+Knob::ModInfo HypernovaAudioProcessorEditor::modInfoFor (const juce::String& paramId) const
+{
+    Knob::ModInfo info;
+    const int dest = ab::modDestForParam (paramId);
+    if (dest == 0) return info;
+    for (int i = 0; i < ab::NumModSlots; ++i)
+    {
+        const juce::String p = "mod" + juce::String (i + 1);
+        if ((int) processor.apvts.getRawParameterValue (p + "Src")->load() == 0) continue;
+        if ((int) processor.apvts.getRawParameterValue (p + "Dest")->load() != dest) continue;
+        const float amt = processor.apvts.getRawParameterValue (p + "Amt")->load();
+        if (std::abs (amt) <= std::abs (info.depth)) continue;
+        info.depth = amt;
+        info.slot = i;
+        info.colour = modSourceColour ((int) processor.apvts.getRawParameterValue (p + "Src")->load());
+    }
+    return info;
+}
+
+// Dropping a source chip on a knob fills the first free modulation slot (or reuses the matching one).
+void HypernovaAudioProcessorEditor::assignMod (const juce::String& dragDescription, const juce::String& paramId)
+{
+    const int src = dragDescription.fromFirstOccurrenceOf ("mod:", false, false).getIntValue();
+    const int dest = ab::modDestForParam (paramId);
+    if (src <= 0 || dest == 0)
+    {
+        showMessage ("That knob can't be modulated yet");
+        return;
+    }
+    int free = -1, existing = -1;
+    for (int i = 0; i < ab::NumModSlots; ++i)
+    {
+        const juce::String p = "mod" + juce::String (i + 1);
+        const int s = (int) processor.apvts.getRawParameterValue (p + "Src")->load();
+        const int d = (int) processor.apvts.getRawParameterValue (p + "Dest")->load();
+        if (s == src && d == dest) { existing = i; break; }
+        if (free < 0 && (s == 0 || d == 0)) free = i;
+    }
+    const int slot = existing >= 0 ? existing : free;
+    if (slot < 0) { showMessage ("All 8 modulation slots are in use"); return; }
+
+    processor.undoManager.beginNewTransaction ("modulation");
+    auto set = [this] (const juce::String& id, float value)
+    {
+        if (auto* p = processor.apvts.getParameter (id)) p->setValueNotifyingHost (p->convertTo0to1 (value));
+    };
+    const juce::String p = "mod" + juce::String (slot + 1);
+    set (p + "Src", (float) src);
+    set (p + "Dest", (float) dest);
+    if (existing < 0) set (p + "Amt", 0.35f);
+    showMessage (modSrcNames()[src] + " > " + modDestNames()[dest] + "   (slot " + juce::String (slot + 1) + ")");
+    for (auto& k : knobs) k->repaint();
+}
+
+// Right-click a knob: change or clear what modulates it.
+void HypernovaAudioProcessorEditor::showModMenu (const juce::String& paramId)
+{
+    const int dest = ab::modDestForParam (paramId);
+    juce::PopupMenu m;
+    auto* param = processor.apvts.getParameter (paramId);
+    m.addSectionHeader (param != nullptr ? param->getName (40).toUpperCase() : paramId.toUpperCase());
+    if (dest == 0)
+    {
+        m.addItem (-1, "This control can't be modulated", false, false);
+    }
+    else
+    {
+        juce::PopupMenu sources;
+        const auto names = modSrcNames();
+        for (int i = 1; i < names.size(); ++i) sources.addItem (100 + i, names[i]);
+        m.addSubMenu ("Modulate with", sources);
+        const auto info = modInfoFor (paramId);
+        m.addItem (2, "Clear modulation", info.slot >= 0);
+    }
+    m.addItem (3, "Reset to default", param != nullptr);
+    m.showMenuAsync (juce::PopupMenu::Options(), [this, paramId, param] (int r)
+    {
+        if (r >= 100) assignMod ("mod:" + juce::String (r - 100), paramId);
+        else if (r == 2)
+        {
+            const auto info = modInfoFor (paramId);
+            if (info.slot < 0) return;
+            processor.undoManager.beginNewTransaction ("clear modulation");
+            const juce::String p = "mod" + juce::String (info.slot + 1);
+            for (auto* id : { "Src", "Dest" })
+                if (auto* q = processor.apvts.getParameter (p + id)) q->setValueNotifyingHost (0.0f);
+            if (auto* q = processor.apvts.getParameter (p + "Amt")) q->setValueNotifyingHost (q->convertTo0to1 (0.0f));
+            for (auto& k : knobs) k->repaint();
+        }
+        else if (r == 3 && param != nullptr) param->setValueNotifyingHost (param->getDefaultValue());
+    });
+}
+
 void HypernovaAudioProcessorEditor::showDiceMenu()
 {
     juce::PopupMenu m;
