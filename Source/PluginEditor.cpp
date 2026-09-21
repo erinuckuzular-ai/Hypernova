@@ -1185,9 +1185,9 @@ void HypernovaAudioProcessorEditor::addLookMenu (juce::PopupMenu& m)
         strength.addItem (550 + i, levels[i].first, true, std::abs (t.strength() - levels[i].second) < 0.01f);
     backdrop.addSubMenu ("Brightness", strength);
 
-    const char* knobNames[] = { "Planet", "Ring", "Minimal" };
+    const char* knobNames[] = { "Planet", "Ring", "Minimal", "Machined" };
     knobsMenu.addItem (560, "Theme's own", true, t.knobStyle < 0);
-    for (int i = 0; i < 3; ++i) knobsMenu.addItem (561 + i, knobNames[i], true, t.knobStyle == i);
+    for (int i = 0; i < 4; ++i) knobsMenu.addItem (561 + i, knobNames[i], true, t.knobStyle == i);
     const char* panelNames[] = { "Glass", "Flat", "Outlined" };
     panels.addItem (570, "Theme's own", true, t.panelStyle < 0);
     for (int i = 0; i < 3; ++i) panels.addItem (571 + i, panelNames[i], true, t.panelStyle == i);
@@ -1220,7 +1220,7 @@ bool HypernovaAudioProcessorEditor::handleLookMenu (int r)
     else if (r >= 541 && r <= 543) t.backdrop = r - 541;
     else if (r >= 550 && r <= 553) t.backdropStrength = std::array<float, 4> { 0.0f, 0.35f, 0.6f, 0.9f }[(size_t) (r - 550)];
     else if (r == 560) t.knobStyle = -1;
-    else if (r >= 561 && r <= 563) t.knobStyle = r - 561;
+    else if (r >= 561 && r <= 564) t.knobStyle = r - 561;
     else if (r == 570) t.panelStyle = -1;
     else if (r >= 571 && r <= 573) t.panelStyle = r - 571;
     else if (r == 580) ab::ui::LookSettings::setFlag ("keyboard", ! ab::ui::LookSettings::flag ("keyboard", true));

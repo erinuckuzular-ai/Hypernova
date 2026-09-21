@@ -161,7 +161,7 @@ private:
                        diceButton { ab::ui::IconButton::Dice, ab::ui::Colours::warm }, saveButton { ab::ui::IconButton::Save },
                        undoButton { ab::ui::IconButton::Undo }, redoButton { ab::ui::IconButton::Redo }, gearButton { ab::ui::IconButton::Gear };
 
-    juce::MidiKeyboardComponent keyboard;
+    ab::ui::DeepKeyboard keyboard;
     juce::TooltipWindow tooltips { this, 600 };
     std::unique_ptr<juce::AlertWindow> saveWindow;
 
