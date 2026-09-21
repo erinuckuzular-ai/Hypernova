@@ -145,6 +145,17 @@ public:
     std::shared_ptr<const ab::SampleData> sampleForUi() const { return sampleHeld; }
     std::atomic<int> sampleVersion { 0 };
     std::atomic<float> shownSample { -1.0f };
+
+    //==========================================================================
+    // Effects rack order. Stored as a property of the state ("fxOrder"), so it's saved with sessions and
+    // presets and undoable; the audio thread reads it from an atomic.
+    ab::FxOrder getFxOrder() const;
+    void setFxOrder (const ab::FxOrder&); // message thread, undoable
+    // Effect-chain presets: the order and every effect setting, reusable across sounds.
+    static juce::File chainFolder();
+    bool saveChain (const juce::String& name);
+    bool loadChain (const juce::File&);
+    static bool isFxParam (const juce::String& id);
     std::atomic<int> parameterChanges { 0 }; // bumped on any parameter change, so the editor redraws only when needed
     int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
@@ -237,6 +248,16 @@ private:
     double hostPpq = 0;
     bool hostPlaying = false;
     std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;
+    std::atomic<juce::uint64> fxOrderPacked { 0 };
+    void syncFxOrder();
+    struct OrderListener : juce::ValueTree::Listener
+    {
+        HypernovaAudioProcessor& p;
+        explicit OrderListener (HypernovaAudioProcessor& o) : p (o) {}
+        void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier& id) override { if (id.toString() == "fxOrder") p.syncFxOrder(); }
+        void valueTreeRedirected (juce::ValueTree&) override { p.syncFxOrder(); }
+    };
+    std::unique_ptr<OrderListener> orderListener;
     std::shared_ptr<const ab::SampleData> sampleHeld;
     std::atomic<const ab::SampleData*> currentSample { nullptr };
     std::vector<std::pair<juce::uint32, std::shared_ptr<const ab::SampleData>>> retiredSamples;

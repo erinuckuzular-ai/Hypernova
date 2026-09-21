@@ -21,8 +21,41 @@ inline double delayTimeBeats (int i)
     return b[juce::jlimit (0, 10, i)];
 }
 
+// The rack: the effects that can be put in any order. Width and mono bass stay last (they're the output stage).
+// Append only: saved orders store these numbers.
+enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, NumFx };
+inline juce::StringArray fxRackNames()
+{
+    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ" };
+}
+using FxOrder = std::array<juce::uint8, NumFx>;
+inline FxOrder defaultFxOrder() { FxOrder o {}; for (int i = 0; i < NumFx; ++i) o[(size_t) i] = (juce::uint8) i; return o; }
+// "0,1,2,..." with every effect exactly once; anything else is the default order.
+inline FxOrder parseFxOrder (const juce::String& text)
+{
+    auto parts = juce::StringArray::fromTokens (text, ",", {});
+    FxOrder o {};
+    std::array<bool, NumFx> seen {};
+    if (parts.size() != NumFx) return defaultFxOrder();
+    for (int i = 0; i < NumFx; ++i)
+    {
+        const int v = parts[i].getIntValue();
+        if (v < 0 || v >= NumFx || seen[(size_t) v]) return defaultFxOrder();
+        seen[(size_t) v] = true;
+        o[(size_t) i] = (juce::uint8) v;
+    }
+    return o;
+}
+inline juce::String fxOrderText (const FxOrder& o)
+{
+    juce::StringArray parts;
+    for (auto v : o) parts.add (juce::String ((int) v));
+    return parts.joinIntoString (",");
+}
+
 struct FxSettings
 {
+    FxOrder order = defaultFxOrder();
     int distType = DistTube;
     float distDrive = 0, distMix = 0;
     float ott = 0;
@@ -295,38 +328,22 @@ public:
         auto* L = buffer.getWritePointer (0);
         auto* R = buffer.getWritePointer (1);
 
-        if (s.distOn && s.distMix > 0.001f) distortion (buffer, s);
-        if (s.tapeOn && (s.tapeWobble > 0.001f || s.tapeNoise > 0.001f || s.tapeSat > 0.001f))
-            tape.process (L, R, n, s.tapeWobble, s.tapeNoise, s.tapeSat);
-        if (s.ottOn && s.ott > 0.001f) ott (L, R, n, s.ott);
-        if (s.pitchOn && s.pitchMix > 0.001f) shifter.process (L, R, n, s.pitchSemis, s.pitchMix);
-
-        if (s.chorusOn && s.chorusMix > 0.001f)
+        // A new order takes effect between blocks: this block fades out on the old order and the next fades in
+        // on the new one, so a reorder while playing dips for a moment instead of clicking.
+        const bool reordering = s.order != applied;
+        for (auto id : applied) runEffect (id, buffer, L, R, n, s);
+        if (reordering)
         {
-            // Classic is the original; ensemble is deeper and slower; dimension is a fixed shallow wobble.
-            const float rate = s.chorusMode == 1 ? s.chorusRate * 0.6f : s.chorusMode == 2 ? 0.4f : s.chorusRate;
-            chorus.setRate (juce::jlimit (0.01f, 20.0f, rate));
-            chorus.setDepth (s.chorusMode == 1 ? 0.65f : s.chorusMode == 2 ? 0.22f : 0.35f);
-            chorus.setCentreDelay (s.chorusMode == 1 ? 14.0f : s.chorusMode == 2 ? 5.0f : 7.0f);
-            chorus.setFeedback (s.chorusMode == 1 ? 0.12f : 0.0f);
-            chorus.setMix (s.chorusMix * (s.chorusMode == 2 ? 0.35f : 0.5f));
-            juce::dsp::AudioBlock<float> block (buffer);
-            chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
+            for (int i = 0; i < n; ++i) { const float g = 1.0f - (float) (i + 1) / (float) n; L[i] *= g; R[i] *= g; }
+            applied = s.order;
+            fadeIn = true;
+        }
+        else if (fadeIn)
+        {
+            for (int i = 0; i < n; ++i) { const float g = (float) (i + 1) / (float) n; L[i] *= g; R[i] *= g; }
+            fadeIn = false;
         }
 
-        if (s.flangerOn && s.flangerMix > 0.001f)
-            flanger.process (L, R, n, s.flangerRate, s.flangerDepth, s.flangerFeedback, s.flangerMix);
-        if (s.fxFilterOn && (s.fxFilterFreq < 19000.0f || s.fxFilterDepth > 0.001f || s.fxFilterType != 0))
-            fxFilter.process (L, R, n, s.fxFilterType, s.fxFilterFreq, s.fxFilterRes, s.fxFilterDepth, s.fxFilterRate, s.ppq, s.bpm, s.playing);
-        if (s.gateOn && (s.gateDepth > 0.001f || s.panDepth > 0.001f))
-            gate.process (L, R, n, s.ppq, s.bpm, s.playing, s.gateDepth, s.gateRate, s.gatePattern, s.gateShape, s.panDepth, s.panRate);
-
-        if (s.delayOn && s.delayMix > 0.001f) delay (L, R, n, s);
-        else delaySmoothed = -1;
-
-        if (s.reverbOn && s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer, s.reverbMode);
-
-        if (s.eqOn && (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f)) eq (L, R, n, s);
         if (std::abs (s.width - 1.0f) > 0.001f)
             for (int i = 0; i < n; ++i)
             {
@@ -338,6 +355,66 @@ public:
     }
 
 private:
+    FxOrder applied = defaultFxOrder();
+    bool fadeIn = false;
+
+    void runEffect (int id, juce::AudioBuffer<float>& buffer, float* L, float* R, int n, const FxSettings& s)
+    {
+        switch (id)
+        {
+            case FxDist:
+                if (s.distOn && s.distMix > 0.001f) distortion (buffer, s);
+                break;
+            case FxTape:
+                if (s.tapeOn && (s.tapeWobble > 0.001f || s.tapeNoise > 0.001f || s.tapeSat > 0.001f))
+                    tape.process (L, R, n, s.tapeWobble, s.tapeNoise, s.tapeSat);
+                break;
+            case FxOtt:
+                if (s.ottOn && s.ott > 0.001f) ott (L, R, n, s.ott);
+                break;
+            case FxPitch:
+                if (s.pitchOn && s.pitchMix > 0.001f) shifter.process (L, R, n, s.pitchSemis, s.pitchMix);
+                break;
+            case FxChorus:
+                if (s.chorusOn && s.chorusMix > 0.001f)
+                {
+                    // Classic is the original; ensemble is deeper and slower; dimension is a fixed shallow wobble.
+                    const float rate = s.chorusMode == 1 ? s.chorusRate * 0.6f : s.chorusMode == 2 ? 0.4f : s.chorusRate;
+                    chorus.setRate (juce::jlimit (0.01f, 20.0f, rate));
+                    chorus.setDepth (s.chorusMode == 1 ? 0.65f : s.chorusMode == 2 ? 0.22f : 0.35f);
+                    chorus.setCentreDelay (s.chorusMode == 1 ? 14.0f : s.chorusMode == 2 ? 5.0f : 7.0f);
+                    chorus.setFeedback (s.chorusMode == 1 ? 0.12f : 0.0f);
+                    chorus.setMix (s.chorusMix * (s.chorusMode == 2 ? 0.35f : 0.5f));
+                    juce::dsp::AudioBlock<float> block (buffer);
+                    chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
+                }
+                break;
+            case FxFlanger:
+                if (s.flangerOn && s.flangerMix > 0.001f)
+                    flanger.process (L, R, n, s.flangerRate, s.flangerDepth, s.flangerFeedback, s.flangerMix);
+                break;
+            case FxFilter:
+                if (s.fxFilterOn && (s.fxFilterFreq < 19000.0f || s.fxFilterDepth > 0.001f || s.fxFilterType != 0))
+                    fxFilter.process (L, R, n, s.fxFilterType, s.fxFilterFreq, s.fxFilterRes, s.fxFilterDepth, s.fxFilterRate, s.ppq, s.bpm, s.playing);
+                break;
+            case FxGate:
+                if (s.gateOn && (s.gateDepth > 0.001f || s.panDepth > 0.001f))
+                    gate.process (L, R, n, s.ppq, s.bpm, s.playing, s.gateDepth, s.gateRate, s.gatePattern, s.gateShape, s.panDepth, s.panRate);
+                break;
+            case FxDelay:
+                if (s.delayOn && s.delayMix > 0.001f) delay (L, R, n, s);
+                else delaySmoothed = -1;
+                break;
+            case FxReverb:
+                if (s.reverbOn && s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer, s.reverbMode);
+                break;
+            case FxEq:
+                if (s.eqOn && (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f)) eq (L, R, n, s);
+                break;
+            default: break;
+        }
+    }
+
     double sr = 44100.0;
     juce::dsp::Oversampling<float> oversampler { 2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true }; // 4x for the distortion
     juce::dsp::Chorus<float> chorus;

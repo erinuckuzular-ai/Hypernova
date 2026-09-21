@@ -62,6 +62,8 @@ Source/
   DSP/Sampler.h         SampleData (guard-padded, cubic read), SamplerSettings, SamplePlayer (loops, reverse, fades),
                         pitch detection. Samples load on the message thread (HypernovaAudioProcessor::loadSample);
                         the audio thread reads an atomic pointer; replaced ones are retired for 3 s; FLAC in state
+  UI/FxChain.h          FX Chain widget (drag to reorder, bypass lights); order lives in state property "fxOrder",
+                        packed into an atomic for the audio thread; Effects::process runs it with a fade on change
   UI/SamplerView.h      sampler waveform editor (flags, loop brackets, playhead, drop to load)
   UI/Dock.h             docking layout tree (splits and tabbed leaves): layout, drop targets, dividers, save/load
   UI/Widgets.h          Widget (panel + Spread responsive relayout + edit chrome), StackTabs, DockOverlay (all

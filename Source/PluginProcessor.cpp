@@ -237,6 +237,9 @@ HypernovaAudioProcessor::HypernovaAudioProcessor()
 {
     WavetableBank::get(); // build the tables up front, not on the audio thread
     changeCounter = std::make_unique<ChangeCounter> (parameterChanges);
+    orderListener = std::make_unique<OrderListener> (*this);
+    apvts.state.addListener (orderListener.get());
+    syncFxOrder();
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             apvts.addParameterListener (rp->getParameterID(), changeCounter.get());
@@ -267,6 +270,7 @@ bool HypernovaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts
 
 HypernovaAudioProcessor::~HypernovaAudioProcessor()
 {
+    apvts.state.removeListener (orderListener.get());
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             apvts.removeParameterListener (rp->getParameterID(), changeCounter.get());
@@ -448,6 +452,10 @@ void HypernovaAudioProcessor::smoothSettings (SynthSettings& s, int numSamples)
 FxSettings HypernovaAudioProcessor::readFxSettings()
 {
     FxSettings f;
+    {
+        const auto packed = fxOrderPacked.load (std::memory_order_relaxed);
+        for (int i = 0; i < NumFx; ++i) f.order[(size_t) i] = (juce::uint8) ((packed >> (4 * i)) & 0xf);
+    }
     f.distType = (int) param ("distType");
     f.distDrive = param ("distDrive");
     f.distMix = param ("distMix");
@@ -1075,6 +1083,7 @@ const juce::String HypernovaAudioProcessor::getProgramName (int index)
 
 void HypernovaAudioProcessor::applyPresetValues (const std::vector<std::pair<const char*, float>>& values)
 {
+    apvts.state.setProperty ("fxOrder", fxOrderText (defaultFxOrder()), &undoManager); // every sound starts from the standard rack
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             rp->setValueNotifyingHost (rp->getDefaultValue());
@@ -1099,6 +1108,66 @@ void HypernovaAudioProcessor::loadFactoryPreset (int index)
     currentProgram = index;
     panic();
     ++presetVersion;
+}
+
+//==============================================================================
+void HypernovaAudioProcessor::syncFxOrder()
+{
+    const auto order = parseFxOrder (apvts.state.getProperty ("fxOrder").toString());
+    juce::uint64 packed = 0;
+    for (int i = 0; i < NumFx; ++i) packed |= (juce::uint64) (order[(size_t) i] & 0xf) << (4 * i);
+    fxOrderPacked.store (packed);
+    ++parameterChanges;
+}
+
+FxOrder HypernovaAudioProcessor::getFxOrder() const { return parseFxOrder (apvts.state.getProperty ("fxOrder").toString()); }
+
+void HypernovaAudioProcessor::setFxOrder (const FxOrder& order)
+{
+    if (order == getFxOrder()) return;
+    undoManager.beginNewTransaction ("Reorder effects");
+    apvts.state.setProperty ("fxOrder", fxOrderText (order), &undoManager);
+}
+
+bool HypernovaAudioProcessor::isFxParam (const juce::String& id)
+{
+    static const char* prefixes[] = { "dist", "ott", "chorus", "dly", "verb", "eq", "flang", "tape", "gate", "pan", "fxFlt", "shift" };
+    for (auto* p : prefixes) if (id.startsWith (p)) return true;
+    return id == "width" || id == "monoBass";
+}
+
+juce::File HypernovaAudioProcessor::chainFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("Application Support/Arrow/Hypernova/Effect Chains");
+}
+
+bool HypernovaAudioProcessor::saveChain (const juce::String& name)
+{
+    const auto clean = juce::File::createLegalFileName (name.trim());
+    if (clean.isEmpty()) return false;
+    juce::XmlElement xml ("HypernovaChain");
+    xml.setAttribute ("name", clean);
+    xml.setAttribute ("order", fxOrderText (getFxOrder()));
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (isFxParam (rp->getParameterID()))
+                xml.createNewChildElement ("P")->setAttribute (rp->getParameterID(), (double) rp->convertFrom0to1 (rp->getValue()));
+    chainFolder().createDirectory();
+    return xml.writeTo (chainFolder().getChildFile (clean + ".hnchain"));
+}
+
+bool HypernovaAudioProcessor::loadChain (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName ("HypernovaChain")) return false;
+    undoManager.beginNewTransaction ("Load effect chain");
+    for (auto* e : xml->getChildIterator())
+        for (int i = 0; i < e->getNumAttributes(); ++i)
+            if (isFxParam (e->getAttributeName (i)) && apvts.getParameter (e->getAttributeName (i)) != nullptr)
+                setParam (e->getAttributeName (i), (float) e->getAttributeValue (i).getDoubleValue());
+    apvts.state.setProperty ("fxOrder", fxOrderText (parseFxOrder (xml->getStringAttribute ("order"))), &undoManager);
+    return true;
 }
 
 juce::File HypernovaAudioProcessor::userPresetFolder()

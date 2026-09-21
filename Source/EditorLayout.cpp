@@ -24,6 +24,7 @@ namespace
         { "modmon",   "Mod Monitor",    "MODULATION", "Every active modulation source, live, and what it moves",       true,  SlotLfo },
         { "fx",       "Effects",        "EFFECTS",    "Distortion, OTT, chorus, delay, space, EQ and width",           false, SlotFx },
         { "morefx",   "More FX",        "EFFECTS",    "Flanger, tape, gate, filter, pitch and effect styles",          false, SlotFx },
+        { "chain",    "FX Chain",       "EFFECTS",    "The effects in signal order: drag to reorder, save chains",     false, SlotFx },
         { "play",     "Play",           "PLAYING",    "Arp, chords, tuning, unison width and cross mod",               false, SlotEnv },
         { "space",    "Sound Space",    "VIEWS",      "Spectrum or orbit view of the output",                          false, SlotAccent },
         { "scope",    "Scope",          "VIEWS",      "Oscilloscope that locks to the note you play",                  true,  SlotOscA },
@@ -185,9 +186,9 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
     juce::ValueTree root;
     if (name == "Effects")
     {
-        // Both effect racks open in full, modulation under them, the core of the sound along the bottom.
+        // The rack order on top, both effect panels open in full, the core of the sound along the bottom.
         root = split (false, 1.0f, {
-            leaf ({ "fx" }, 190), leaf ({ "morefx" }, 190), leaf ({ "mod", "play" }, 190),
+            leaf ({ "chain" }, 130), leaf ({ "fx" }, 190), leaf ({ "morefx" }, 190),
             split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "sub" }, 240) }) });
     }
     else if (name == "Sampling")
@@ -196,7 +197,7 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
         root = split (false, 1.0f, {
             split (true, 330, { leaf ({ "sampler" }, 740), leaf ({ "space" }, 480) }),
             split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "oscA" }, 280) }),
-            leaf ({ "fx", "morefx", "mod", "play" }, 190) });
+            leaf ({ "fx", "morefx", "chain", "mod", "play" }, 190) });
     }
     else if (name == "Analysis")
     {
@@ -208,14 +209,14 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
         root = split (false, 1.0f, {
             split (true, 330, { leaf ({ "space" }, 560), leaf ({ "scope-1" }, 400), leaf ({ "meter-1" }, 260) }),
             split (true, 260, { leaf ({ "modmon-1" }, 520), leaf ({ "xy-1" }, 300), leaf ({ "filter" }, 400) }),
-            leaf ({ "mod", "fx", "morefx", "play" }, 190, page) });
+            leaf ({ "mod", "fx", "morefx", "play", "chain" }, 190, page) });
     }
     else
     {
         root = split (false, 1.0f, {
             split (true, 378, { leaf ({ "oscA" }, 400), leaf ({ "oscB" }, 400), leaf ({ "space" }, 408) }),
             split (true, 212, { leaf ({ "sub" }, 240), leaf ({ "pitch" }, 256), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }),
-            leaf ({ "mod", "fx", "morefx", "play" }, 190, page) });
+            leaf ({ "mod", "fx", "morefx", "play", "chain" }, 190, page) });
     }
     ws.appendChild (toolsTree, nullptr);
     juce::ValueTree dockTree ("Dock");

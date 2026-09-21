@@ -248,6 +248,27 @@ int main (int argc, char** argv)
         ed->loadWorkspace ("Effects", false);
         check (ed->findWidget ("fx")->isVisible() && ed->findWidget ("fx")->getWidth() == area.getWidth() && ! ed->findWidget ("oscA")->isVisible(), "Effects workspace");
         tidy ("Effects");
+
+        // The FX chain: drag the first effect three places along and the processor's order follows.
+        {
+            FxChainView* chain = nullptr;
+            for (auto* c : ed->findWidget ("chain")->content.getChildren()) if (auto* v = dynamic_cast<FxChainView*> (c)) chain = v;
+            check (chain != nullptr && chain->isVisible(), "the Effects workspace shows the FX chain");
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            const float slotW = ((float) chain->getWidth() - 108.0f) / (float) ab::NumFx;
+            const juce::Point<float> from (54.0f + slotW * 0.5f, (float) chain->getHeight() * 0.4f);
+            const auto to = from + juce::Point<float> (slotW * 3.0f, 0.0f);
+            auto ev = [&] (juce::Point<float> p) { return juce::MouseEvent (src, p, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, chain, chain,
+                                                                           juce::Time::getCurrentTime(), from, juce::Time::getCurrentTime(), 1, false); };
+            chain->mouseDown (ev (from));
+            chain->mouseDrag (ev (from + juce::Point<float> (10.0f, 0.0f)));
+            chain->mouseDrag (ev (to));
+            chain->mouseUp (ev (to));
+            const auto order = proc.getFxOrder();
+            check (order[3] == ab::FxDist && order[0] == ab::FxTape, "dragging a chip reorders the effects (" + ab::fxOrderText (order) + ")");
+            proc.undoManager.undo();
+            check (proc.getFxOrder() == ab::defaultFxOrder(), "and undo puts it back");
+        }
         ed->loadWorkspace ("Sound Design", false);
         check (ed->captureLayout().toXmlString() == now, "Sound Design remembers its edits");
         check (proc.apvts.copyState().toXmlString() != juce::String() && ed->isPinned ("res"), "and its pinboard");
@@ -313,7 +334,7 @@ int main (int argc, char** argv)
     snap ("ui_3_hypernova_play.png", "Hypernova", 0, 3);
     snap ("ui_5_morefx.png", "Trance Pluck", 0, 2);
     snap ("ui_6_layout_edit.png", "Reese Wide", 1, 0, "Sound Design", true);
-    snap ("ui_7_effects_workspace.png", "Reese Wide", 0, 0, "Effects");
+    snap ("ui_7_effects_workspace.png", "Reese Wide", 0, 1, "Effects");
     snap ("ui_8_analysis.png", "Reese Wide", 0, 0, "Analysis");
     {
         // Sampling: a made-up recording (a plucked, slightly noisy tone) loaded and looping.

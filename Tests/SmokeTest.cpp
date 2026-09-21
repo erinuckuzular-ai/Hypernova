@@ -463,6 +463,94 @@ int main (int argc, char** argv)
     }
 
     // SmokeTest --note "<preset>" <midiNote> <out.wav>: one 300 ms note, for A/B checks against references.
+    // SmokeTest --fxorder: the effects rack can be reordered, saved, undone, and reordering while playing doesn't click.
+    if (argc == 2 && juce::String (argv[1]) == "--fxorder")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        auto setup = [] (HypernovaAudioProcessor& p)
+        {
+            p.setParam ("distMix", 1.0f); p.setParam ("distDrive", 0.8f);
+            p.setParam ("verbMix", 0.5f); p.setParam ("verbSize", 0.7f);
+        };
+        auto render = [&] (HypernovaAudioProcessor& p, double seconds, std::function<void (int)> atBlock = {})
+        {
+            std::vector<float> out;
+            const int total = (int) (seconds * rate);
+            for (int pos = 0, b = 0; pos < total; pos += 256, ++b)
+            {
+                if (atBlock) atBlock (b);
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 110), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            return out;
+        };
+        auto diff = [] (const std::vector<float>& a, const std::vector<float>& b)
+        {
+            double d = 0, e = 0;
+            for (size_t i = 0; i < juce::jmin (a.size(), b.size()); ++i) { d += (a[i] - b[i]) * (a[i] - b[i]); e += a[i] * a[i]; }
+            return std::sqrt (d / juce::jmax (1e-12, e));
+        };
+
+        HypernovaAudioProcessor a, b;
+        for (auto* p : { &a, &b }) { p->prepareToPlay (rate, 256); setup (*p); }
+        check (a.getFxOrder() == ab::defaultFxOrder(), "a new sound has the standard order");
+        auto order = ab::defaultFxOrder();
+        std::swap (order[ab::FxDist], order[ab::FxReverb]); // reverb first, then distortion
+        b.setFxOrder (order);
+        check (b.getFxOrder() == order, "the order can be changed");
+        const auto ra = render (a, 1.0), rb = render (b, 1.0);
+        check (diff (ra, rb) > 0.05, "a different order sounds different (" + juce::String (diff (ra, rb), 3) + ")");
+
+        juce::MemoryBlock state;
+        b.getStateInformation (state);
+        HypernovaAudioProcessor c;
+        c.setStateInformation (state.getData(), (int) state.getSize());
+        check (c.getFxOrder() == order, "a saved session keeps the order");
+        b.undoManager.undo();
+        check (b.getFxOrder() == ab::defaultFxOrder(), "undo puts the order back");
+        c.setCurrentProgram (5);
+        check (c.getFxOrder() == ab::defaultFxOrder(), "loading a factory sound resets the rack");
+
+        // Reordering mid-note: no sample-to-sample jump bigger than the sound itself makes.
+        HypernovaAudioProcessor d;
+        d.prepareToPlay (rate, 256);
+        setup (d);
+        auto swapped = order;
+        const auto live = render (d, 1.5, [&] (int blk) { if (blk == 150) d.setFxOrder (swapped); });
+        float normal = 0, atSwitch = 0;
+        for (size_t i = 1; i < live.size(); ++i)
+        {
+            const float step = std::abs (live[i] - live[i - 1]);
+            if (i > 256 * 100 && i < 256 * 148) normal = juce::jmax (normal, step);
+            if (i >= 256 * 149 && i < 256 * 153) atSwitch = juce::jmax (atSwitch, step);
+        }
+        check (atSwitch <= normal * 1.2f + 0.005f, "no click when reordering while playing (" + juce::String (atSwitch, 3) + " vs " + juce::String (normal, 3) + ")");
+
+        // Effect-chain presets: the order and the settings come back.
+        const auto chainName = juce::String ("smoke test chain");
+        setup (b); // the undo above can take the setup with it: they were one undo step
+        check (b.saveChain (chainName), "saves an effect chain");
+        b.setFxOrder (order);
+        HypernovaAudioProcessor e;
+        e.prepareToPlay (rate, 256);
+        const auto file = HypernovaAudioProcessor::chainFolder().getChildFile (chainName + ".hnchain");
+        b.saveChain (chainName);
+        e.setParam ("cutoff", 500.0f);
+        const bool loaded = e.loadChain (file);
+        check (loaded && e.getFxOrder() == order && std::abs (e.apvts.getRawParameterValue ("distMix")->load() - 1.0f) < 0.001f,
+               "loading it brings back the order and the settings");
+        check (std::abs (e.apvts.getRawParameterValue ("cutoff")->load() - 500.0f) < 1.0f, "and leaves the synth alone");
+        file.deleteFile();
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // SmokeTest --sampler: loading, pitch detection, key tracking, loops, reverse, clicks and saving.
     if (argc == 2 && juce::String (argv[1]) == "--sampler")
     {

@@ -134,7 +134,7 @@ ButtonType& HypernovaAudioProcessorEditor::toggle (std::unique_ptr<ButtonType> b
 //==============================================================================
 HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p),
-      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), filterView (p),
+      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), fxChain (p), filterView (p),
       ampView (p, "amp", Palette::env, true), modView (p, "mod", Palette::lfo, false),
       lfoView1 (p, 0), lfoView2 (p, 1),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
@@ -458,6 +458,29 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (samplerView, Spread::Stretch);
     }
 
+    // FX chain: the rack order
+    {
+        const juce::Rectangle<int> design { 0, 0, 1232, 150 };
+        auto& w = makeWidget ("chain", "chain", "FX CHAIN", Palette::fx, design);
+        auto* W = &w.content;
+        W->addAndMakeVisible (chainButton);
+        chainButton.setBounds (design.getWidth() - 124, 11, 110, 24);
+        chainButton.setTooltip ("Save this chain (the order and every effect setting), load a saved one, or reset the order");
+        chainButton.onClick = [this] { showChainMenu (&chainButton, {}); };
+        W->addAndMakeVisible (fxChain);
+        fxChain.setBounds (12, 44, design.getWidth() - 24, design.getHeight() - 52);
+        fxChain.onMenu = [this] (juce::Point<int> pos) { showChainMenu (nullptr, pos); };
+        fxChain.onShowEffect = [this] (int id)
+        {
+            const bool first = id == ab::FxDist || id == ab::FxOtt || id == ab::FxChorus || id == ab::FxDelay || id == ab::FxReverb || id == ab::FxEq;
+            const juce::String page = first ? "fx" : "morefx";
+            if (layoutTree().contains (page)) activateWidget (page); else addWidgetType (page);
+            showMessage (ab::fxRackNames()[id] + " is on the " + (first ? juce::String ("Effects") : juce::String ("More FX")) + " panel");
+        };
+        w.finishBuilding();
+        w.spread.setFlags (fxChain, Spread::Stretch);
+    }
+
     // Envelopes
     {
         auto& w = makeWidget ("env", "env", "AMP ENV", Palette::env, envPanel);
@@ -670,6 +693,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
     tickTools (sounding);
     if (samplerView.isVisible()) samplerView.refresh();
+    if (fxChain.isVisible()) fxChain.refresh();
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
     if (sounding || changes != lastParameterChanges)
@@ -1419,6 +1443,47 @@ void HypernovaAudioProcessorEditor::showSampleMenu()
     {
         if (r == 1) chooseSample();
         else if (r == 2) { processor.clearSample(); processor.setParam ("smpOn", 0.0f); showMessage ("Sample removed"); }
+    });
+}
+
+void HypernovaAudioProcessorEditor::showChainMenu (juce::Component* target, juce::Point<int> screenPos)
+{
+    juce::PopupMenu m;
+    m.setLookAndFeel (&lookAndFeel);
+    m.addSectionHeader ("EFFECT CHAINS");
+    auto files = std::make_shared<juce::Array<juce::File>> (HypernovaAudioProcessor::chainFolder().findChildFiles (juce::File::findFiles, false, "*.hnchain"));
+    files->sort();
+    m.addItem (1, "Save this chain...");
+    if (files->isEmpty()) m.addItem (-1, "(no saved chains yet)", false, false);
+    for (int i = 0; i < files->size(); ++i) m.addItem (100 + i, (*files)[i].getFileNameWithoutExtension());
+    m.addSeparator();
+    m.addItem (2, "Reset the order", processor.getFxOrder() != ab::defaultFxOrder());
+    m.addItem (3, "Show the chains folder");
+    auto options = juce::PopupMenu::Options();
+    options = target != nullptr ? options.withTargetComponent (target) : options.withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 });
+    m.showMenuAsync (options, [this, files] (int r)
+    {
+        if (r == 1)
+        {
+            auto* box = new juce::AlertWindow ("Save effect chain", "Saves the order and every effect setting, to use on any sound.",
+                                               juce::MessageBoxIconType::NoIcon, this);
+            box->addTextEditor ("name", processor.getPresetName() + " chain");
+            box->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            box->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            box->enterModalState (true, juce::ModalCallbackFunction::create ([this, box] (int result)
+            {
+                const auto name = box->getTextEditorContents ("name").trim();
+                if (result == 1 && name.isNotEmpty())
+                    showMessage (processor.saveChain (name) ? "Saved chain \"" + name + "\"" : juce::String ("Couldn't save the chain"));
+            }), true);
+        }
+        else if (r == 2) processor.setFxOrder (ab::defaultFxOrder());
+        else if (r == 3) { HypernovaAudioProcessor::chainFolder().createDirectory(); HypernovaAudioProcessor::chainFolder().revealToUser(); }
+        else if (r >= 100 && r - 100 < files->size())
+        {
+            const auto f = (*files)[r - 100];
+            showMessage (processor.loadChain (f) ? "Loaded chain \"" + f.getFileNameWithoutExtension() + "\"" : juce::String ("Couldn't read that chain"));
+        }
     });
 }
 
