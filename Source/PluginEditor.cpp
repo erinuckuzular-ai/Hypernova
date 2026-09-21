@@ -186,7 +186,11 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton, &undoButton, &redoButton, &gearButton })
         canvas.addAndMakeVisible (b);
 
-    spaceMode.onChange = [this] (int m) { space.setMode ((SoundSpace::Mode) m); };
+    spaceMode.onChange = [this] (int m)
+    {
+        space.setMode ((SoundSpace::Mode) m);
+        if (spaceWindow != nullptr) spaceWindow->view().setMode ((SoundSpace::Mode) m);
+    };
 
     keyboard.setAvailableRange (24, 96);
     keyboard.setOctaveForMiddleC (3); // Ableton naming: C3 = middle C
@@ -278,8 +282,19 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     }
 
     // Sound space
-    spaceMode.setBounds (at (spacePanel, 228, 11, 168, 24));
+    spaceMode.setBounds (at (spacePanel, 150, 11, 186, 24));
     space.setBounds (at (spacePanel, 12, 44, 384, 294));
+    expandButton.setTooltip ("Fill the window with the Sound Space");
+    popOutButton.setTooltip ("Open the Sound Space in its own resizable window");
+    expandButton.onClick = [this] { setSpaceExpanded (! spaceExpanded); };
+    popOutButton.onClick = [this]
+    {
+        if (spaceWindow != nullptr) { spaceWindow.reset(); return; }
+        spaceWindow = std::make_unique<SpaceWindow> (processor, (int) space.getMode(), [this] { spaceWindow.reset(); });
+    };
+    for (auto* b : { &expandButton, &popOutButton }) canvas.addAndMakeVisible (b);
+    expandButton.setBounds (at (spacePanel, 340, 11, 26, 24));
+    popOutButton.setBounds (at (spacePanel, 370, 11, 26, 24));
 
     // Sub + noise
     toggle (std::make_unique<PowerLed> (Palette::sub), "subOn", at (subPanel, 8, 8, 26, 26), "Sub oscillator on/off");
@@ -515,6 +530,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     viewA.refresh (sounding);
     viewB.refresh (sounding);
     space.refresh (sounding);
+    if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
     // Small views: only while sound plays (their values move), plus a slow tick otherwise for parameter edits.
     if (sounding || (++idleTicks % 6) == 0)
     {
@@ -1043,6 +1059,40 @@ void HypernovaAudioProcessorEditor::showModMenu (const juce::String& paramId)
         }
         else if (r == 3 && param != nullptr) param->setValueNotifyingHost (param->getDefaultValue());
     });
+}
+
+// The Sound Space filling the whole window, and back again.
+void HypernovaAudioProcessorEditor::setSpaceExpanded (bool expand)
+{
+    spaceExpanded = expand;
+    if (expand)
+    {
+        space.setBounds (24, 96, baseWidth - 48, baseHeight - 210);
+        space.toFront (false);
+        spaceMode.toFront (false);
+        expandButton.toFront (false);
+        popOutButton.toFront (false);
+        showMessage ("Sound Space expanded: click the arrows again to shrink it");
+    }
+    else
+        space.setBounds (spacePanel.getX() + 12, spacePanel.getY() + 44, 384, 294);
+    canvas.repaint();
+}
+
+HypernovaAudioProcessorEditor::SpaceWindow::SpaceWindow (HypernovaAudioProcessor& p, int mode, std::function<void()> onGone)
+    : juce::DocumentWindow ("Hypernova Sound Space", Colours::bg0, juce::DocumentWindow::closeButton),
+      whenClosed (std::move (onGone))
+{
+    space = std::make_unique<ab::ui::SoundSpace> (p);
+    space->setMode ((ab::ui::SoundSpace::Mode) mode);
+    space->setSize (720, 520);
+    setUsingNativeTitleBar (true);
+    setContentNonOwned (space.get(), true);
+    setResizable (true, false);
+    setResizeLimits (360, 260, 3000, 2200);
+    centreWithSize (720, 520);
+    setVisible (true);
+    setAlwaysOnTop (true);
 }
 
 void HypernovaAudioProcessorEditor::showDiceMenu()
