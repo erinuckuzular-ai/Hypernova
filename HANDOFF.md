@@ -59,8 +59,11 @@ Source/
                         knob styles (incl. cached machined bodies), panel styles
   UI/Components.h       knobs (mod rings, trails, right-click), views (wavetable, Sound Space, envelopes,
                         LFOs, filter), chips, toggles, keyboard (DeepKeyboard), icons
-  UI/Widgets.h          Widget (movable/resizable/collapsible panel with layout-mode chrome), StackTabs, WorkspaceStore
-  EditorLayout.cpp      the widget host: default workspaces, snapping, stacking, hide/add, layout undo, workspace menu
+  UI/Dock.h             docking layout tree (splits and tabbed leaves): layout, drop targets, dividers, save/load
+  UI/Widgets.h          Widget (panel + Spread responsive relayout + edit chrome), StackTabs, DockOverlay (all
+                        drag/resize/drop interaction), WorkspaceStore
+  UI/ToolWidgets.h      tool widgets (Scope, Loudness Meter, XY Pad, Mod Monitor, Macros, Pinboard) + WidgetLibrary
+  EditorLayout.cpp      the widget host: catalogue, tool instances, default workspaces, operations, menus, undo
   UI/Cosmos.h           GPU backdrop shader (cosmos / neon horizon / plain) + CPU fallback
   UI/PresetBrowser.h    browser overlay
   UI/Updater.h          GitHub release check + download banner

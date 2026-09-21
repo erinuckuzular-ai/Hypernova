@@ -2,7 +2,7 @@
 
 Status is one of **implemented**, **partial** or **not started**. The numbering follows the original roadmap, so the gaps are deliberate: removed items stay removed. Update this file whenever an item's status changes, and never mark an item implemented until it has been built, tested and shipped.
 
-Last updated: 2026-09-21
+Last updated: 2026-09-22
 
 ## Stages
 
@@ -28,9 +28,9 @@ The widget interface comes first because every later feature (sampler, extra sou
 | 13 | Rearrangeable effects racks | not started | The effects run in a fixed order. |
 | 14 | Proper effect editors | partial | There are per-effect controls with units and on/off switches. Missing: curve displays, modulation access from the effect itself, searchable replacement. |
 | 15 | Dedicated sampler | not started | This blocks the "Sampling" workspace default. |
-| 16 | Customisable widget interface | partial | Done: the panels are widgets you can add, move (with snapping), resize (aspect kept, minimum and maximum), collapse, hide, restore, stack into tabs and unstack; there's a layout-edit mode and structural undo/redo. Missing: pinned controls and the optional routing view. |
+| 16 | Customisable widget interface | partial | Done: the panels are widgets in a docking layout, so there are no gaps or overlaps. You can grab a widget by its title in normal use (or anywhere in layout mode) and drop it to stack as a tab, split beside another widget or dock along an edge. Gaps drag to resize. Given more room, a widget grows its displays instead of zooming. Widgets can be collapsed to a strip, maximised, hidden, replaced and duplicated, and structural changes have undo/redo. There's a widget library with click-to-add or drag-to-place, and new tool widgets (Scope, Loudness Meter, XY Pad, Mod Monitor, Macros, Pinboard). Pinned controls: right-click any knob and choose Pin to pinboard. Missing: the optional routing view (needs item 12). |
 | 17 | Hypernova FX companion plugin | not started | |
-| 18 | Saved workspaces | partial | Done: Sound Design and Effects defaults; save, load, rename, duplicate, delete and reset; the last workspace is restored. Layouts are stored in `workspaces.xml`, separate from patch state, and switching never touches the sound (tested). Missing: the Sampling default (needs item 15) and opt-in patch-associated layouts. |
+| 18 | Saved workspaces | partial | Done: Sound Design, Effects and Analysis defaults; save, load, rename, duplicate, delete and reset; the last workspace is restored and each keeps its own edits. Layouts, including tool settings, are stored in `workspaces.xml`, separate from patch state; switching never touches the sound (tested). Missing: the Sampling default (needs item 15) and opt-in patch-associated layouts. |
 | 19 | Reusable mini-instruments | not started | |
 | 21 | Chop Lab | not started | Needs item 15. |
 | 23 | Interchangeable synthesis engines | not started | |
@@ -61,5 +61,5 @@ The widget interface comes first because every later feature (sampler, extra sou
 
 ## Tests
 
-- `UISnapshot <dir> --layouttest`: move, snap, overlap refusal, resize limits, collapse, hide/add, tab switching, unstack/restack, undo/redo, workspace round trip, patch state unchanged, knobs never move widgets outside layout mode.
+- `UISnapshot <dir> --layouttest`: dock tree logic; the classic default layout; no gaps or overlaps after every operation; the overlay only takes titles and gaps in normal use; dragging gaps and titles through the real mouse handlers; maximise grows displays without ballooning knobs; hide, add, stack, split, edge dock, collapse, replace and duplicate; pinboard; undo/redo; workspace round trips; patch state unchanged.
 - `UISnapshot <dir>`: renders `ui_6_layout_edit.png` and `ui_7_effects_workspace.png` along with the existing views. Set `HYPERNOVA_THEME` to render each theme. Tests use a scratch workspace folder, never the user's.

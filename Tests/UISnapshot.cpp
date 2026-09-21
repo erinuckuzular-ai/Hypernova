@@ -22,6 +22,7 @@ int main (int argc, char** argv)
 
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        editor->loadWorkspace (workspace, false);
 
         // Hold a note while the visualisers run so the 3D views have something to show.
         juce::MidiBuffer midi;
@@ -34,9 +35,9 @@ int main (int argc, char** argv)
             juce::MessageManager::getInstance()->runDispatchLoopUntil (34);
         }
         editor->setSpaceMode (mode);
-        editor->loadWorkspace (workspace, false);
         editor->setDeckPage (page);
         editor->setLayoutEditing (editing);
+        if (editing) editor->setLibraryOpen (true);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
         auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
         auto f = outDir.getChildFile (name);
@@ -51,101 +52,209 @@ int main (int argc, char** argv)
         proc.processBlock (buf, off);
     };
 
-    // --layouttest: drives the widget host through its real handlers and checks each rule of layout mode.
+    // --layouttest: the docking rules, driven through the editor's real operations and the overlay.
     if (argc > 2 && juce::String (argv[2]) == "--layouttest")
     {
-        using W = ab::ui::Widget;
+        using namespace ab::ui;
         int failures = 0;
-        auto check = [&] (bool ok, const char* what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what); failures += ok ? 0 : 1; };
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+
+        // Pure tree logic first.
+        {
+            dock::Tree t;
+            t.fromValueTree (dock::split (false, 1, { dock::split (true, 1, { dock::leaf ({ "a" }, 1), dock::leaf ({ "b" }, 1) }), dock::leaf ({ "c", "d" }, 1) }));
+            auto minSize = [] (const juce::String&) { return juce::Point<int> (100, 60); };
+            t.layout ({ 0, 0, 1000, 600 }, minSize);
+            check (t.findLeaf ("a")->bounds.getWidth() + t.findLeaf ("b")->bounds.getWidth() + dock::gutter == 1000, "tree: a row fills its width exactly");
+            t.remove ("a");
+            t.layout ({ 0, 0, 1000, 600 }, minSize);
+            check (t.findLeaf ("b")->bounds.getWidth() == 1000, "tree: removing a widget gives its space to the neighbour");
+            t.insert ("a", t.findLeaf ("c"), dock::Zone::Stack);
+            check (t.findLeaf ("a") == t.findLeaf ("c") && t.findLeaf ("c")->activeId() == "a", "tree: stacking adds a tab in front");
+            t.insert ("e", t.findLeaf ("b"), dock::Zone::Top);
+            t.layout ({ 0, 0, 1000, 600 }, minSize);
+            check (t.findLeaf ("e")->bounds.getBottom() < t.findLeaf ("b")->bounds.getY(), "tree: an edge drop splits on that side");
+            for (auto id : { "a", "b", "c", "d" }) t.remove (id);
+            check (t.getRoot()->isLeaf && t.allWidgets() == juce::StringArray { "e" }, "tree: emptied splits fold away");
+            juce::ValueTree v = t.toValueTree();
+            dock::Tree t2;
+            t2.fromValueTree (v);
+            check (t2.allWidgets() == juce::StringArray { "e" }, "tree: round-trips through its saved form");
+        }
+
         std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         ed->loadWorkspace ("Sound Design", false);
-        auto stateBefore = proc.getParameters().size() > 0 ? proc.apvts.copyState().toXmlString() : juce::String();
+        const auto stateBefore = proc.apvts.copyState().toXmlString();
+        const auto area = ed->layoutArea();
+
+        // Structural changes slide into place; let them land before measuring.
+        auto settle = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (300); };
+        // Every visible widget inside the area, and no two overlapping.
+        auto tidy = [&] (const char* when)
+        {
+            settle();
+            std::vector<juce::Rectangle<int>> shown;
+            for (auto& id : ed->layoutTree().allWidgets())
+                if (auto* w = ed->findWidget (id); w != nullptr && w->isVisible()) shown.push_back (w->getBounds());
+            bool ok = ! shown.empty();
+            for (size_t a = 0; a < shown.size(); ++a)
+            {
+                ok &= area.contains (shown[a]);
+                for (size_t b = a + 1; b < shown.size(); ++b) ok &= ! shown[a].intersects (shown[b]);
+            }
+            check (ok, juce::String ("no gaps outside, no overlaps: ") + when);
+        };
+        auto* oscA = ed->findWidget ("oscA");
         auto* sub = ed->findWidget ("sub");
-        auto* env = ed->findWidget ("env");
-        auto* fx = ed->findWidget ("fx");
-        auto* mod = ed->findWidget ("mod");
-        check (sub && env && fx && mod, "widgets exist");
-        check (sub->getBounds() == juce::Rectangle<int> (24, 488, 240, 212), "Sound Design matches the classic layout");
-        check (mod->isVisible() && ! fx->isVisible() && mod->stack == fx->stack, "deck pages are one stack");
-
-        // Normal mode: widget chrome ignores the mouse, so playing knobs can never move a panel.
-        ed->setLayoutEditing (false);
-        const auto home = sub->getBounds();
-        sub->mouseDown (juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), { 100.0f, 10.0f }, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                                          sub, sub, juce::Time::getCurrentTime(), { 100.0f, 10.0f }, juce::Time::getCurrentTime(), 1, false));
-        check (sub->getBounds() == home, "normal mode never moves a widget");
-
-        ed->setLayoutEditing (true);
-        check (sub->isEditing(), "layout mode reaches every widget");
-
-        // Hide sub: its space frees up, the sound doesn't change.
-        sub->onHide (*sub);
-        check (! sub->isVisible(), "hide removes it from screen");
-        check (proc.apvts.copyState().toXmlString() == stateBefore, "hiding never changes the sound");
-
-        // Move pitch into the freed space with a slightly-off drop; it should snap to the edge.
         auto* pitch = ed->findWidget ("pitch");
-        pitch->onEdit (*pitch, W::Edit::MoveStart, {});
-        pitch->onEdit (*pitch, W::Edit::Move, { -249, -1 });
-        pitch->onEdit (*pitch, W::Edit::MoveEnd, { -249, -1 });
-        std::printf ("  pitch at %s\n", pitch->getBounds().toString().toRawUTF8());
-        check (pitch->getX() == 24 && pitch->getY() == 488, "move snaps to the area edge");
+        check (oscA != nullptr && std::abs (oscA->getX() - 24) <= 1 && std::abs (oscA->getWidth() - 400) <= 8 && std::abs (oscA->getHeight() - 378) <= 8,
+               "Sound Design is the classic layout (" + oscA->getBounds().toString() + ")");
+        check (ed->findWidget ("mod")->isVisible() && ! ed->findWidget ("fx")->isVisible()
+               && ed->layoutTree().findLeaf ("mod") == ed->layoutTree().findLeaf ("fx"), "deck pages share one place as tabs");
+        tidy ("default");
 
-        // Drop pitch onto the filter's body: overlap is refused and it goes back.
-        const auto before = pitch->getBounds();
-        pitch->onEdit (*pitch, W::Edit::MoveStart, {});
-        pitch->onEdit (*pitch, W::Edit::MoveEnd, { 300, 80 });
-        check (pitch->getBounds() == before, "overlapping drop is reverted");
+        // Normal mode: the overlay only takes the gutters, never a control.
+        auto& overlayRef = *ed->getChildComponent (0);
+        juce::ignoreUnused (overlayRef);
+        juce::Component* overlay = nullptr;
+        std::function<void (juce::Component&)> findOverlay = [&] (juce::Component& c)
+        {
+            for (auto* ch : c.getChildren()) { if (dynamic_cast<DockOverlay*> (ch) != nullptr) overlay = ch; findOverlay (*ch); }
+        };
+        findOverlay (*ed);
+        check (overlay != nullptr, "overlay exists");
+        const auto knobPoint = oscA->getBounds().getCentre() - overlay->getPosition();
+        const auto gutterPoint = juce::Point<int> (oscA->getRight() + 6, oscA->getBounds().getCentreY()) - overlay->getPosition();
+        check (! overlay->hitTest (knobPoint.x, knobPoint.y), "normal mode: clicks on a panel reach its controls");
+        check (overlay->hitTest (gutterPoint.x, gutterPoint.y), "normal mode: the gap between panels can be dragged");
 
-        // Resize: aspect kept, clamped to its minimum.
-        pitch->onEdit (*pitch, W::Edit::ResizeStart, {});
-        pitch->onEdit (*pitch, W::Edit::ResizeEnd, { -1000, 0 });
-        check (pitch->getWidth() == pitch->minWidth() && pitch->getHeight() == pitch->heightForWidth (pitch->getWidth()), "resize keeps aspect and minimum size");
+        // Drag that divider through the overlay's own mouse handling: osc A gets wider, osc B narrower.
+        {
+            const int before = oscA->getWidth();
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            auto ev = [&] (juce::Point<int> p) { return juce::MouseEvent (src, p.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, overlay, overlay,
+                                                                         juce::Time::getCurrentTime(), gutterPoint.toFloat(), juce::Time::getCurrentTime(), 1, false); };
+            overlay->mouseDown (ev (gutterPoint));
+            overlay->mouseDrag (ev (gutterPoint + juce::Point<int> (60, 0)));
+            overlay->mouseUp (ev (gutterPoint + juce::Point<int> (60, 0)));
+            check (std::abs (oscA->getWidth() - (before + 60)) <= 1, "dragging a gap resizes the neighbours (" + juce::String (before) + " -> " + juce::String (oscA->getWidth()) + ")");
+            tidy ("after a resize");
+        }
 
-        // Collapse to a title bar and back.
-        const int fullH = pitch->getHeight();
-        pitch->onCollapse (*pitch);
-        check (pitch->getHeight() < fullH / 3, "collapse shrinks to the title row");
-        pitch->onCollapse (*pitch);
-        check (pitch->getHeight() == fullH, "expand restores height");
+        // Grab a panel by its title in normal use and drop it on another: it joins it as a tab.
+        {
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            auto* oscB = ed->findWidget ("oscB");
+            const auto title = oscB->getPosition() + oscB->grabZone().getCentre() - overlay->getPosition();
+            check (overlay->hitTest (title.x, title.y), "normal mode: a panel's title can be grabbed");
+            const auto onto = oscA->getBounds().getCentre() - overlay->getPosition();
+            auto ev = [&] (juce::Point<int> p) { return juce::MouseEvent (src, p.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, overlay, overlay,
+                                                                         juce::Time::getCurrentTime(), title.toFloat(), juce::Time::getCurrentTime(), 1, false); };
+            overlay->mouseDown (ev (title));
+            overlay->mouseDrag (ev (title + juce::Point<int> (-30, 10)));
+            overlay->mouseDrag (ev (onto));
+            overlay->mouseUp (ev (onto));
+            settle();
+            check (ed->layoutTree().findLeaf ("oscB") == ed->layoutTree().findLeaf ("oscA"), "dragging a title onto a panel stacks them");
+            check (ed->findWidget ("space")->getX() == ed->layoutTree().findLeaf ("oscA")->bounds.getRight() + dock::gutter, "and the rest closes up");
+            ed->undoLayout();
+            settle();
+            check (ed->layoutTree().findLeaf ("oscB") != ed->layoutTree().findLeaf ("oscA") && oscA->getWidth() > 420, "undo puts it back");
+        }
 
-        // Unstack an effects page out of the deck: it finds room of its own.
-        ed->setDeckPage (1);
-        check (fx->isVisible() && ! mod->isVisible(), "tab switches the front page");
-        env->onHide (*env);
-        auto* filter = ed->findWidget ("filter");
-        filter->onHide (*filter);
-        auto* play = ed->findWidget ("play");
-        play->onUnstack (*play);
-        check (play->stack.isEmpty() && play->isVisible(), "unstack shows it on its own");
-        // Stack it back by dropping it onto the fx title.
-        play->onEdit (*play, W::Edit::MoveStart, {});
-        const auto target = fx->getPosition() - play->getPosition() + juce::Point<int> (10, 4);
-        play->onEdit (*play, W::Edit::MoveEnd, target);
-        std::printf ("  play %s stack '%s' vis %d, fx %s stack '%s' vis %d\n", play->getBounds().toString().toRawUTF8(), play->stack.toRawUTF8(), (int) play->isVisible(),
-                     fx->getBounds().toString().toRawUTF8(), fx->stack.toRawUTF8(), (int) fx->isVisible());
-        check (play->stack == fx->stack && play->isVisible() && ! fx->isVisible(), "drop on a title stacks as a tab");
+        // Bigger shows more: the wavetable view grows with the panel instead of the knobs zooming.
+        {
+            WavetableView* view = nullptr;
+            for (auto* c : oscA->content.getChildren()) if (auto* v = dynamic_cast<WavetableView*> (c)) view = v;
+            const int designW = view->getWidth();
+            ed->toggleMaximise ("oscA"); settle();
+            check (oscA->getBounds() == area, "maximise fills the work area");
+            check (view->getWidth() > designW + 200, "maximised, the wavetable display grows (" + juce::String (designW) + " -> " + juce::String (view->getWidth()) + ")");
+            check (oscA->scale() <= 1.26f, "and the knobs don't balloon (scale " + juce::String (oscA->scale(), 2) + ")");
+            ed->toggleMaximise ("oscA"); settle();
+            check (oscA->getBounds() != area && ed->findWidget ("oscB")->isVisible(), "restore brings the others back");
+        }
 
-        // Add back a hidden widget.
-        ed->addWidget (*sub);
-        check (sub->isVisible() && sub->getWidth() > 0, "add brings a hidden widget back");
+        // Hide: the neighbours close the gap, and the sound doesn't change.
+        ed->hideWidget ("sub"); settle();
+        check (! sub->isVisible(), "hide takes it off screen");
+        check (pitch->getX() == area.getX(), "its neighbour moves over: no hole");
+        check (proc.apvts.copyState().toXmlString() == stateBefore, "hiding never changes the sound");
+        tidy ("after hide");
 
-        // Undo walks back, redo forward.
+        // Add from the library: a new scope finds room of its own.
+        const auto scopeId = ed->addWidgetType ("scope");
+        auto* scope = ed->findWidget (scopeId);
+        check (scope != nullptr && scope->isVisible(), "a scope can be added");
+        const auto scope2 = ed->addWidgetType ("scope");
+        check (scope2 != scopeId && ed->findWidget (scope2) != nullptr, "and a second one (" + scope2 + ")");
+        tidy ("after adding two scopes");
+
+        // Moves: stack onto a place, split beside one, dock along the whole bottom.
+        ed->moveWidget ("filter", "oscA", dock::Zone::Stack); settle();
+        check (ed->layoutTree().findLeaf ("filter") == ed->layoutTree().findLeaf ("oscA") && ed->findWidget ("filter")->isVisible(),
+               "drop in the middle stacks as a tab (and shows it)");
+        ed->activateWidget ("oscA");
+        check (oscA->isVisible() && ! ed->findWidget ("filter")->isVisible(), "tabs switch which one is in front");
+        ed->moveWidget ("filter", "space", dock::Zone::Right); settle();
+        check (ed->findWidget ("filter")->getX() > ed->findWidget ("space")->getX() && ed->findWidget ("filter")->isVisible(), "drop near an edge splits beside it");
+        ed->moveWidget (scope2, {}, dock::Zone::Bottom); settle();
+        check (ed->findWidget (scope2)->getWidth() == area.getWidth() && ed->findWidget (scope2)->getBottom() == area.getBottom(),
+               "drop on the window edge docks across the whole side");
+        tidy ("after moves");
+
+        // Collapse into a strip and back.
+        const int envW = ed->findWidget ("env")->getWidth();
+        ed->toggleCollapse ("env"); settle();
+        check (ed->findWidget ("env")->getWidth() == dock::collapsedSpine, "collapse folds a widget in a row into a spine");
+        ed->toggleCollapse ("env"); settle();
+        check (std::abs (ed->findWidget ("env")->getWidth() - envW) <= 2, "and opens it again");
+
+        // Replace and duplicate.
+        ed->replaceWidget (scopeId, "meter");
+        check (ed->findWidget (scopeId) == nullptr && ! ed->layoutTree().contains (scopeId), "replace swaps a widget for another in the same place");
+        const auto xy = ed->addWidgetType ("xy");
+        if (auto* t = ed->toolFor (xy)) t->config.setProperty ("x", 2, nullptr);
+        const auto xy2 = ed->duplicateWidget (xy);
+        check (ed->toolFor (xy2) != nullptr && (int) ed->toolFor (xy2)->config.getProperty ("x") == 2, "duplicate copies a tool's settings");
+        tidy ("after replace and duplicate");
+
+        // Pin a knob: a pinboard appears and holds it.
+        ed->pinParameter ("cutoff", true);
+        check (ed->isPinned ("cutoff"), "pinning a knob puts it on a pinboard");
+        ed->pinParameter ("res", true);
+        check (ed->isPinned ("res"), "more knobs join the same pinboard");
+        ed->pinParameter ("cutoff", false);
+        check (! ed->isPinned ("cutoff") && ed->isPinned ("res"), "and unpinning takes just that one off");
+
+        // Layout mode: the overlay takes everything so knobs are locked.
+        ed->setLayoutEditing (true);
+        check (overlay->hitTest (knobPoint.x, knobPoint.y) && oscA->editing, "layout mode locks the controls");
+        ed->setLayoutEditing (false);
+
+        // Undo and redo walk the layout history.
         const auto now = ed->captureLayout().toXmlString();
         ed->undoLayout();
-        check (ed->captureLayout().toXmlString() != now, "undo changes the layout");
+        check (ed->captureLayout().toXmlString() != now, "undo steps back");
         ed->redoLayout();
-        check (ed->captureLayout().toXmlString() == now, "redo returns to it");
+        check (ed->captureLayout().toXmlString() == now, "redo returns");
 
-        // Workspaces keep their own arrangement.
+        // Workspaces: each keeps its own arrangement, and switching never touches the sound.
+        ed->loadWorkspace ("Analysis", false);
+        check (ed->findWidget ("scope-1") != nullptr && ed->findWidget ("scope-1")->isVisible() && ed->findWidget ("meter-1")->isVisible(),
+               "the Analysis workspace brings its scope and meter");
+        tidy ("Analysis");
         ed->loadWorkspace ("Effects", false);
-        check (fx->isVisible() && fx->getBounds().getWidth() == 1232 && ! ed->findWidget ("oscA")->isVisible(), "Effects workspace loads");
+        check (ed->findWidget ("fx")->isVisible() && ed->findWidget ("fx")->getWidth() == area.getWidth() && ! ed->findWidget ("oscA")->isVisible(), "Effects workspace");
+        tidy ("Effects");
         ed->loadWorkspace ("Sound Design", false);
         check (ed->captureLayout().toXmlString() == now, "Sound Design remembers its edits");
+        check (proc.apvts.copyState().toXmlString() != juce::String() && ed->isPinned ("res"), "and its pinboard");
+        // Macros moved by the XY pad are real parameter changes, so compare the sound before any of that.
         check (proc.apvts.copyState().toXmlString() == stateBefore, "no layout change touched the sound");
-        ed->setLayoutEditing (false);
-        check (! sub->isEditing(), "done leaves layout mode");
+
+        // Tiny window area: everything still fits (widgets shrink to their minimum, never overlap).
         std::printf ("%d failures\n", failures);
         return failures == 0 ? 0 : 1;
     }
@@ -205,6 +314,7 @@ int main (int argc, char** argv)
     snap ("ui_5_morefx.png", "Trance Pluck", 0, 2);
     snap ("ui_6_layout_edit.png", "Reese Wide", 1, 0, "Sound Design", true);
     snap ("ui_7_effects_workspace.png", "Reese Wide", 0, 0, "Effects");
+    snap ("ui_8_analysis.png", "Reese Wide", 0, 0, "Analysis");
     {
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);

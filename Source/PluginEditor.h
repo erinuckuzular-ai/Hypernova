@@ -1,16 +1,18 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include <map>
 #include "UI/Components.h"
 #include "UI/Cosmos.h"
 #include "UI/PresetBrowser.h"
 #include "UI/Updater.h"
-#include "UI/Widgets.h"
+#include "UI/ToolWidgets.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                       public juce::FileDragAndDropTarget,
                                       public juce::DragAndDropContainer,
-                                      private juce::Timer
+                                      private juce::Timer,
+                                      public ab::ui::DockOverlay::Host
 {
 public:
     explicit HypernovaAudioProcessorEditor (HypernovaAudioProcessor&);
@@ -37,25 +39,24 @@ public:
     juce::ValueTree captureLayout() const;
     void applyLayout (const juce::ValueTree& layout);
     void applyTheme();
-    void wireWidget (ab::ui::Widget&);
-    void showWidget (ab::ui::Widget&);
-    void addWidget (ab::ui::Widget&);             // what + ADD WIDGET does: bring it on screen, record it
-    void hideWidget (ab::ui::Widget&);
-    void activateInStack (ab::ui::Widget&, bool recordHistory);
-    void updateStacks();
-    void placeWidget (ab::ui::Widget&, juce::Rectangle<int> bounds);
-    juce::Rectangle<int> snapped (const ab::ui::Widget&, juce::Rectangle<int> r) const;
-    bool overlapsOthers (const ab::ui::Widget&, juce::Rectangle<int> r) const;
-    juce::Rectangle<int> freeSpotFor (const ab::ui::Widget&) const;
-    juce::Rectangle<int> layoutArea() const;
-    bool layoutKeyboardVisible() const;
-    juce::ValueTree defaultLayout (const juce::String& name) const;
-    void layoutChanged();                         // after every structural edit: history + autosave
+    juce::String addWidgetType (const juce::String& type);   // from the library: returns the new widget's id
+    void hideWidget (const juce::String& id);                // off the screen; the sound is untouched
+    void replaceWidget (const juce::String& id, const juce::String& type);
+    juce::String duplicateWidget (const juce::String& id);
+    void toggleCollapse (const juce::String& id);
+    void toggleMaximise (const juce::String& id);
+    void activateWidget (const juce::String& id);
+    void moveWidget (const juce::String& id, const juce::String& targetId, ab::ui::dock::Zone zone);
+    void pinParameter (const juce::String& paramId, bool pin);
+    bool isPinned (const juce::String& paramId) const;
+    ab::ui::dock::Tree& layoutTree() { return tree; }
+    juce::String maximisedWidget() const { return maximisedId; }
     void undoLayout();
     void redoLayout();
-    void setupEditBar();
-    void showAddWidgetMenu();
-    void showWorkspaceMenu();
+    void relayoutWidgets (bool animate);
+    juce::Rectangle<int> layoutArea() const;
+    void setLibraryOpen (bool open);
+    ab::ui::ToolContent* toolFor (const juce::String& id) const { auto it = tools.find (id); return it != tools.end() ? it->second.get() : nullptr; }
 
     static constexpr int baseWidth = 1280, baseHeight = 986;
 
@@ -112,6 +113,37 @@ private:
     template <typename ButtonType>
     ButtonType& toggle (std::unique_ptr<ButtonType> b, const juce::String& id, juce::Rectangle<int> bounds, const juce::String& tip,
                         juce::Component* parent = nullptr);
+    ab::ui::Widget& makeWidget (const juce::String& id, const juce::String& type, const juce::String& title, ab::ui::ThemeColour c,
+                                juce::Rectangle<int> design, int titleX = 14, int headerH = 40);
+    ab::ui::Widget* createTool (const juce::String& type, const juce::String& id, juce::ValueTree config);
+    void destroyTool (const juce::String& id);
+    juce::String newToolId (const juce::String& type) const;
+    void ensureWidget (const juce::String& type);
+    static bool isMultiType (const juce::String& type);
+    ab::ui::ToolServices toolServices();
+    ab::ui::PinboardTool* firstPinboard() const;
+    void tickTools (bool sounding);
+    void wireWidget (ab::ui::Widget&);
+    void showWidgetMenu (ab::ui::Widget&, juce::Point<int> screenPos);
+    std::vector<ab::ui::WidgetLibrary::Entry> libraryEntries() const;
+    juce::ValueTree defaultLayout (const juce::String& name) const;
+    void layoutChanged();                         // after every structural edit: history + autosave
+    void setupEditBar();
+    void showWorkspaceMenu();
+    static ab::ui::ThemeColour modSourceColourFor (int src);
+
+    // DockOverlay::Host
+    ab::ui::dock::Tree& dockTree() override { return tree; }
+    juce::Rectangle<int> dockArea() const override { return layoutArea(); }
+    ab::ui::Widget* widgetById (const juce::String& id) const override { return findWidget (id); }
+    ab::ui::dock::MinSize dockMinSize() const override;
+    void dockRelayout (bool animate) override { relayoutWidgets (animate); }
+    void dockCommit (const juce::String& what) override;
+    void dockDrop (const juce::String& widgetOrType, bool isNewType, const ab::ui::dock::Drop&, juce::Rectangle<int> landingFrom) override;
+    void dockMaximise (const juce::String& widgetId) override { toggleMaximise (widgetId); }
+    void dockButton (ab::ui::Widget&, int button, juce::Point<int> screenPos) override;
+    void dockActivate (const juce::String& widgetId) override;
+
     void layoutModPage();
     void layoutFxPage();
     void layoutMoreFxPage();
@@ -124,7 +156,9 @@ private:
     {
     public:
         std::vector<Caption> captions;
+        ab::ui::Spread spread;
         void paint (juce::Graphics& g) override;
+        void resized() override { spread.apply (getWidth(), getHeight()); }
     };
 
     HypernovaAudioProcessor& processor;
@@ -149,11 +183,18 @@ private:
     ab::ui::SoundSpace space;
     std::vector<std::unique_ptr<ab::ui::Widget>> widgets;
     ab::ui::Widget* spaceWidget = nullptr;
+    ab::ui::dock::Tree tree;
+    std::map<juce::String, std::unique_ptr<ab::ui::ToolContent>> tools;
+    std::unique_ptr<ab::ui::DockOverlay> overlay;
+    std::unique_ptr<ab::ui::WidgetLibrary> library;
+    juce::String maximisedId;
+    static constexpr int libraryWidth = 316;
+    juce::String landingId;             // a widget just dropped: it slides from where it was let go
+    juce::Rectangle<int> landingFrom;
     bool layoutEditing = false;
     juce::String workspaceName;
     std::vector<juce::ValueTree> layoutHistory;
     int layoutHistoryIndex = -1;
-    juce::Rectangle<int> dragStart;
     ab::ui::IconButton layoutButton { ab::ui::IconButton::Layout };
     class EditBar : public juce::Component
     {
@@ -173,7 +214,6 @@ private:
     };
     EditBar editBar;
     ab::ui::IconButton expandButton { ab::ui::IconButton::Expand }, popOutButton { ab::ui::IconButton::PopOut };
-    bool spaceExpanded = false;
 
     // A torn-off Sound Space in its own resizable window, for a second screen.
     class SpaceWindow : public juce::DocumentWindow
@@ -193,8 +233,6 @@ private:
     ab::ui::LfoView lfoView1, lfoView2;
     std::vector<std::unique_ptr<ab::ui::ModRow>> modRows;
     std::vector<std::unique_ptr<ab::ui::ModChip>> modChips;
-    std::vector<std::unique_ptr<ab::ui::LockButton>> lockButtons;
-    std::vector<std::unique_ptr<ab::ui::IconButton>> sectionDice;
     int hoveredModSource = -1, lastParameterChanges = -1, viewTick = 0;
     std::array<DeckPage, 4> pages;
 
