@@ -65,19 +65,23 @@ public:
         updateCamera();
     }
 
+    // Output level (0..1), eased: the views lean in slightly when the sound gets louder.
+    void setLevel (float l) { level += (juce::jlimit (0.0f, 1.0f, l) - level) * 0.25f; }
+    float zoom() const { return 1.0f + level * 0.05f; }
+
 protected:
     Camera3D cam;
-    float time = 0;
+    float time = 0, level = 0;
 
 private:
     float yaw0, pitch0, dragYaw = 0, dragPitch = 0, userYaw = 0, userPitch = 0;
     bool hasUser = false, dragging = false;
 
-    float swayNow() const { return dragging ? 0.0f : std::sin (time * 0.35f) * 0.12f; }
+    float swayNow() const { return dragging ? 0.0f : std::sin (time * 0.35f) * 0.2f + std::sin (time * 0.11f) * 0.08f; }
     void updateCamera()
     {
         cam.yaw = (hasUser ? userYaw : yaw0) + swayNow();
-        cam.pitch = hasUser ? userPitch : pitch0 + std::sin (time * 0.23f) * 0.03f;
+        cam.pitch = hasUser ? userPitch : pitch0 + std::sin (time * 0.23f) * 0.06f;
     }
 };
 
@@ -142,6 +146,7 @@ public:
         m.addSeparator();
         m.addItem (2, "Use the built-in table", proc.userTableName (osc).isNotEmpty());
         m.addItem (3, "Show my wavetables folder");
+        m.setLookAndFeel (&getLookAndFeel());
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, mine] (int r)
         {
             if (r == 1) chooseFile();
@@ -202,7 +207,7 @@ public:
         const auto* user = proc.currentUserTable (osc);
         const auto& wt = user != nullptr ? *user : WavetableBank::get().table (tableIndex);
         cam.centre = { r.getCentreX(), r.getCentreY() + r.getHeight() * 0.06f };
-        cam.scale = juce::jmin (r.getWidth() * 0.33f, r.getHeight() * 0.74f);
+        cam.scale = juce::jmin (r.getWidth() * 0.33f, r.getHeight() * 0.74f) * zoom();
 
         // The stack of frames and the floor only change with the table or camera: draw once, reuse.
         const auto k = currentKey();
@@ -230,7 +235,30 @@ public:
             g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.32f), top.x, top.y, colour.withAlpha (0.02f), bottom.x, bottom.y, false));
             g.fillPath (fill);
         }
-        glowStroke (g, live, on ? colour.brighter (0.3f) : Colours::textFaint, 2.0f, on ? 1.3f : 0.3f);
+        if (on)
+        {
+            // Neighbouring frames light up around the live one, so you can see where the morph is heading.
+            for (int d = -2; d <= 2; ++d)
+            {
+                const int f = nearest + d;
+                if (d == 0 || f < 0 || f >= wtFrames) continue;
+                const auto near = framePath (wt, f, zFor ((float) f / (wtFrames - 1)), WarpOff, 0.0f, nullptr, 48);
+                g.setColour (colour.withAlpha (0.28f * (1.0f - std::abs ((float) d) / 3.0f)));
+                g.strokePath (near, juce::PathStrokeType (1.1f));
+            }
+            // Reflection: the live frame mirrored under the floor, fading away.
+            juce::Path mirror;
+            const float* d0 = wt.frame (nearest, 0);
+            for (int i = 0; i <= 48; ++i)
+            {
+                const float v = d0[juce::jlimit (0, wtBaseSize - 1, (int) ((float) i / 48 * wtBaseSize))];
+                const auto pt = cam.project (-1.0f + 2.0f * i / 48, -0.84f - v * 0.36f, zFor (pos));
+                if (i == 0) mirror.startNewSubPath (pt); else mirror.lineTo (pt);
+            }
+            g.setColour (colour.withAlpha (0.14f + 0.12f * level));
+            g.strokePath (mirror, juce::PathStrokeType (1.4f));
+        }
+        glowStroke (g, live, on ? colour.brighter (0.3f + 0.3f * level) : Colours::textFaint, 2.0f + level, on ? 1.3f + level : 0.3f);
 
         g.setColour (Colours::text.withAlpha (on ? 0.9f : 0.4f));
         g.setFont (font (11.0f, true));
@@ -393,15 +421,27 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
-        g.setGradientFill (juce::ColourGradient (Colours::inset.brighter (0.05f), r.getCentreX(), r.getY(), Colours::bg0, r.getCentreX(), r.getBottom(), false));
-        g.fillRoundedRectangle (r, 12.0f);
-        g.setColour (Colours::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), 12.0f, 1.0f);
+        // The rounded, graded well behind the visualiser never changes between frames: draw it once.
+        const auto key = juce::String (getWidth()) + "x" + juce::String (getHeight()) + ":" + juce::String (ThemeState::get().version)
+                       + ":" + juce::String (g.getInternalContext().getPhysicalPixelScaleFactor(), 2);
+        if (key != wellKey || ! well.isValid())
+        {
+            wellKey = key;
+            const float sc = juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+            well = juce::Image (juce::Image::ARGB, juce::roundToInt ((float) getWidth() * sc), juce::roundToInt ((float) getHeight() * sc), true);
+            juce::Graphics wg (well);
+            wg.addTransform (juce::AffineTransform::scale (sc));
+            wg.setGradientFill (juce::ColourGradient (Colours::inset.brighter (0.05f), r.getCentreX(), r.getY(), Colours::bg0, r.getCentreX(), r.getBottom(), false));
+            wg.fillRoundedRectangle (r, 12.0f);
+            wg.setColour (Colours::line);
+            wg.drawRoundedRectangle (r.reduced (0.5f), 12.0f, 1.0f);
+        }
+        g.drawImage (well, r);
 
         juce::Graphics::ScopedSaveState save (g);
         g.reduceClipRegion (r.reduced (1).toNearestInt());
         cam.centre = { r.getCentreX(), r.getCentreY() + r.getHeight() * (mode == Spectrum ? 0.08f : 0.0f) };
-        cam.scale = juce::jmin (r.getWidth() * 0.36f, r.getHeight() * 0.5f);
+        cam.scale = juce::jmin (r.getWidth() * 0.36f, r.getHeight() * 0.5f) * zoom();
 
         if (mode == Spectrum) paintSpectrum (g);
         else if (mode == Orbit) paintOrbit (g);
@@ -409,7 +449,7 @@ public:
     }
 
 private:
-    static constexpr int fftOrder = 11, fftSize = 1 << fftOrder, cols = 60, rows = 26;
+    static constexpr int fftOrder = 11, fftSize = 1 << fftOrder, cols = 56, rows = 18;
     HypernovaAudioProcessor& proc;
     Mode mode = Spectrum;
     juce::dsp::FFT fft { fftOrder };
@@ -417,6 +457,8 @@ private:
     std::array<float, fftSize> sampL {}, sampR {};
     std::array<std::array<float, cols>, rows> history {};
     std::array<float, cols> smoothRow {}, bandWidth {}, bandLevel {};
+    juce::Image well;
+    juce::String wellKey;
     std::array<std::array<float, fftSize * 2>, 2> stereoFft {};
     float correlation = 1.0f, stereoPeak = 0.1f;
     int head = 0, quietFrames = 0;
@@ -534,7 +576,7 @@ private:
         // Per-band width: how wide each part of the spectrum is, low to high.
         g.setColour (Colours::textDim);
         g.setFont (font (9.5f, true).withExtraKerningFactor (0.18f));
-        g.drawText ("WIDTH BY FREQUENCY", right.removeFromTop (14.0f), juce::Justification::centredLeft, false);
+        g.drawFittedText ("WIDTH / FREQ", right.removeFromTop (14.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         const float rowH = right.getHeight() / (float) cols;
         for (int c = 0; c < cols; ++c)
         {
@@ -600,9 +642,9 @@ private:
 
             const float alpha = (1.0f - age) * 0.9f + 0.05f;
             const auto c = heat (peak);
-            g.setColour (Colours::bg0.withAlpha (0.55f * alpha + 0.2f));
-            g.fillPath (fill);
-            g.setColour (c.withAlpha (0.10f * alpha));
+            // One fill per row (it hides the rows behind, which is what makes it read as 3D):
+            // the backdrop colour with a little of the row's heat mixed in.
+            g.setColour (Colours::bg0.get().interpolatedWith (c, 0.10f * alpha).withAlpha (0.55f * alpha + 0.2f));
             g.fillPath (fill);
             if (k == 0) glowStroke (g, line, c.brighter (0.2f), 1.8f, 1.2f);
             else
@@ -659,7 +701,17 @@ private:
             }
             const float t = (float) s / (segments - 1);
             const auto c = Palette::oscB.interpolatedWith (Palette::oscA, t);
-            if (s == segments - 1) glowStroke (g, p, c, 1.8f, 1.0f);
+            if (s == segments - 1)
+            {
+                glowStroke (g, p, c, 1.8f, 1.0f);
+                // comet head: the sound's current position, with a halo that grows with the level
+                const auto head = p.getCurrentPosition();
+                const float rad = 3.0f + level * 5.0f;
+                g.setColour (c.withAlpha (0.18f));
+                g.fillEllipse (juce::Rectangle<float> (rad * 4, rad * 4).withCentre (head));
+                g.setColour (c.brighter (0.6f));
+                g.fillEllipse (juce::Rectangle<float> (rad, rad).withCentre (head));
+            }
             else
             {
                 g.setColour (c.withAlpha (0.25f + 0.65f * t));
@@ -670,6 +722,24 @@ private:
 };
 
 //==============================================================================
+// The rotary inside a Knob. Right-click opens the knob's menu instead of starting a drag.
+class KnobSlider : public juce::Slider
+{
+public:
+    std::function<void()> onRightClick;
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { rightClicked = true; if (onRightClick) onRightClick(); return; }
+        rightClicked = false;
+        juce::Slider::mouseDown (e);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override { if (! rightClicked) juce::Slider::mouseDrag (e); }
+    void mouseUp (const juce::MouseEvent& e) override { if (! rightClicked) juce::Slider::mouseUp (e); rightClicked = false; }
+
+private:
+    bool rightClicked = false;
+};
+
 // A knob, and a drop target for modulation: drag an LFO or envelope chip onto it to modulate it. The ring
 // around the knob shows how much modulation is arriving and from where.
 class Knob : public juce::Component, public juce::DragAndDropTarget
@@ -692,8 +762,19 @@ public:
             slider.setDoubleClickReturnValue (true, param->convertFrom0to1 (param->getDefaultValue()));
             slider.setTooltip (param->getName (64));
         }
-        slider.onValueChange = [this] { repaint(); };
+        slider.onRightClick = [this] { if (onModMenu) onModMenu (id); };
+        slider.onValueChange = [this]
+        {
+            // Remember where the knob has just been, for the light trail.
+            trail[(size_t) trailHead] = (float) slider.valueToProportionOfLength (slider.getValue());
+            trailHead = (trailHead + 1) % (int) trail.size();
+            trailAge = 0;
+            repaint();
+        };
     }
+
+    // Fades the drag trail out; called from the editor's timer.
+    void ageTrail() { if (trailAge < 12) { ++trailAge; repaint(); } }
 
     // Set by the editor: what modulation is reaching this knob, and what to do when a source is dropped on it.
     struct ModInfo { float depth = 0; float live = 0; juce::Colour colour; int slot = -1; bool highlight = false; };
@@ -724,6 +805,24 @@ public:
             g.setFont (mono (10.5f));
             g.drawFittedText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r.removeFromTop (13).toNearestInt(),
                               juce::Justification::centred, 1, 0.7f);
+        }
+
+        // Light trail: the last few positions while you turn it, fading out when you stop.
+        if (trailAge < 12 && slider.isMouseButtonDown())
+        {
+            const auto knobArea = slider.getBounds().toFloat().reduced (2.0f);
+            const float radius = juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f + 1.0f;
+            const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
+            for (int i = 0; i < (int) trail.size(); ++i)
+            {
+                const int idx = (trailHead - 1 - i + (int) trail.size()) % (int) trail.size();
+                if (trail[(size_t) idx] < 0) continue;
+                const float ang = a0 + (a1 - a0) * trail[(size_t) idx] - juce::MathConstants<float>::halfPi;
+                const auto pt = knobArea.getCentre().getPointOnCircumference (radius, ang + juce::MathConstants<float>::halfPi);
+                const float fade = (1.0f - (float) i / (float) trail.size()) * (1.0f - (float) trailAge / 12.0f);
+                g.setColour (juce::Colour (colour).brighter (0.5f).withAlpha (0.6f * fade));
+                g.fillEllipse (juce::Rectangle<float> (3.5f * fade + 1.0f, 3.5f * fade + 1.0f).withCentre (pt));
+            }
         }
 
         // Modulation ring: an arc from the knob's own value, in the source's colour, with a moving dot
@@ -785,7 +884,7 @@ public:
     void setShowValue (bool b) { showValue = b; }
     void setLabel (const juce::String& s) { if (s != name) { name = s; repaint(); } }
     const juce::String& paramId() const { return id; }
-    juce::Slider slider;
+    KnobSlider slider;
 
 private:
     juce::String name;
@@ -793,6 +892,8 @@ private:
     int size;
     juce::String id;
     bool showValue = true, dropHover = false;
+    std::array<float, 10> trail { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    int trailHead = 0, trailAge = 12;
     juce::RangedAudioParameter* param = nullptr;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
 };
@@ -810,8 +911,8 @@ public:
         auto key = area.reduced (1.0f, 0.0f).withTrimmedBottom (isDown ? 1.0f : 4.0f).translated (0, isDown ? 3.0f : 0.0f);
         g.setColour (juce::Colours::black.withAlpha (light ? 0.16f : 0.5f));
         g.fillRoundedRectangle (key.translated (0, isDown ? 1.0f : 4.0f), 4.0f);
-        const auto top = light ? juce::Colour (0xffffffff) : Colours::panelHi.brighter (0.12f);
-        const auto bottom = light ? juce::Colour (0xffeceae5) : Colours::panelHi.get();
+        const auto top = light ? juce::Colour (0xffffffff) : juce::Colour (0xffd4d6e0);
+        const auto bottom = light ? juce::Colour (0xffeceae5) : juce::Colour (0xffa9adbd);
         g.setGradientFill (juce::ColourGradient (isDown ? Palette::oscA.withAlpha (0.35f).overlaidWith (top.withAlpha (0.5f)) : top, 0, key.getY(),
                                                  isDown ? Palette::oscA.withAlpha (0.55f) : bottom, 0, key.getBottom(), false));
         g.fillRoundedRectangle (key, 4.0f);
@@ -893,8 +994,8 @@ public:
         g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
         g.setColour (colour.withAlpha (isMouseOver() ? 0.95f : 0.6f));
         g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
-        g.setFont (font (9.0f, true).withExtraKerningFactor (0.12f));
-        g.drawText (label, r, juce::Justification::centred, false);
+        g.setFont (font (9.0f, true).withExtraKerningFactor (0.08f));
+        g.drawFittedText (label, r.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.7f);
     }
 
     std::function<void (int source)> onHover; // -1 when the mouse leaves

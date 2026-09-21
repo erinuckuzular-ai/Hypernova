@@ -142,7 +142,7 @@ private:
     std::vector<std::unique_ptr<ab::ui::ModChip>> modChips;
     std::vector<std::unique_ptr<ab::ui::LockButton>> lockButtons;
     std::vector<std::unique_ptr<ab::ui::IconButton>> sectionDice;
-    int hoveredModSource = -1;
+    int hoveredModSource = -1, lastParameterChanges = -1, viewTick = 0;
     std::array<DeckPage, 4> pages;
     ab::ui::Segmented deckTabs { { "MODULATION", "EFFECTS", "MORE FX", "PLAY" }, ab::ui::Palette::mod };
 

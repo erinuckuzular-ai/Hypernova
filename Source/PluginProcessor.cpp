@@ -209,6 +209,10 @@ HypernovaAudioProcessor::HypernovaAudioProcessor()
       apvts (*this, &undoManager, "ArrowBass", createLayout()) // state tag kept from the Arrow Bass days so old sessions load
 {
     WavetableBank::get(); // build the tables up front, not on the audio thread
+    changeCounter = std::make_unique<ChangeCounter> (parameterChanges);
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            apvts.addParameterListener (rp->getParameterID(), changeCounter.get());
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             raw[rp->getParameterID().toStdString()] = apvts.getRawParameterValue (rp->getParameterID());
@@ -232,6 +236,13 @@ void HypernovaAudioProcessor::setParam (const juce::String& id, float realValue)
 bool HypernovaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+}
+
+HypernovaAudioProcessor::~HypernovaAudioProcessor()
+{
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            apvts.removeParameterListener (rp->getParameterID(), changeCounter.get());
 }
 
 void HypernovaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)

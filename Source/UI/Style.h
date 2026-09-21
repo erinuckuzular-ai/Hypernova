@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BinaryData.h"
+#include <unordered_map>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -342,6 +343,8 @@ class LookAndFeel : public juce::LookAndFeel_V4
 public:
     LookAndFeel() { refreshColours(); }
 
+    std::unordered_map<juce::String, juce::Image> knobBodies; // cached machined knob bodies
+
     // Re-reads the theme into JUCE's colour ids (menus, combo boxes, tooltips, text editors).
     void refreshColours()
     {
@@ -451,7 +454,7 @@ public:
             g.setColour (isHighlighted ? Colours::text : Colours::textDim);
             g.strokePath (chevron, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
-        g.setFont (font (14.0f, isTicked));
+        g.setFont (font (14.0f)); // same weight for every row: the dot and colour mark the current one
         g.setColour (! isActive ? Colours::textFaint : (isHighlighted || isTicked) ? Colours::text : Colours::text.withAlpha (0.86f));
         if (shortcutKeyText.isNotEmpty())
         {
@@ -506,40 +509,49 @@ public:
         if (knobStyle == KnobMachined)
         {
             // Machined: a solid cylinder with a coloured cap, lit from the top left, sitting on its own shadow.
-            // The side wall shows below the cap, so the knob reads as a physical object you could grab.
+            // The body never changes with the value, so it is drawn once per size/colour/theme and cached;
+            // only the pointer is drawn live.
             const float capR = radius - juce::jmax (6.0f, radius * 0.3f);
             const float depth = juce::jmax (2.5f, capR * 0.22f);
             const bool over = s.isMouseOverOrDragging();
             const auto centre = juce::Point<float> (cx, cy - depth * 0.35f);
-            auto cap = juce::Rectangle<float> (capR * 2, capR * 2).withCentre (centre);
-
-            // contact shadow, softened by stacking
-            for (int i = 3; i >= 1; --i)
+            const float scale = juce::jmax (1.0f, (float) g.getInternalContext().getPhysicalPixelScaleFactor());
+            const auto key = juce::String (capR, 1) + ":" + c.toString() + (over ? "h" : "") + ":" + juce::String (scale, 2)
+                           + ":" + juce::String (ThemeState::get().version);
+            auto& body = knobBodies[key];
+            const float pad = depth + 8.0f;
+            if (! body.isValid())
             {
-                g.setColour (juce::Colours::black.withAlpha (0.045f * (float) i));
-                g.fillEllipse (cap.translated (0, depth + 1.5f * (float) i).expanded (0.8f * (float) (4 - i)));
+                const int sz = (int) std::ceil ((capR + pad) * 2.0f * scale);
+                body = juce::Image (juce::Image::ARGB, sz, sz, true);
+                juce::Graphics bg (body);
+                bg.addTransform (juce::AffineTransform::scale (scale));
+                const auto ctr = juce::Point<float> (capR + pad, capR + pad);
+                auto cap = juce::Rectangle<float> (capR * 2, capR * 2).withCentre (ctr);
+                for (int i = 3; i >= 1; --i)
+                {
+                    bg.setColour (juce::Colours::black.withAlpha (0.045f * (float) i));
+                    bg.fillEllipse (cap.translated (0, depth + 1.5f * (float) i).expanded (0.8f * (float) (4 - i)));
+                }
+                const auto side = c.darker (0.55f);
+                bg.setGradientFill (juce::ColourGradient (side.brighter (0.15f), cap.getX(), ctr.y, side.darker (0.4f), cap.getRight(), ctr.y, false));
+                bg.fillEllipse (cap.translated (0, depth));
+                bg.fillRect (cap.withTrimmedTop (capR).withHeight (depth));
+                bg.setGradientFill (juce::ColourGradient (c.brighter (over ? 0.35f : 0.22f), cap.getX() + capR * 0.4f, cap.getY() + capR * 0.3f,
+                                                          c.darker (0.18f), cap.getRight(), cap.getBottom(), true));
+                bg.fillEllipse (cap);
+                bg.setColour (juce::Colours::black.withAlpha (0.05f));
+                for (float rr = capR * 0.25f; rr < capR; rr += juce::jmax (1.6f, capR * 0.12f))
+                    bg.drawEllipse (juce::Rectangle<float> (rr * 2, rr * 2).withCentre (ctr), 0.6f);
+                bg.setColour (juce::Colours::white.withAlpha (0.35f));
+                juce::Path rim;
+                rim.addCentredArc (ctr.x, ctr.y, capR - 0.6f, capR - 0.6f, 0.0f, -2.4f, -0.4f, true);
+                bg.strokePath (rim, juce::PathStrokeType (1.0f));
+                bg.setColour (juce::Colours::white.withAlpha (0.28f));
+                bg.fillEllipse (juce::Rectangle<float> (capR * 0.7f, capR * 0.38f).withCentre (ctr.translated (-capR * 0.28f, -capR * 0.42f)));
+                if (knobBodies.size() > 400) knobBodies.clear(); // theme churn: don't let it grow forever
             }
-            // side wall
-            const auto side = c.darker (0.55f);
-            g.setGradientFill (juce::ColourGradient (side.brighter (0.15f), cap.getX(), cy, side.darker (0.4f), cap.getRight(), cy, false));
-            g.fillEllipse (cap.translated (0, depth));
-            g.fillRect (cap.withTrimmedTop (capR).withHeight (depth).translated (0, 0));
-            // cap
-            g.setGradientFill (juce::ColourGradient (c.brighter (over ? 0.35f : 0.22f), cap.getX() + capR * 0.4f, cap.getY() + capR * 0.3f,
-                                                     c.darker (0.18f), cap.getRight(), cap.getBottom(), true));
-            g.fillEllipse (cap);
-            // machining: fine concentric rings
-            g.setColour (juce::Colours::black.withAlpha (0.05f));
-            for (float rr = capR * 0.25f; rr < capR; rr += juce::jmax (1.6f, capR * 0.12f))
-                g.drawEllipse (juce::Rectangle<float> (rr * 2, rr * 2).withCentre (centre), 0.6f);
-            // rim light and specular glint
-            g.setColour (juce::Colours::white.withAlpha (0.35f));
-            juce::Path rim;
-            rim.addCentredArc (centre.x, centre.y, capR - 0.6f, capR - 0.6f, 0.0f, -2.4f, -0.4f, true);
-            g.strokePath (rim, juce::PathStrokeType (1.0f));
-            g.setColour (juce::Colours::white.withAlpha (0.28f));
-            g.fillEllipse (juce::Rectangle<float> (capR * 0.7f, capR * 0.38f).withCentre (centre.translated (-capR * 0.28f, -capR * 0.42f)));
-            // pointer: a notch cut into the cap, in whichever ink contrasts with it
+            g.drawImage (body, juce::Rectangle<float> (centre.x - capR - pad, centre.y - capR - pad, (capR + pad) * 2, (capR + pad) * 2));
             const auto ink = c.getPerceivedBrightness() > 0.6f ? juce::Colour (0xff111111) : juce::Colours::white;
             const auto tip = centre.getPointOnCircumference (capR * 0.86f, angle);
             const auto root = centre.getPointOnCircumference (capR * 0.42f, angle);

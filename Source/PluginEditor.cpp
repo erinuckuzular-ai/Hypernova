@@ -392,7 +392,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     modChips.push_back (std::make_unique<ModChip> ("DRAG VEL", 4, modSourceColour (4)));
     modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
     canvas.addAndMakeVisible (*modChips.back());
-    modChips.back()->setBounds (at (voicePanel, 190, 150, 56, 20));
+    modChips.back()->setBounds (at (voicePanel, 186, 150, 60, 20));
 
     const char* adsr[] = { "A", "D", "S", "R" };
     for (int i = 0; i < 4; ++i)
@@ -555,7 +555,8 @@ void HypernovaAudioProcessorEditor::timerCallback()
         // Backdrop frame rate: 30 fps while notes sound, 12 fps when idle, or per the Animation setting.
         const int mode = processor.uiAnimation.load(); // 0 full, 1 calm, 2 off
         const bool busy = processor.shownVoices.load() > 0;
-        const int every = mode == 2 ? 0 : (mode == 1 ? (busy ? 2 : 5) : (busy ? 1 : 3));
+        const bool staticScene = ThemeState::get().backdropStyle() == ab::ui::BackdropFlat;
+        const int every = (mode == 2 || staticScene) ? 0 : (mode == 1 ? (busy ? 2 : 5) : (busy ? 1 : 3));
         ++frameTick;
         // While the flare fades, draw every frame whatever the animation setting says.
         if (logoFlare > 0.002f)
@@ -586,22 +587,41 @@ void HypernovaAudioProcessorEditor::timerCallback()
     }
 
     const bool sounding = processor.shownVoices.load() > 0;
-    viewA.refresh (sounding);
-    viewB.refresh (sounding);
-    space.refresh (sounding);
-    if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
-    // Small views: only while sound plays (their values move), plus a slow tick otherwise for parameter edits.
-    if (sounding || (++idleTicks % 6) == 0)
+    const float outLevel = cosmos.level.load();
+    for (auto* v : { static_cast<ab::ui::OrbitView*> (&viewA), static_cast<ab::ui::OrbitView*> (&viewB), static_cast<ab::ui::OrbitView*> (&space) })
+        v->setLevel (outLevel);
+    for (auto& k : knobs) k->ageTrail();
+    // The 3D views run at 20 fps (two ticks in three): smooth to the eye, a third less drawing than 30.
+    if ((++viewTick % 3) != 0)
     {
+        viewA.refresh (sounding);
+        viewB.refresh (sounding);
+        space.refresh (sounding);
+    }
+    if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
+    // Small views: while sound plays (their values move), or when a parameter changed.
+    const int changes = processor.parameterChanges.load();
+    if (sounding || changes != lastParameterChanges)
+    {
+        lastParameterChanges = changes;
         filterView.repaint();
         ampView.repaint();
         modView.repaint();
         lfoView1.repaint();
         lfoView2.repaint();
         // Modulated knobs animate: repaint only the ones a live source is actually reaching.
-        for (auto& k : knobs)
-            if (k->isShowing() && std::abs (modInfoFor (k->paramId()).depth) > 0.001f)
-                k->repaint();
+        bool anyMod = false;
+        for (int i = 0; i < ab::NumModSlots && ! anyMod; ++i)
+        {
+            const juce::String p = "mod" + juce::String (i + 1);
+            anyMod = (int) processor.apvts.getRawParameterValue (p + "Src")->load() != 0
+                  && (int) processor.apvts.getRawParameterValue (p + "Dest")->load() != 0
+                  && std::abs (processor.apvts.getRawParameterValue (p + "Amt")->load()) > 0.001f;
+        }
+        if (anyMod && sounding)
+            for (auto& k : knobs)
+                if (k->isShowing() && std::abs (modInfoFor (k->paramId()).depth) > 0.001f)
+                    k->repaint();
     }
     const int readout = processor.shownNote.load() * 100 + processor.shownVoices.load();
     if (readout != lastReadout)
@@ -675,6 +695,7 @@ void HypernovaAudioProcessorEditor::showPresetMenu()
     menu.addItem (2003, "Import sounds or a pack...");
     menu.addItem (2001, "Show my sounds folder");
 
+    menu.setLookAndFeel (&lookAndFeel);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetPlate).withMinimumWidth (presetPlate.getWidth()),
                         [this, fileItems] (int result)
                         {
@@ -815,8 +836,8 @@ void HypernovaAudioProcessorEditor::DeckPage::paint (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::showDeckPage (int page)
 {
-    processor.uiDeckPage = juce::jlimit (0, 3, page);
-    for (int i = 0; i < 3; ++i)
+    processor.uiDeckPage = juce::jlimit (0, (int) pages.size() - 1, page);
+    for (int i = 0; i < (int) pages.size(); ++i)
         pages[(size_t) i].setVisible (i == processor.uiDeckPage);
     deckTabs.setSelected (processor.uiDeckPage);
     canvas.repaint (deckPanel);
@@ -942,19 +963,20 @@ void HypernovaAudioProcessorEditor::layoutMoreFxPage()
     fxKnob ("tapeSat", "SATURATE", g, 2);
 
     g = group ("GATE", 4, "gateOn");
-    combo ("gateRate", ab::dsp::syncRateNames(), { g + 104, 4, 62, 24 }, pg);
-    combo ("gatePattern", ab::dsp::GateAndPan::patternNames(), { g + 170, 4, 4 * cell - 170, 24 }, pg);
+    // Pattern in the header; the two rate boxes sit under the knobs they belong to.
+    combo ("gatePattern", ab::dsp::GateAndPan::patternNames(), { g + 104, 4, 4 * cell - 104, 24 }, pg);
     fxKnob ("gateDepth", "GATE", g, 0);
     fxKnob ("gateShape", "SHAPE", g, 1);
     fxKnob ("panDepth", "AUTO PAN", g, 2);
-    combo ("panRate", ab::dsp::syncRateNames(), { g + 3 * cell, knobY + 22, cell - 2, 24 }, pg);
+    combo ("gateRate", ab::dsp::syncRateNames(), { g + 4, knobY + 76, 2 * cell - 8, 22 }, pg).setTooltip ("Gate rate");
+    combo ("panRate", ab::dsp::syncRateNames(), { g + 2 * cell + 2, knobY + 76, cell - 4, 22 }, pg).setTooltip ("Auto pan rate");
 
     g = group ("FILTER", 4, "fxFltOn");
     combo ("fxFltType", ab::dsp::FxFilter::typeNames(), { g + 104, 4, 4 * cell - 104, 24 }, pg);
     fxKnob ("fxFltFreq", "FREQ", g, 0);
     fxKnob ("fxFltRes", "RES", g, 1);
     fxKnob ("fxFltDepth", "SWEEP", g, 2);
-    combo ("fxFltRate", ab::dsp::syncRateNames(), { g + 3 * cell, knobY + 22, cell - 2, 24 }, pg);
+    combo ("fxFltRate", ab::dsp::syncRateNames(), { g + 2 * cell + 2, knobY + 76, cell - 4, 22 }, pg).setTooltip ("Sweep rate");
 
     g = group ("PITCH", 2, "shiftOn");
     fxKnob ("shiftSemis", "SHIFT", g, 0);
@@ -1109,6 +1131,7 @@ void HypernovaAudioProcessorEditor::showModMenu (const juce::String& paramId)
         m.addItem (2, "Clear modulation", info.slot >= 0);
     }
     m.addItem (3, "Reset to default", param != nullptr);
+    m.setLookAndFeel (&lookAndFeel);
     m.showMenuAsync (juce::PopupMenu::Options(), [this, paramId, param] (int r)
     {
         if (r >= 100) assignMod ("mod:" + juce::String (r - 100), paramId);
@@ -1301,6 +1324,7 @@ void HypernovaAudioProcessorEditor::showDiceMenu()
     m.addItem (3, "Roll a brand new bass");
     m.addSeparator();
     m.addItem (4, "Undo", processor.undoManager.canUndo());
+    m.setLookAndFeel (&lookAndFeel);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&diceButton), [this] (int r)
     {
         if (r == 1) processor.mutate (0.06f);
@@ -1337,6 +1361,7 @@ void HypernovaAudioProcessorEditor::showSettingsMenu()
     m.addSeparator();
     m.addItem (20, "Show my sounds folder");
     m.addSectionHeader ("Hypernova " + ab::ui::Updater::currentVersion());
+    m.setLookAndFeel (&lookAndFeel);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&gearButton), [this] (int r)
     {
         if (handleLookMenu (r)) return;
