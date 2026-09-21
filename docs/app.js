@@ -261,12 +261,39 @@
     });
   }
 
+  /* ---------------- GitHub releases (read straight from the public API) ---------------- */
+
+  var API = "https://api.github.com/repos/erinuckuzular-ai/Hypernova/releases";
+  var releaseList = null;
+
+  // One request for everything; normalised to the shape the page renders.
+  function loadReleases() {
+    if (releaseList) return releaseList;
+    releaseList = getJson(API + "?per_page=30").then(function (raw) {
+      return raw.filter(function (r) { return !r.draft; }).map(function (r) {
+        var dmg = null;
+        (r.assets || []).forEach(function (a) {
+          if (!dmg && /\.dmg$/i.test(a.name)) dmg = { url: a.browser_download_url, size: a.size, name: a.name };
+        });
+        return { version: r.tag_name, publishedAt: r.published_at, notes: r.body || "", prerelease: r.prerelease, dmg: dmg, page: r.html_url };
+      });
+    });
+    return releaseList;
+  }
+
   /* ---------------- Latest release ---------------- */
 
   function latest() {
     var meta = document.getElementById("release-meta");
     if (!meta) return;
-    getJson("/api/latest").then(function (d) {
+    loadReleases().then(function (list) {
+      var r = list.filter(function (x) { return !x.prerelease; })[0];
+      if (!r) throw new Error("none");
+      // Point the big button straight at the newest DMG.
+      var btn = document.getElementById("download");
+      if (btn && r.dmg && /^https:\/\/github\.com\//.test(r.dmg.url)) btn.href = r.dmg.url;
+      return { version: r.version, size: r.dmg ? r.dmg.size : 0, publishedAt: r.publishedAt };
+    }).then(function (d) {
       var parts = [];
       if (d.version) parts.push('<span class="ver">Version ' + escapeHtml(versionLabel(d.version)) + "</span>");
       var size = formatSize(d.size);
@@ -308,7 +335,7 @@
   function releases() {
     var root = document.getElementById("releases");
     if (!root) return;
-    getJson("/api/releases").then(function (list) {
+    loadReleases().then(function (list) {
       if (!Array.isArray(list) || !list.length) throw new Error("empty");
       root.innerHTML = "";
       var latestTag = null;

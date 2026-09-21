@@ -1,5 +1,0 @@
-# Cloudflare Pages config. Run wrangler from THIS folder (site/): Pages only
-# picks up ./functions relative to the current directory.
-name = "hypernova"
-pages_build_output_dir = "."
-compatibility_date = "2026-06-01"

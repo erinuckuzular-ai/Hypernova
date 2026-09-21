@@ -1,5 +1,7 @@
 # Hypernova
 
+**Website and download: https://erinuckuzular-ai.github.io/Hypernova/** (GitHub Pages from `docs/`; the download button and changelog read the GitHub releases API in the browser, so a new release shows up with no site changes.)
+
 Wavetable space synth in the Arrow family (JUCE, VST3/AU/Standalone, macOS). Serum-style engine with 362 sounds:
 808s, amapiano log drums (a faithful rebuild of the FL Studio DX10 log drum), subs, reeses, growls and wobbles,
 house stabs, techno and Euro, dub sirens and dancehall, keys, plucks, pads, strings and brass, bells, voices, arps,
