@@ -315,7 +315,7 @@
         root.appendChild(card);
       });
     }).catch(function () {
-      root.innerHTML = '<p class="muted">packs didn't load. <a href="' + RELEASES_URL + '">See them on GitHub</a>.</p>';
+      root.innerHTML = '<p class="muted">packs did not load. <a href="' + RELEASES_URL + '">See them on GitHub</a>.</p>';
     });
   }
 
@@ -401,7 +401,7 @@
         }
       });
     }).catch(function () {
-      root.innerHTML = '<p class="muted">release notes didn't load. ' +
+      root.innerHTML = '<p class="muted">release notes did not load. ' +
         '<a href="' + RELEASES_URL + '">Read them on GitHub</a>.</p>';
     });
   }

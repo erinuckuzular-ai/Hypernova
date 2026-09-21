@@ -16,8 +16,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap">
-  <link rel="stylesheet" href="style.css">
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="style.css?v=5">
+  <script src="app.js?v=5" defer></script>
+  <script src="play.js?v=5" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">skip to content</a>
@@ -25,6 +26,7 @@
   <header class="top">
     <a class="brand" href="./" aria-label="Hypernova home">hypernova</a>
     <nav class="nav" aria-label="Sections">
+      <a href="#play">play</a>
       <a href="#specs">specs</a>
       <a href="#looks">looks</a>
       <a href="#packs">sound packs</a>
@@ -44,10 +46,30 @@
         <p class="compat">VST3 / AU / STANDALONE &middot; APPLE SILICON + INTEL &middot; MACOS 10.13+ &middot; FREE</p>
       </div>
 
-      <figure class="hero-shot">
+      <figure class="hero-shot" aria-label="Move the pointer to tilt">
         <img src="assets/theme_paper.jpg" width="1600" height="1233" fetchpriority="high"
              alt="The Hypernova editor in the Paper theme: two wavetable oscillators in 3D, a spectrum view, filter, envelopes and the modulation deck.">
       </figure>
+    </section>
+
+
+    <section id="play" class="section play" aria-labelledby="play-title">
+      <h2 id="play-title">play it here.</h2>
+      <p class="lede">a small piece of hypernova in your browser. drag the table to spin it, move POSITION to morph through its 32 frames, and play with your keyboard (a to k) or the keys below. headphones help.</p>
+      <div class="rig">
+        <canvas id="wt3d" class="wt3d" aria-label="A 3D wavetable: 32 frames stacked in depth, the playing frame in orange." role="img"></canvas>
+        <div class="controls">
+          <div class="tables" role="group" aria-label="Wavetable">
+            <button data-table="analog" aria-pressed="true">analog</button>
+            <button data-table="formant" aria-pressed="false">formant</button>
+            <button data-table="metal" aria-pressed="false">metal</button>
+            <button data-table="fold" aria-pressed="false">fold</button>
+          </div>
+          <label class="slider">POSITION <input id="wt-pos" type="range" min="0" max="100" value="30"></label>
+          <label class="slider">CUTOFF <input id="wt-cut" type="range" min="0" max="100" value="70"></label>
+        </div>
+        <div class="keys" aria-label="Keyboard"><button class="key white" data-note="48" aria-label="note 48"><span>a</span></button><button class="key white" data-note="50" aria-label="note 50"><span>s</span></button><button class="key white" data-note="52" aria-label="note 52"><span>d</span></button><button class="key white" data-note="53" aria-label="note 53"><span>f</span></button><button class="key white" data-note="55" aria-label="note 55"><span>g</span></button><button class="key white" data-note="57" aria-label="note 57"><span>h</span></button><button class="key white" data-note="59" aria-label="note 59"><span>j</span></button><button class="key white" data-note="60" aria-label="note 60"><span>k</span></button><button class="key black" data-note="49" style="--i:0" aria-label="note 49"><span>w</span></button><button class="key black" data-note="51" style="--i:1" aria-label="note 51"><span>e</span></button><button class="key black" data-note="54" style="--i:3" aria-label="note 54"><span>t</span></button><button class="key black" data-note="56" style="--i:4" aria-label="note 56"><span>y</span></button><button class="key black" data-note="58" style="--i:5" aria-label="note 58"><span>u</span></button></div>
+      </div>
     </section>
 
     <section class="intro section">
