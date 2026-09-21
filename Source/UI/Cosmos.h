@@ -15,6 +15,10 @@ struct CosmosState
     std::atomic<float> level { 0.0f };          // output loudness 0..1, makes the nebula and disk breathe
     std::atomic<float> holeX { 0 }, holeY { 0 }, holeR { 0 }; // black hole centre/radius in component pixels
     std::atomic<float> flare { 0.0f };          // one-shot burst when the logo is clicked, decays to 0
+    // From the theme: which scene, how bright, and its colours (ARGB).
+    std::atomic<int> scene { 0 };               // 0 cosmos, 1 neon horizon, 2 flat
+    std::atomic<float> strength { 0.6f };
+    std::atomic<juce::uint32> base { 0xff03040a }, accent1 { 0xff46e8ff }, accent2 { 0xffff4f9a };
 };
 
 class CosmosRenderer : public juce::OpenGLRenderer
@@ -60,6 +64,16 @@ public:
         shader->setUniform ("level", smoothedLevel);
         shader->setUniform ("flare", state.flare.load());
         shader->setUniform ("pixelScale", scale);
+        auto rgb = [this] (const char* name, juce::uint32 v)
+        {
+            const juce::Colour c (v);
+            shader->setUniform (name, c.getFloatRed(), c.getFloatGreen(), c.getFloatBlue());
+        };
+        shader->setUniform ("scene", (GLfloat) state.scene.load());
+        shader->setUniform ("strength", state.strength.load());
+        rgb ("baseCol", state.base.load());
+        rgb ("acc1", state.accent1.load());
+        rgb ("acc2", state.accent2.load());
         shader->setUniform ("hole", state.holeX.load() * scale, (float) h - state.holeY.load() * scale, state.holeR.load() * scale);
 
         gl::glBindBuffer (gl::GL_ARRAY_BUFFER, vbo);
@@ -99,6 +113,11 @@ private:
         uniform float time;
         uniform float level;
         uniform float flare;
+        uniform float scene;
+        uniform float strength;
+        uniform vec3 baseCol;
+        uniform vec3 acc1;
+        uniform vec3 acc2;
         uniform float pixelScale;
         uniform vec3 hole;
 
@@ -122,12 +141,15 @@ private:
             vec2 uv = gl_FragCoord.xy / resolution.y;
             vec3 violet = vec3 (0.34, 0.19, 0.86), magenta = vec3 (0.86, 0.17, 0.52), ion = vec3 (0.16, 0.74, 1.0), gold = vec3 (1.0, 0.63, 0.27);
 
+            vec3 col = baseCol;
+            if (scene < 0.5)
+            {
             // Nebula: domain-warped fbm, drifting very slowly.
             vec2 q = uv * 1.5 + vec2 (t * 0.006, -t * 0.003);
             vec2 w = vec2 (fbm (q + vec2 (0.0, t * 0.012)), fbm (q + vec2 (5.2, 1.3) - t * 0.009));
             float n = fbm (q + 1.8 * w);
             float n2 = fbm (q * 2.2 - w + 11.0);
-            vec3 col = vec3 (0.014, 0.016, 0.040);
+            col = vec3 (0.014, 0.016, 0.040);
             col += violet * smoothstep (0.30, 0.90, n) * 0.95;
             col += magenta * smoothstep (0.42, 0.95, n * w.x * 1.8) * 0.65;
             col += ion * smoothstep (0.55, 0.95, n2) * 0.40;
@@ -150,6 +172,39 @@ private:
                     float size = L == 0 ? 1.6 : 0.9;
                     col += vec3 (0.82, 0.86, 1.0) * smoothstep (size, 0.0, d) * tw * (L == 0 ? 1.0 : 0.6);
                 }
+            }
+            // Strength pulls the whole scene back towards the base colour so it never fights the controls.
+            col = mix (baseCol, col, strength);
+            }
+            else if (scene < 1.5)
+            {
+                // Neon horizon: a gradient sky, a banded sun, and a perspective grid rolling towards you.
+                vec2 fc = gl_FragCoord.xy / resolution;
+                float horizon = 0.38;
+                vec3 sky = mix (baseCol * 1.6, mix (acc2, baseCol, 0.55), smoothstep (horizon, 1.0, fc.y));
+                col = sky;
+                vec2 sc = vec2 ((fc.x - 0.72) * resolution.x / resolution.y, fc.y - horizon - 0.2);
+                float sun = smoothstep (0.23, 0.22, length (sc));
+                float bands = step (0.5, fract ((fc.y - horizon) * 38.0)) + step (0.30, fc.y - horizon);
+                col = mix (col, mix (acc2, vec3 (1.0, 0.8, 0.35), clamp ((fc.y - horizon) * 3.0, 0.0, 1.0)), sun * clamp (bands, 0.0, 1.0) * 0.85);
+                if (fc.y < horizon)
+                {
+                    float depth = (horizon - fc.y) / horizon;
+                    float z = 1.0 / max (depth, 0.02);
+                    float gx = abs (fract ((fc.x - 0.5) * z * 0.9) - 0.5);
+                    float gz = abs (fract (z * 0.35 + t * 0.35) - 0.5);
+                    float line = smoothstep (0.03 * z, 0.0, gx * z * 0.08) + smoothstep (0.06, 0.0, gz);
+                    col = mix (baseCol * 0.7, baseCol * 0.7 + acc1 * line * depth * 1.4, 1.0);
+                }
+                float glow = exp (-abs (fc.y - horizon) * 40.0);
+                col += acc2 * glow * 0.6;
+                col *= 0.85 + 0.25 * level + 0.9 * flare;
+                col = mix (baseCol, col, strength);
+            }
+            else
+            {
+                // Flat: the theme's base colour with a whisper of gradient.
+                col = baseCol * (0.94 + 0.12 * (gl_FragCoord.y / resolution.y));
             }
 
             // Black hole with an accretion disk (tilted, spinning, brighter on the approaching side).
@@ -174,7 +229,7 @@ private:
             }
 
             vec2 v = gl_FragCoord.xy / resolution - 0.5;
-            col *= 1.0 - dot (v, v) * 0.85;
+            if (scene < 1.5) col *= 1.0 - dot (v, v) * 0.85;
             gl_FragColor = vec4 (col, 1.0);
         }
     )";
@@ -189,6 +244,46 @@ inline juce::Image renderCosmosFallback (int w, int h, float scale, juce::Point<
     const auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h);
     g.setColour (Colours::bg0);
     g.fillRect (r);
+    const int scene = ThemeState::get().backdropStyle();
+    const float strength = ThemeState::get().strength();
+    auto blackHole = [&]
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffa14a), hole.x, hole.y, juce::Colour (0x00ffa14a), hole.x + holeR * 3.2f, hole.y, true));
+        g.fillEllipse (juce::Rectangle<float> (holeR * 6.4f, holeR * 6.4f).withCentre (hole));
+        juce::Path d;
+        d.addEllipse (juce::Rectangle<float> (holeR * 5.0f, holeR * 1.5f).withCentre (hole));
+        g.setGradientFill (juce::ColourGradient (Colours::warm, hole.x - holeR * 2.5f, hole.y, Colours::plasma.withAlpha (0.6f), hole.x + holeR * 2.5f, hole.y, false));
+        g.strokePath (d, juce::PathStrokeType (holeR * 0.45f));
+        g.setColour (juce::Colours::black);
+        g.fillEllipse (juce::Rectangle<float> (holeR * 2.0f, holeR * 2.0f).withCentre (hole));
+        g.setColour (juce::Colour (0xffffd29a));
+        g.drawEllipse (juce::Rectangle<float> (holeR * 2.12f, holeR * 2.12f).withCentre (hole), holeR * 0.12f);
+    };
+    if (scene == BackdropFlat)
+    {
+        g.setGradientFill (juce::ColourGradient (Colours::bg1, 0, 0, Colours::bg0, 0, (float) h, false));
+        g.fillRect (r);
+        blackHole();
+        return img;
+    }
+    if (scene == BackdropHorizon)
+    {
+        const float hy = (float) h * 0.62f;
+        g.setGradientFill (juce::ColourGradient (Colours::bg0, 0, 0, Colours::plasma.withAlpha (0.35f * strength + 0.1f), 0, hy, false));
+        g.fillRect (r.withBottom (hy));
+        g.setColour (Colours::bg0);
+        g.fillRect (r.withTop (hy));
+        g.setColour (Colours::accent.withAlpha (0.35f * strength));
+        for (int i = 1; i < 14; ++i)
+        {
+            const float y = hy + ((float) h - hy) * std::pow ((float) i / 14.0f, 2.0f);
+            g.drawHorizontalLine ((int) y, 0, (float) w);
+        }
+        for (int i = -12; i <= 12; ++i)
+            g.drawLine ((float) w * 0.5f + i * 12.0f, hy, (float) w * 0.5f + i * 140.0f, (float) h, 1.0f);
+        blackHole();
+        return img;
+    }
     auto bloom = [&] (juce::Colour c, float x, float y, float rad)
     {
         g.setGradientFill (juce::ColourGradient (c, x, y, c.withAlpha (0.0f), x + rad, y, true));
@@ -205,17 +300,11 @@ inline juce::Image renderCosmosFallback (int w, int h, float scale, juce::Point<
         g.setColour (juce::Colour (0xffd2dbff).withAlpha (0.12f + rnd.nextFloat() * 0.55f));
         g.fillEllipse (rnd.nextFloat() * (float) w, rnd.nextFloat() * (float) h, s, s);
     }
+    // Strength: pull the whole picture back towards the base colour.
+    g.setColour (Colours::bg0.withAlpha (1.0f - strength));
+    g.fillRect (r);
     // Black hole: glow, disk, horizon, photon ring.
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffa14a), hole.x, hole.y, juce::Colour (0x00ffa14a), hole.x + holeR * 3.2f, hole.y, true));
-    g.fillEllipse (juce::Rectangle<float> (holeR * 6.4f, holeR * 6.4f).withCentre (hole));
-    juce::Path disk;
-    disk.addEllipse (juce::Rectangle<float> (holeR * 5.0f, holeR * 1.5f).withCentre (hole));
-    g.setGradientFill (juce::ColourGradient (Colours::warm, hole.x - holeR * 2.5f, hole.y, Colours::plasma.withAlpha (0.6f), hole.x + holeR * 2.5f, hole.y, false));
-    g.strokePath (disk, juce::PathStrokeType (holeR * 0.45f));
-    g.setColour (juce::Colours::black);
-    g.fillEllipse (juce::Rectangle<float> (holeR * 2.0f, holeR * 2.0f).withCentre (hole));
-    g.setColour (juce::Colour (0xffffd29a));
-    g.drawEllipse (juce::Rectangle<float> (holeR * 2.12f, holeR * 2.12f).withCentre (hole), holeR * 0.12f);
+    blackHole();
     juce::Path front;
     front.addCentredArc (hole.x, hole.y, holeR * 2.5f, holeR * 0.75f, 0.0f, juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi * 3.0f, true);
     g.setColour (Colours::warm);

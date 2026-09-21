@@ -141,12 +141,21 @@ public:
 
     juce::UndoManager undoManager { 30000, 60 }; // declared before apvts, which records into it
     juce::AudioProcessorValueTreeState apvts;
-    void mutate (float amount); // nudge the current sound by up to `amount` of each control's range
+    void mutate (float amount);
+    // Sections for the section dice and their padlocks, in parameter-id prefix order.
+    enum Section { SecOsc, SecFilter, SecEnvLfo, SecFx, NumSections };
+    static juce::String sectionName (int s);
+    static bool paramInSection (const juce::String& id, int section);
+    void mutateSection (int section, float amount);
+    void publishModSources (float lfo1, float lfo2, float modEnv, float velocity, float note);
+    std::array<std::atomic<bool>, NumSections> sectionLocked {}; // nudge the current sound by up to `amount` of each control's range
     juce::MidiKeyboardState keyboardState;
 
     // Visualiser taps.
     ab::ScopeRing scope;
     std::atomic<float> shownPos[2] {}, shownLfo[2] {}, shownLfoPhase[2] {}, shownEnv { 0 }, shownCutoff { 1000 };
+    // Live value of every modulation source (index matches modSrcNames), so the editor can animate mod rings.
+    std::array<std::atomic<float>, 12> shownModSource {};
     std::atomic<int> shownVoices { 0 }, shownNote { -1 };
     double getCurrentSampleRate() const { return sampleRateNow; }
     bool isAsleep() const { return sleeping; }

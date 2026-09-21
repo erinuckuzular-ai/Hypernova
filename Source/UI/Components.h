@@ -6,16 +6,11 @@
 namespace ab::ui
 {
 
+// Section colours, from the current theme (Cosmic: ion blue, violet, gold, magenta, aurora, azure, lilac, starlight).
 namespace Palette
 {
-    const juce::Colour oscA   { 0xff46e8ff };  // ion blue
-    const juce::Colour oscB   { 0xffb07cff };  // nebula violet
-    const juce::Colour sub    { 0xffffa94a };  // accretion gold
-    const juce::Colour filter { 0xffff4f9a };  // plasma magenta
-    const juce::Colour env    { 0xff7dffcf };  // aurora
-    const juce::Colour lfo    { 0xff5aa9ff };  // azure
-    const juce::Colour mod    { 0xffc9a8ff };  // lilac
-    const juce::Colour fx     { 0xffffd36b };  // starlight gold
+    inline const ThemeColour oscA { SlotOscA }, oscB { SlotOscB }, sub { SlotSub }, filter { SlotFilter },
+                             env { SlotEnv }, lfo { SlotLfo }, mod { SlotMod }, fx { SlotFx };
 }
 
 //==============================================================================
@@ -91,7 +86,7 @@ private:
 class WavetableView : public OrbitView, public juce::SettableTooltipClient, public juce::FileDragAndDropTarget
 {
 public:
-    WavetableView (HypernovaAudioProcessor& p, int oscIndex, juce::Colour c)
+    WavetableView (HypernovaAudioProcessor& p, int oscIndex, ThemeColour c)
         : OrbitView (-0.5f, 0.45f), proc (p), osc (oscIndex), colour (c)
     {
         prefix = osc == 0 ? "a" : "b";
@@ -261,7 +256,7 @@ public:
 private:
     HypernovaAudioProcessor& proc;
     int osc;
-    juce::Colour colour;
+    ThemeColour colour;
     juce::String prefix;
     juce::Image stack;
     juce::String stackKey;
@@ -680,7 +675,7 @@ private:
 class Knob : public juce::Component, public juce::DragAndDropTarget
 {
 public:
-    Knob (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& label, juce::Colour c, int knobSize = 44)
+    Knob (juce::AudioProcessorValueTreeState& state, const juce::String& paramId, const juce::String& label, ThemeColour c, int knobSize = 44)
         : name (label), colour (c), size (knobSize), id (paramId)
     {
         slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -701,7 +696,7 @@ public:
     }
 
     // Set by the editor: what modulation is reaching this knob, and what to do when a source is dropped on it.
-    struct ModInfo { float depth = 0; juce::Colour colour; int slot = -1; };
+    struct ModInfo { float depth = 0; float live = 0; juce::Colour colour; int slot = -1; bool highlight = false; };
     std::function<ModInfo (const juce::String& paramId)> modLookup;
     std::function<void (const juce::String& source, const juce::String& paramId)> onModDrop;
     std::function<void (const juce::String& paramId)> onModMenu;
@@ -714,21 +709,25 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        slider.setColour (juce::Slider::rotarySliderFillColourId, colour); // follows the theme
         auto full = getLocalBounds().toFloat();
         auto r = full;
         r.removeFromTop ((float) size - 1.0f);
         const bool active = slider.isMouseOverOrDragging();
         g.setColour (active ? Colours::text : Colours::textDim);
         g.setFont (font (9.5f, true).withExtraKerningFactor (0.12f));
-        g.drawText (active && param != nullptr ? param->getCurrentValueAsText() : name, r.removeFromTop (13), juce::Justification::centred, false);
+        g.drawFittedText (active && param != nullptr ? param->getCurrentValueAsText() : name, r.removeFromTop (13).toNearestInt(),
+                          juce::Justification::centred, 1, 0.7f);
         if (showValue && ! active)
         {
-            g.setColour (Colours::text.withAlpha (0.8f));
-            g.setFont (mono (9.5f));
-            g.drawText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r.removeFromTop (12), juce::Justification::centred, false);
+            g.setColour (Colours::text.withAlpha (0.85f));
+            g.setFont (mono (10.5f));
+            g.drawFittedText (param != nullptr ? param->getCurrentValueAsText() : juce::String(), r.removeFromTop (13).toNearestInt(),
+                              juce::Justification::centred, 1, 0.7f);
         }
 
-        // Modulation ring: an arc from the knob's own value, in the source's colour.
+        // Modulation ring: an arc from the knob's own value, in the source's colour, with a moving dot
+        // showing where the modulation has the parameter right now.
         const auto info = modLookup ? modLookup (id) : ModInfo();
         if (std::abs (info.depth) > 0.001f || dropHover)
         {
@@ -740,8 +739,23 @@ public:
             juce::Path arc;
             arc.addCentredArc (knobArea.getCentreX(), knobArea.getCentreY(), radius, radius, 0.0f,
                                juce::jmin (here, to), juce::jmax (here, to), true);
-            g.setColour ((dropHover ? Colours::accent : info.colour).withAlpha (dropHover ? 0.9f : 0.75f));
-            g.strokePath (arc, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour ((dropHover ? Colours::accent : info.colour).withAlpha (dropHover ? 0.9f : info.highlight ? 1.0f : 0.7f));
+            g.strokePath (arc, juce::PathStrokeType (info.highlight ? 3.0f : 2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+            if (std::abs (info.depth) > 0.001f)
+            {
+                const float now = juce::jlimit (a0, a1, here + (a1 - a0) * info.depth * info.live);
+                const auto dot = juce::Point<float> (knobArea.getCentreX(), knobArea.getCentreY())
+                                     .getPointOnCircumference (radius, now - juce::MathConstants<float>::halfPi);
+                g.setColour (info.colour.brighter (0.4f));
+                g.fillEllipse (juce::Rectangle<float> (4.4f, 4.4f).withCentre (dot));
+            }
+        }
+        else if (info.highlight)
+        {
+            // This knob is a target of the source being hovered, but at zero depth: outline it faintly.
+            g.setColour (info.colour.withAlpha (0.5f));
+            g.drawRoundedRectangle (full.reduced (1.0f), 8.0f, 1.0f);
         }
         if (dropHover)
         {
@@ -775,7 +789,7 @@ public:
 
 private:
     juce::String name;
-    juce::Colour colour;
+    ThemeColour colour;
     int size;
     juce::String id;
     bool showValue = true, dropHover = false;
@@ -784,11 +798,49 @@ private:
 };
 
 //==============================================================================
+// A click target with no appearance of its own (used over the painted logo).
+class InvisibleButton : public juce::Button
+{
+public:
+    InvisibleButton() : juce::Button ("invisible") {}
+    void paintButton (juce::Graphics&, bool, bool) override {}
+};
+
+//==============================================================================
+// A padlock: a locked section is left alone by the dice.
+class LockButton : public juce::Button
+{
+public:
+    explicit LockButton (ThemeColour c) : juce::Button ("lock"), colour (c)
+    {
+        setClickingTogglesState (true);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        const bool locked = getToggleState();
+        auto r = getLocalBounds().toFloat().withSizeKeepingCentre (11.0f, 13.0f);
+        auto body = r.removeFromBottom (7.5f);
+        g.setColour (locked ? colour.withAlpha (over ? 1.0f : 0.85f) : Colours::textFaint.withAlpha (over ? 0.9f : 0.45f));
+        g.fillRoundedRectangle (body, 2.0f);
+        juce::Path shackle;
+        const float w = r.getWidth() * (locked ? 0.62f : 0.72f);
+        shackle.addCentredArc (body.getCentreX() + (locked ? 0.0f : 1.5f), body.getY(), w * 0.5f, r.getHeight() * 0.85f,
+                               0.0f, -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi, true);
+        g.strokePath (shackle, juce::PathStrokeType (1.4f));
+    }
+
+private:
+    ThemeColour colour;
+};
+
+//==============================================================================
 // The little grab handle on a modulation source. Drag it onto any knob to modulate that knob.
 class ModChip : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    ModChip (const juce::String& labelText, int sourceIndex, juce::Colour c)
+    ModChip (const juce::String& labelText, int sourceIndex, ThemeColour c)
         : label (labelText), source (sourceIndex), colour (c)
     {
         setTooltip ("Drag onto any knob to modulate it");
@@ -806,8 +858,10 @@ public:
         g.drawText (label, r, juce::Justification::centred, false);
     }
 
-    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    std::function<void (int source)> onHover; // -1 when the mouse leaves
+
+    void mouseEnter (const juce::MouseEvent&) override { if (onHover) onHover (source); repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { if (onHover) onHover (-1); repaint(); }
 
     void mouseDrag (const juce::MouseEvent&) override
     {
@@ -819,14 +873,14 @@ public:
 private:
     juce::String label;
     int source;
-    juce::Colour colour;
+    ThemeColour colour;
 };
 
 //==============================================================================
 class PowerLed : public juce::ToggleButton
 {
 public:
-    explicit PowerLed (juce::Colour c) : colour (c) {}
+    explicit PowerLed (ThemeColour c) : colour (c) {}
     void paintButton (juce::Graphics& g, bool over, bool) override
     {
         auto r = getLocalBounds().toFloat().withSizeKeepingCentre (14, 14);
@@ -849,13 +903,13 @@ public:
         }
     }
 private:
-    juce::Colour colour;
+    ThemeColour colour;
 };
 
 class PillToggle : public juce::ToggleButton
 {
 public:
-    PillToggle (const juce::String& text, juce::Colour c) : juce::ToggleButton (text), colour (c) {}
+    PillToggle (const juce::String& text, ThemeColour c) : juce::ToggleButton (text), colour (c) {}
     void paintButton (juce::Graphics& g, bool over, bool) override
     {
         auto r = getLocalBounds().toFloat().reduced (0.5f);
@@ -872,7 +926,7 @@ public:
         g.drawText (getButtonText(), r.withTrimmedRight (6), juce::Justification::centredLeft, false);
     }
 private:
-    juce::Colour colour;
+    ThemeColour colour;
 };
 
 //==============================================================================
@@ -880,7 +934,7 @@ class IconButton : public juce::Button
 {
 public:
     enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear, Expand, PopOut, Close };
-    IconButton (Kind k, juce::Colour c = Colours::text) : juce::Button ({}), kind (k), colour (c) {}
+    IconButton (Kind k, ThemeColour c = Colours::text) : juce::Button ({}), kind (k), colour (c) {}
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
@@ -988,7 +1042,7 @@ public:
 
 private:
     Kind kind;
-    juce::Colour colour;
+    ThemeColour colour;
 };
 
 //==============================================================================
@@ -997,7 +1051,7 @@ private:
 class SectionToggle : public juce::Button
 {
 public:
-    SectionToggle (const juce::String& title, juce::Colour c) : juce::Button (title), name (title), colour (c)
+    SectionToggle (const juce::String& title, ThemeColour c) : juce::Button (title), name (title), colour (c)
     {
         setClickingTogglesState (true);
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
@@ -1034,7 +1088,7 @@ public:
 
 private:
     juce::String name;
-    juce::Colour colour;
+    ThemeColour colour;
 };
 
 //==============================================================================
@@ -1042,7 +1096,7 @@ private:
 class Segmented : public juce::Component
 {
 public:
-    Segmented (juce::StringArray items, juce::Colour c) : labels (std::move (items)), colour (c) {}
+    Segmented (juce::StringArray items, ThemeColour c) : labels (std::move (items)), colour (c) {}
     std::function<void (int)> onChange;
     void setSelected (int i) { selected = i; repaint(); }
 
@@ -1066,7 +1120,7 @@ public:
             }
             g.setColour (i == selected ? Colours::text : Colours::textDim);
             g.setFont (font (9.5f, true).withExtraKerningFactor (0.14f));
-            g.drawText (labels[i], cell, juce::Justification::centred, false);
+            g.drawFittedText (labels[i], cell.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.7f);
         }
     }
 
@@ -1079,7 +1133,7 @@ public:
 
 private:
     juce::StringArray labels;
-    juce::Colour colour;
+    ThemeColour colour;
     int selected = 0;
 };
 
@@ -1139,7 +1193,7 @@ private:
 class EnvView : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    EnvView (HypernovaAudioProcessor& p, const juce::String& prefixIn, juce::Colour c, bool live) : proc (p), prefix (prefixIn), colour (c), showLive (live)
+    EnvView (HypernovaAudioProcessor& p, const juce::String& prefixIn, ThemeColour c, bool live) : proc (p), prefix (prefixIn), colour (c), showLive (live)
     {
         setTooltip ("Drag the handles: attack, decay/sustain, release. Double-click a handle to reset it.");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
@@ -1313,7 +1367,7 @@ private:
 
     HypernovaAudioProcessor& proc;
     juce::String prefix;
-    juce::Colour colour;
+    ThemeColour colour;
     bool showLive;
     int hover = -1, dragging = -1;
     juce::Point<float> dragStart;
@@ -1387,7 +1441,7 @@ private:
 class BipolarBar : public juce::Slider
 {
 public:
-    explicit BipolarBar (juce::Colour c) : colour (c)
+    explicit BipolarBar (ThemeColour c) : colour (c)
     {
         setSliderStyle (juce::Slider::LinearBar);
         setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -1417,7 +1471,7 @@ public:
     }
 
 private:
-    juce::Colour colour;
+    ThemeColour colour;
 };
 
 class ModRow : public juce::Component

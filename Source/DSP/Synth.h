@@ -406,7 +406,7 @@ public:
     float ampLevel() const { return ampEnv.value; }
 
     // Modulated values of the last rendered sub-block, for the UI.
-    float shownPos[2] {}, shownLfo[2] {}, shownCutoff = 0;
+    float shownPos[2] {}, shownLfo[2] {}, shownCutoff = 0, shownModEnv = 0, shownVelocity = 0;
     double shownLfoPhase[2] {};
     float lastSrc[NumSrc] {}; // per-voice mod sources of the last sub-block (drives global FX destinations)
 
@@ -521,6 +521,8 @@ public:
                 const float fade = ls.fade > 0.001f ? juce::jmin (1.0f, noteAge / ls.fade) : 1.0f;
                 lfoVal[l] = dsp::lfoShape (ls.shape, lfoPhase[l], lfoHeld[l], lfoPrevHeld[l]) * fade;
                 shownLfo[l] = lfoVal[l];
+                shownModEnv = modEnv.value;
+                shownVelocity = velocity;
                 shownLfoPhase[l] = lfoPhase[l];
                 lfoPhase[l] += ls.rateHz * std::exp2 (juce::jlimit (-1.0f, 1.0f, lfoRateMod[l]) * 3.0f) * n / sr;
                 if (lfoPhase[l] >= 1.0)
