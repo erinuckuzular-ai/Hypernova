@@ -248,6 +248,7 @@ inline juce::Image renderCosmosFallback (int w, int h, float scale, juce::Point<
     const float strength = ThemeState::get().strength();
     auto blackHole = [&]
     {
+        if (holeR <= 0.0f) return;
         g.setGradientFill (juce::ColourGradient (juce::Colour (0x66ffa14a), hole.x, hole.y, juce::Colour (0x00ffa14a), hole.x + holeR * 3.2f, hole.y, true));
         g.fillEllipse (juce::Rectangle<float> (holeR * 6.4f, holeR * 6.4f).withCentre (hole));
         juce::Path d;
@@ -305,6 +306,9 @@ inline juce::Image renderCosmosFallback (int w, int h, float scale, juce::Point<
     g.fillRect (r);
     // Black hole: glow, disk, horizon, photon ring.
     blackHole();
+    if (holeR <= 0.0f) { g.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, r.getCentreX(), r.getCentreY(),
+                                                                  juce::Colours::black.withAlpha (0.55f), 0, 0, true));
+                         g.fillRect (r); return img; }
     juce::Path front;
     front.addCentredArc (hole.x, hole.y, holeR * 2.5f, holeR * 0.75f, 0.0f, juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi * 3.0f, true);
     g.setColour (Colours::warm);
