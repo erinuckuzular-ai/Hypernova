@@ -339,7 +339,7 @@ private:
 class SoundSpace : public OrbitView, public juce::SettableTooltipClient
 {
 public:
-    enum Mode { Spectrum, Orbit };
+    enum Mode { Spectrum, Orbit, Stereo };
 
     explicit SoundSpace (HypernovaAudioProcessor& p) : OrbitView (-0.42f, 0.5f), proc (p)
     {
@@ -390,6 +390,8 @@ public:
         head = (head + 1) % rows;
         history[(size_t) head] = row;
 
+        if (mode == Stereo) analyseStereo();
+
         repaint();
     }
 
@@ -407,7 +409,8 @@ public:
         cam.scale = juce::jmin (r.getWidth() * 0.36f, r.getHeight() * 0.5f);
 
         if (mode == Spectrum) paintSpectrum (g);
-        else paintOrbit (g);
+        else if (mode == Orbit) paintOrbit (g);
+        else paintStereo (g);
     }
 
 private:
@@ -418,8 +421,138 @@ private:
     std::array<float, fftSize * 2> fftData {};
     std::array<float, fftSize> sampL {}, sampR {};
     std::array<std::array<float, cols>, rows> history {};
-    std::array<float, cols> smoothRow {};
+    std::array<float, cols> smoothRow {}, bandWidth {}, bandLevel {};
+    std::array<std::array<float, fftSize * 2>, 2> stereoFft {};
+    float correlation = 1.0f, stereoPeak = 0.1f;
     int head = 0, quietFrames = 0;
+
+    // Per-band stereo width and overall correlation, measured from the same window the spectrum uses.
+    void analyseStereo()
+    {
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const auto& src = ch == 0 ? sampL : sampR;
+            for (int i = 0; i < fftSize; ++i)
+            {
+                const float w = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * i / (fftSize - 1));
+                stereoFft[(size_t) ch][(size_t) i] = src[(size_t) i] * w;
+            }
+            std::fill (stereoFft[(size_t) ch].begin() + fftSize, stereoFft[(size_t) ch].end(), 0.0f);
+            fft.performFrequencyOnlyForwardTransform (stereoFft[(size_t) ch].data());
+        }
+        const double sr = juce::jmax (8000.0, proc.getCurrentSampleRate());
+        for (int c = 0; c < cols; ++c)
+        {
+            const double f0 = 25.0 * std::pow (16000.0 / 25.0, (double) c / cols);
+            const double f1 = 25.0 * std::pow (16000.0 / 25.0, (double) (c + 1) / cols);
+            const int b0 = juce::jlimit (1, fftSize / 2 - 1, (int) (f0 * fftSize / sr));
+            const int b1 = juce::jlimit (b0, fftSize / 2 - 1, (int) (f1 * fftSize / sr));
+            float l = 0, r = 0;
+            for (int b = b0; b <= b1; ++b)
+            {
+                l = juce::jmax (l, stereoFft[0][(size_t) b]);
+                r = juce::jmax (r, stereoFft[1][(size_t) b]);
+            }
+            const float sum = l + r;
+            const float width = sum > 1.0e-6f ? std::abs (l - r) / sum : 0.0f;       // 0 mono, 1 hard one-sided
+            const float level = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (sum / (fftSize * 0.25f), -90.0f) + 78.0f) / 78.0f);
+            bandWidth[(size_t) c] = bandWidth[(size_t) c] * 0.7f + width * 0.3f;
+            bandLevel[(size_t) c] = juce::jmax (level, bandLevel[(size_t) c] * 0.72f);
+        }
+
+        double dot = 0, el = 0, er = 0, peak = 0;
+        for (int i = 0; i < fftSize; ++i)
+        {
+            const double l = sampL[(size_t) i], r = sampR[(size_t) i];
+            dot += l * r; el += l * l; er += r * r;
+            peak = juce::jmax (peak, juce::jmax (std::abs (l), std::abs (r)));
+        }
+        const double denom = std::sqrt (el * er);
+        const float corr = denom > 1.0e-9 ? (float) (dot / denom) : 1.0f;
+        correlation = correlation * 0.8f + corr * 0.2f;
+        stereoPeak = juce::jmax ((float) peak, stereoPeak * 0.9f);
+    }
+
+    // Goniometer, correlation and per-band width: how the sound sits across the stereo field.
+    void paintStereo (juce::Graphics& g)
+    {
+        auto r = getLocalBounds().toFloat().reduced (10.0f);
+        auto right = r.removeFromRight (juce::jmax (110.0f, r.getWidth() * 0.34f));
+        auto meter = r.removeFromBottom (46.0f);
+        const auto scope = r.reduced (4.0f);
+
+        // Goniometer: left/right rotated 45 degrees, so mono sits on the vertical axis.
+        const auto centre = scope.getCentre();
+        const float rad = juce::jmin (scope.getWidth(), scope.getHeight()) * 0.5f;
+        g.setColour (Colours::line);
+        g.drawEllipse (juce::Rectangle<float> (rad * 2, rad * 2).withCentre (centre), 1.0f);
+        for (int i = 0; i < 4; ++i)
+        {
+            const float a = juce::MathConstants<float>::pi * (0.25f + 0.5f * i);
+            g.drawLine (juce::Line<float> (centre, centre.getPointOnCircumference (rad, a)), 0.6f);
+        }
+        g.setColour (Colours::textFaint);
+        g.setFont (mono (9.0f));
+        g.drawText ("L", juce::Rectangle<float> (16, 12).withCentre (centre.translated (-rad * 0.72f, -rad * 0.72f)), juce::Justification::centred, false);
+        g.drawText ("R", juce::Rectangle<float> (16, 12).withCentre (centre.translated (rad * 0.72f, -rad * 0.72f)), juce::Justification::centred, false);
+        g.drawText ("MONO", juce::Rectangle<float> (40, 12).withCentre (centre.translated (0, -rad - 8.0f)), juce::Justification::centred, false);
+
+        const float norm = 1.0f / juce::jmax (0.05f, stereoPeak);
+        juce::Path trace;
+        bool started = false;
+        for (int i = fftSize - 1024; i < fftSize; ++i)
+        {
+            const float l = sampL[(size_t) i] * norm, rr = sampR[(size_t) i] * norm;
+            const auto pt = centre.translated ((rr - l) * rad * 0.7f, -(rr + l) * rad * 0.5f);
+            if (! started) { trace.startNewSubPath (pt); started = true; }
+            else trace.lineTo (pt);
+        }
+        glowStroke (g, trace, Palette::oscA, 1.0f, 0.8f);
+
+        // Correlation: +1 mono, 0 wide, -1 out of phase.
+        const float t = juce::jlimit (-1.0f, 1.0f, correlation);
+        auto labels = meter.removeFromTop (14.0f);
+        g.setColour (Colours::textDim);
+        g.setFont (font (9.5f, true).withExtraKerningFactor (0.18f));
+        g.drawText ("PHASE", labels, juce::Justification::centredLeft, false);
+        g.setColour (t < -0.1f ? Palette::filter : Colours::text);
+        g.setFont (mono (10.0f));
+        g.drawText (juce::String (t, 2), labels, juce::Justification::centredRight, false);
+
+        auto corrBar = meter.removeFromTop (14.0f);
+        g.setColour (Colours::inset);
+        g.fillRoundedRectangle (corrBar, 4.0f);
+        const float mid = corrBar.getCentreX();
+        auto fill = juce::Rectangle<float> (juce::jmin (mid, mid + t * corrBar.getWidth() * 0.5f), corrBar.getY(),
+                                            juce::jmax (2.0f, std::abs (t) * corrBar.getWidth() * 0.5f), corrBar.getHeight());
+        g.setColour ((t < -0.1f ? Palette::filter : Palette::oscA).withAlpha (0.65f));
+        g.fillRoundedRectangle (fill, 4.0f);
+        g.setColour (Colours::lineHi);
+        g.drawLine (mid, corrBar.getY(), mid, corrBar.getBottom(), 1.0f);
+
+        g.setColour (Colours::textFaint);
+        g.setFont (font (9.0f));
+        g.drawText ("out of phase", meter, juce::Justification::centredLeft, false);
+        g.drawText ("wide", meter, juce::Justification::centred, false);
+        g.drawText ("mono", meter, juce::Justification::centredRight, false);
+
+        // Per-band width: how wide each part of the spectrum is, low to high.
+        g.setColour (Colours::textDim);
+        g.setFont (font (9.5f, true).withExtraKerningFactor (0.18f));
+        g.drawText ("WIDTH BY FREQUENCY", right.removeFromTop (14.0f), juce::Justification::centredLeft, false);
+        const float rowH = right.getHeight() / (float) cols;
+        for (int c = 0; c < cols; ++c)
+        {
+            const float w = bandWidth[(size_t) c], lvl = bandLevel[(size_t) c];
+            auto row = juce::Rectangle<float> (right.getX(), right.getY() + c * rowH, right.getWidth() * juce::jmax (0.02f, w), juce::jmax (1.0f, rowH - 1.0f));
+            g.setColour (heat (w).withAlpha (0.25f + 0.65f * lvl));
+            g.fillRect (row);
+        }
+        g.setColour (Colours::textFaint);
+        g.setFont (mono (8.5f));
+        g.drawText ("25 Hz", right.removeFromTop (12.0f), juce::Justification::centredRight, false);
+        g.drawText ("16 kHz", right.removeFromBottom (12.0f), juce::Justification::centredRight, false);
+    }
 
     static juce::Colour heat (float v)
     {
@@ -746,7 +879,7 @@ private:
 class IconButton : public juce::Button
 {
 public:
-    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear };
+    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear, Expand, PopOut, Close };
     IconButton (Kind k, juce::Colour c = Colours::text) : juce::Button ({}), kind (k), colour (c) {}
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
@@ -809,6 +942,37 @@ public:
                 g.drawEllipse (juce::Rectangle<float> (icon.getWidth() * 0.26f, icon.getWidth() * 0.26f).withCentre (ctr), 1.5f);
                 return;
             }
+            case Expand: // four corners pointing out
+            {
+                const float k = icon.getWidth() * 0.38f;
+                for (int corner = 0; corner < 4; ++corner)
+                {
+                    const float sx = (corner & 1) ? 1.0f : -1.0f, sy = (corner & 2) ? 1.0f : -1.0f;
+                    const auto c0 = icon.getCentre().translated (sx * icon.getWidth() * 0.5f, sy * icon.getHeight() * 0.5f);
+                    p.startNewSubPath (c0);
+                    p.lineTo (c0.translated (-sx * k, 0));
+                    p.startNewSubPath (c0);
+                    p.lineTo (c0.translated (0, -sy * k));
+                }
+                break;
+            }
+            case PopOut: // a small window lifting off a larger one
+            {
+                auto back = icon.withTrimmedRight (icon.getWidth() * 0.3f).withTrimmedBottom (icon.getHeight() * 0.3f);
+                auto front = icon.withTrimmedLeft (icon.getWidth() * 0.3f).withTrimmedTop (icon.getHeight() * 0.3f);
+                g.drawRoundedRectangle (back, 2.0f, 1.4f);
+                g.setColour (Colours::panelHi);
+                g.fillRoundedRectangle (front, 2.0f);
+                g.setColour (c);
+                g.drawRoundedRectangle (front, 2.0f, 1.6f);
+                return;
+            }
+            case Close:
+                p.startNewSubPath (icon.getTopLeft());
+                p.lineTo (icon.getBottomRight());
+                p.startNewSubPath (icon.getTopRight());
+                p.lineTo (icon.getBottomLeft());
+                break;
             case Save:
                 p.startNewSubPath (icon.getCentreX(), icon.getY());
                 p.lineTo (icon.getCentreX(), icon.getBottom() - icon.getHeight() * 0.3f);

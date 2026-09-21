@@ -26,6 +26,7 @@ public:
     void setDeckPage (int p) { showDeckPage (p); }
     void setBrowserOpen (bool open);
     void setSpaceMode (int m) { spaceMode.setSelected (m); space.setMode ((ab::ui::SoundSpace::Mode) m); }
+    void setSpaceExpanded (bool e);
 
     static constexpr int baseWidth = 1280, baseHeight = 914;
 
@@ -112,7 +113,22 @@ private:
 
     ab::ui::WavetableView viewA, viewB;
     ab::ui::SoundSpace space;
-    ab::ui::Segmented spaceMode { { "SPECTRUM", "ORBIT" }, ab::ui::Palette::oscA };
+    ab::ui::IconButton expandButton { ab::ui::IconButton::Expand }, popOutButton { ab::ui::IconButton::PopOut };
+    bool spaceExpanded = false;
+
+    // A torn-off Sound Space in its own resizable window, for a second screen.
+    class SpaceWindow : public juce::DocumentWindow
+    {
+    public:
+        SpaceWindow (HypernovaAudioProcessor& p, int mode, std::function<void()> onGone);
+        void closeButtonPressed() override { if (whenClosed) whenClosed(); }
+        ab::ui::SoundSpace& view() { return *space; }
+    private:
+        std::unique_ptr<ab::ui::SoundSpace> space;
+        std::function<void()> whenClosed;
+    };
+    std::unique_ptr<SpaceWindow> spaceWindow;
+    ab::ui::Segmented spaceMode { { "SPECTRUM", "ORBIT", "STEREO" }, ab::ui::Palette::oscA };
     ab::ui::FilterView filterView;
     ab::ui::EnvView ampView, modView;
     ab::ui::LfoView lfoView1, lfoView2;
