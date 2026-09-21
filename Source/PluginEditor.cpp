@@ -726,7 +726,7 @@ void HypernovaAudioProcessorEditor::importWithChooser()
 {
     chooser = std::make_unique<juce::FileChooser> ("Import sounds (files or a pack folder)",
                                                    juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("Downloads"),
-                                                   juce::String ("*") + HypernovaAudioProcessor::presetExtension + ";*.abpreset");
+                                                   juce::String ("*") + HypernovaAudioProcessor::presetExtension + ";*.abpreset;*.zip");
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
                               | juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectMultipleItems,
                           [this] (const juce::FileChooser& fc) { importAndReport (fc.getResults()); });
@@ -748,7 +748,7 @@ bool HypernovaAudioProcessorEditor::isInterestedInFileDrag (const juce::StringAr
     for (const auto& path : files)
     {
         const juce::File f (path);
-        if (f.isDirectory() || HypernovaAudioProcessor::isPresetFile (f)) return true;
+        if (f.isDirectory() || HypernovaAudioProcessor::isPresetFile (f) || f.hasFileExtension ("zip")) return true;
     }
     return false;
 }
