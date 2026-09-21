@@ -1285,9 +1285,10 @@ void HypernovaAudioProcessorEditor::showColourPicker()
 void HypernovaAudioProcessorEditor::setSpaceExpanded (bool expand)
 {
     spaceExpanded = expand;
+    space.setSolid (expand);
     if (expand)
     {
-        space.setBounds (24, 96, baseWidth - 48, baseHeight - 210);
+        space.setBounds (24, 96, baseWidth - 48, keysArea.getY() - 96 - 8); // everything down to the keyboard
         space.toFront (false);
         spaceMode.toFront (false);
         expandButton.toFront (false);
@@ -1305,6 +1306,7 @@ HypernovaAudioProcessorEditor::SpaceWindow::SpaceWindow (HypernovaAudioProcessor
 {
     space = std::make_unique<ab::ui::SoundSpace> (p);
     space->setMode ((ab::ui::SoundSpace::Mode) mode);
+    space->setSolid (true);
     space->setSize (720, 520);
     setUsingNativeTitleBar (true);
     setContentNonOwned (space.get(), true);

@@ -298,7 +298,7 @@ private:
     {
         const int table = (int) proc.apvts.getRawParameterValue (prefix + "Table")->load();
         const bool on = proc.apvts.getRawParameterValue (prefix + "On")->load() > 0.5f;
-        return proc.userTableName (osc) + juce::String (table) + (on ? "+" : "-") + juce::String (juce::roundToInt (cam.yaw * 200.0f)) + ":"
+        return juce::String (ThemeState::get().version) + "|" + proc.userTableName (osc) + juce::String (table) + (on ? "+" : "-") + juce::String (juce::roundToInt (cam.yaw * 200.0f)) + ":"
              + juce::String (juce::roundToInt (cam.pitch * 200.0f)) + "@" + juce::String (getWidth()) + "x" + juce::String (getHeight());
     }
 
@@ -372,6 +372,8 @@ public:
 
     void setMode (Mode m) { mode = m; repaint(); }
     Mode getMode() const { return mode; }
+    // Solid: paint an opaque backdrop first (expanded over the panels, or in its own window).
+    void setSolid (bool b) { solid = b; wellKey = {}; repaint(); }
 
     // Skips all work when the output has been silent long enough for the waterfall to settle.
     void refresh (bool sounding)
@@ -431,6 +433,11 @@ public:
             well = juce::Image (juce::Image::ARGB, juce::roundToInt ((float) getWidth() * sc), juce::roundToInt ((float) getHeight() * sc), true);
             juce::Graphics wg (well);
             wg.addTransform (juce::AffineTransform::scale (sc));
+            if (solid)
+            {
+                wg.setColour (Colours::bg0.withAlpha (1.0f));
+                wg.fillRoundedRectangle (r, 12.0f);
+            }
             wg.setGradientFill (juce::ColourGradient (Colours::inset.brighter (0.05f), r.getCentreX(), r.getY(), Colours::bg0, r.getCentreX(), r.getBottom(), false));
             wg.fillRoundedRectangle (r, 12.0f);
             wg.setColour (Colours::line);
@@ -459,6 +466,7 @@ private:
     std::array<float, cols> smoothRow {}, bandWidth {}, bandLevel {};
     juce::Image well;
     juce::String wellKey;
+    bool solid = false;
     std::array<std::array<float, fftSize * 2>, 2> stereoFft {};
     float correlation = 1.0f, stereoPeak = 0.1f;
     int head = 0, quietFrames = 0;
