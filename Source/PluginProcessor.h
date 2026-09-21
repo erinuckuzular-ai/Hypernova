@@ -76,7 +76,7 @@ class HypernovaAudioProcessor  : public juce::AudioProcessor
 {
 public:
     HypernovaAudioProcessor();
-    ~HypernovaAudioProcessor() override = default;
+    ~HypernovaAudioProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -135,6 +135,7 @@ public:
     const ab::Wavetable* currentUserTable (int osc) const { return userTable[(size_t) osc].load(); }
     static juce::StringArray installedWavetables();
     std::atomic<int> tableVersion { 0 };
+    std::atomic<int> parameterChanges { 0 }; // bumped on any parameter change, so the editor redraws only when needed
     int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
     std::atomic<int> uiScalePercent { 100 };
@@ -216,6 +217,13 @@ private:
     float bpm = 120.0f;
     int pitchWheel = 8192;
     std::atomic<bool> panicRequested { false };
+    struct ChangeCounter : juce::AudioProcessorValueTreeState::Listener
+    {
+        std::atomic<int>& n;
+        explicit ChangeCounter (std::atomic<int>& c) : n (c) {}
+        void parameterChanged (const juce::String&, float) override { ++n; }
+    };
+    std::unique_ptr<ChangeCounter> changeCounter;
     double hostPpq = 0;
     bool hostPlaying = false;
     std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;

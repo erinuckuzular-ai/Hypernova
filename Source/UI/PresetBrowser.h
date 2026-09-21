@@ -112,11 +112,11 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colours::black.withAlpha (0.45f)); // backdrop over the editor
+        g.fillAll (ThemeState::get().base.light ? Colours::bg0.withAlpha (0.7f) : juce::Colours::black.withAlpha (0.45f)); // backdrop over the editor
         auto r = panelBounds().toFloat();
         g.setColour (juce::Colours::black.withAlpha (0.55f));
         g.fillRoundedRectangle (r.translated (0, 6), 18.0f);
-        panel (g, r, 18.0f, juce::Colour (0xf20a0c19));
+        panel (g, r, 18.0f, Colours::panelHi.withAlpha (0.97f));
         sectionLabel (g, "SOUNDS", { r.getX() + 20, r.getY() + 16, 200, 24 }, Colours::text);
 
         g.setColour (Colours::textFaint);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+
 #include "Wavetables.h"
 #include <atomic>
 
@@ -52,9 +54,16 @@ inline juce::String modDestParam (int dest)
 
 inline int modDestForParam (const juce::String& paramId)
 {
-    for (int d = 1; d < modDestNames().size(); ++d)
-        if (modDestParam (d) == paramId) return d;
-    return 0;
+    // Built once: called for every knob on every UI tick.
+    static const std::unordered_map<juce::String, int> lookup = []
+    {
+        std::unordered_map<juce::String, int> m;
+        for (int d = 1; d < 25; ++d)
+            if (modDestParam (d).isNotEmpty()) m[modDestParam (d)] = d;
+        return m;
+    }();
+    const auto it = lookup.find (paramId);
+    return it != lookup.end() ? it->second : 0;
 }
 
 constexpr int NumModSlots = 8;
