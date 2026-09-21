@@ -32,6 +32,8 @@ struct FxSettings
     bool monoBass = true, delayPing = true;
     float delayTone = 0.6f, width = 1.0f, eqLow = 0, eqHigh = 0;
     float bpm = 120.0f;
+    // Per-effect bypass (clicking an effect's name in the UI). Default on so older sessions are unchanged.
+    bool distOn = true, ottOn = true, chorusOn = true, delayOn = true, reverbOn = true, eqOn = true;
 };
 
 // 8-line feedback delay network with input diffusion, slow modulation, damping and an optional
@@ -255,10 +257,10 @@ public:
         auto* L = buffer.getWritePointer (0);
         auto* R = buffer.getWritePointer (1);
 
-        if (s.distMix > 0.001f) distortion (buffer, s);
-        if (s.ott > 0.001f) ott (L, R, n, s.ott);
+        if (s.distOn && s.distMix > 0.001f) distortion (buffer, s);
+        if (s.ottOn && s.ott > 0.001f) ott (L, R, n, s.ott);
 
-        if (s.chorusMix > 0.001f)
+        if (s.chorusOn && s.chorusMix > 0.001f)
         {
             chorus.setRate (s.chorusRate);
             chorus.setMix (s.chorusMix * 0.5f);
@@ -266,12 +268,12 @@ public:
             chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
         }
 
-        if (s.delayMix > 0.001f) delay (L, R, n, s);
+        if (s.delayOn && s.delayMix > 0.001f) delay (L, R, n, s);
         else delaySmoothed = -1;
 
-        if (s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer);
+        if (s.reverbOn && s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer);
 
-        if (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f) eq (L, R, n, s);
+        if (s.eqOn && (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f)) eq (L, R, n, s);
         if (std::abs (s.width - 1.0f) > 0.001f)
             for (int i = 0; i < n; ++i)
             {

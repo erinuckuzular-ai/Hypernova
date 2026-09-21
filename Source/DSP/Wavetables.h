@@ -49,6 +49,29 @@ public:
 
     const Wavetable& table (int i) const { return tables[(size_t) juce::jlimit (0, NumTables - 1, i)]; }
 
+    // Builds a table from an audio file's samples: 32 single cycles taken evenly across the file, each
+    // resampled to one cycle. Works for wavetable files (2048-sample cycles) and for any other audio.
+    static Wavetable fromAudio (const juce::String& name, const float* samples, int numSamples, int cycleLength = 0)
+    {
+        Plans plans = makePlans();
+        const int cycle = cycleLength > 0 ? cycleLength : juce::jmax (2, juce::jmin (wtBaseSize, numSamples / wtFrames));
+        return buildFrames (name, "imported wavetable", plans, [&] (int f, float* dst)
+        {
+            const double start = numSamples <= cycle ? 0.0
+                                                     : (double) f / (wtFrames - 1) * (double) (numSamples - cycle);
+            for (int i = 0; i < wtBaseSize; ++i)
+            {
+                // Linear resample of one cycle up to the base size.
+                const double x = start + (double) i / wtBaseSize * cycle;
+                const int i0 = (int) x;
+                const double fr = x - i0;
+                const float a = samples[juce::jlimit (0, numSamples - 1, i0)];
+                const float b = samples[juce::jlimit (0, numSamples - 1, i0 + 1)];
+                dst[i] = (float) (a + (b - a) * fr);
+            }
+        });
+    }
+
     static juce::StringArray names()
     {
         return { "Analog", "Sync Saw", "Pulse", "808 Body", "Log Drum", "Growl", "Vowel", "Digital", "Fold", "Harmonic", "Metal", "Scream", "Rich Sine", "Glass", "Air" };
@@ -242,13 +265,7 @@ private:
 
         // One FFT plan (and its scale) per mip level, shared by every frame of every table: making plans per
         // frame was most of the plug-in's open time, which matters on older Intel Macs.
-        Plans plans;
-        for (int l = 0; l < wtLevels; ++l)
-        {
-            const int size = wtLevelSize (l);
-            plans.inv.push_back (std::make_unique<juce::dsp::FFT> ((int) std::round (std::log2 ((double) size))));
-            plans.scale.push_back (inverseScale (*plans.inv.back(), size));
-        }
+        Plans plans = makePlans();
         for (int i = 0; i < NumTables; ++i)
             tables.push_back (build (n[i], blurbs[(size_t) i], gens[(size_t) i], plans));
     }
@@ -260,7 +277,31 @@ private:
         std::vector<float> scale;
     };
 
+    static Plans makePlans()
+    {
+        Plans plans;
+        for (int l = 0; l < wtLevels; ++l)
+        {
+            const int size = wtLevelSize (l);
+            plans.inv.push_back (std::make_unique<juce::dsp::FFT> ((int) std::round (std::log2 ((double) size))));
+            plans.scale.push_back (inverseScale (*plans.inv.back(), size));
+        }
+        return plans;
+    }
+
+
     static Wavetable build (const juce::String& name, const juce::String& blurb, const Gen& gen, Plans& plans)
+    {
+        return buildFrames (name, blurb, plans, [&gen] (int f, float* dst)
+        {
+            const double t = (double) f / (wtFrames - 1);
+            for (int i = 0; i < wtBaseSize; ++i) dst[i] = (float) gen (t, (double) i / wtBaseSize);
+        });
+    }
+
+    // Shared table construction: `fill(frame, dst)` writes one single cycle of wtBaseSize samples.
+    template <typename FillFrame>
+    static Wavetable buildFrames (const juce::String& name, const juce::String& blurb, Plans& plans, FillFrame&& fill)
     {
         Wavetable wt;
         wt.name = name;
@@ -278,11 +319,12 @@ private:
         std::vector<C> in ((size_t) wtBaseSize), spec ((size_t) wtBaseSize), s ((size_t) wtBaseSize), out ((size_t) wtBaseSize);
         std::vector<C> harm ((size_t) wtMaxHarmonics + 1);
 
+        std::vector<float> frame ((size_t) wtBaseSize);
         for (int f = 0; f < wtFrames; ++f)
         {
-            const double t = (double) f / (wtFrames - 1);
+            fill (f, frame.data());
             for (int i = 0; i < wtBaseSize; ++i)
-                in[(size_t) i] = C ((float) gen (t, (double) i / wtBaseSize), 0.0f);
+                in[(size_t) i] = C (frame[(size_t) i], 0.0f);
             plans.fwd.perform (in.data(), spec.data(), false);
 
             // Harmonic k as complex amplitude: x(n) = Re(sum c_k e^{i 2pi k n / N}) with c_k = 2 X_k / N.

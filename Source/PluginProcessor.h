@@ -124,6 +124,17 @@ public:
     juce::String getMacroName (int i) const { const juce::ScopedLock sl (nameLock); return macroNames[(size_t) i]; }
     void setMacroName (int i, const juce::String& n);
     std::atomic<int> presetVersion { 0 };
+
+    //==========================================================================
+    // Imported wavetables. Tables load on the message thread into a cache that is never emptied while the
+    // plug-in lives, so the audio thread can hold a plain pointer to one safely.
+    static juce::File wavetableFolder();
+    juce::String importWavetable (const juce::File& audioOrTableFile, int osc, juce::String& error);
+    bool setUserTable (int osc, const juce::String& name); // "" restores the factory table
+    juce::String userTableName (int osc) const { return userTableSlot[(size_t) osc]; }
+    const ab::Wavetable* currentUserTable (int osc) const { return userTable[(size_t) osc].load(); }
+    static juce::StringArray installedWavetables();
+    std::atomic<int> tableVersion { 0 };
     int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
     std::atomic<int> uiScalePercent { 100 };
@@ -196,6 +207,9 @@ private:
     float bpm = 120.0f;
     int pitchWheel = 8192;
     std::atomic<bool> panicRequested { false };
+    std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;
+    std::array<std::atomic<const ab::Wavetable*>, 2> userTable { nullptr, nullptr };
+    std::array<juce::String, 2> userTableSlot;
     juce::SmoothedValue<float> masterGain;
     int lastMode = -1;
 

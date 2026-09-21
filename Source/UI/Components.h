@@ -88,14 +88,97 @@ private:
 
 //==============================================================================
 // Serum-style stacked wavetable in 3D. The live (modulated) frame glows; warp is drawn onto it.
-class WavetableView : public OrbitView, public juce::SettableTooltipClient
+class WavetableView : public OrbitView, public juce::SettableTooltipClient, public juce::FileDragAndDropTarget
 {
 public:
     WavetableView (HypernovaAudioProcessor& p, int oscIndex, juce::Colour c)
         : OrbitView (-0.5f, 0.45f), proc (p), osc (oscIndex), colour (c)
     {
         prefix = osc == 0 ? "a" : "b";
-        setTooltip ("Drag to spin the wavetable. Double-click to reset the view.");
+        setTooltip ("Drag to spin the wavetable. Double-click to reset the view. Drop a WAV here (or right-click) to load your own wavetable.");
+    }
+
+    std::function<void (const juce::String&)> onMessage; // status line in the editor
+
+    // Dropping audio on an oscillator turns it into that oscillator's wavetable.
+    static bool isAudio (const juce::File& f) { return f.hasFileExtension ("wav;aif;aiff;flac;hnwt"); }
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        for (const auto& f : files) if (isAudio (juce::File (f))) return true;
+        return false;
+    }
+    void fileDragEnter (const juce::StringArray&, int, int) override { dropHover = true; repaint(); }
+    void fileDragExit (const juce::StringArray&) override { dropHover = false; repaint(); }
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        dropHover = false;
+        for (const auto& path : files)
+        {
+            const juce::File f (path);
+            if (! isAudio (f)) continue;
+            juce::String error;
+            const auto name = proc.importWavetable (f, osc, error);
+            if (onMessage) onMessage (name.isNotEmpty() ? "Loaded wavetable: " + name : error);
+            break;
+        }
+        stackKey = {};
+        repaint();
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { showMenu(); return; }
+        OrbitView::mouseDown (e);
+    }
+
+    void showMenu()
+    {
+        juce::PopupMenu m;
+        m.addSectionHeader ("WAVETABLE");
+        m.addItem (1, "Load from an audio file...");
+        const auto mine = HypernovaAudioProcessor::installedWavetables();
+        if (! mine.isEmpty())
+        {
+            juce::PopupMenu sub;
+            for (int i = 0; i < mine.size(); ++i)
+                sub.addItem (100 + i, mine[i], true, mine[i] == proc.userTableName (osc));
+            m.addSubMenu ("My wavetables", sub);
+        }
+        m.addSeparator();
+        m.addItem (2, "Use the built-in table", proc.userTableName (osc).isNotEmpty());
+        m.addItem (3, "Show my wavetables folder");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, mine] (int r)
+        {
+            if (r == 1) chooseFile();
+            else if (r == 2) { proc.setUserTable (osc, {}); stackKey = {}; repaint(); }
+            else if (r == 3) { HypernovaAudioProcessor::wavetableFolder().createDirectory();
+                               HypernovaAudioProcessor::wavetableFolder().revealToUser(); }
+            else if (r >= 100 && r - 100 < mine.size())
+            {
+                proc.setUserTable (osc, mine[r - 100]);
+                stackKey = {};
+                repaint();
+                if (onMessage) onMessage ("Wavetable: " + mine[r - 100]);
+            }
+        });
+    }
+
+    void chooseFile()
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Load a wavetable or any audio file",
+                                                       juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                       "*.wav;*.aif;*.aiff;*.flac;*.hnwt");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (f == juce::File()) return;
+            juce::String error;
+            const auto name = proc.importWavetable (f, osc, error);
+            if (onMessage) onMessage (name.isNotEmpty() ? "Loaded wavetable: " + name : error);
+            stackKey = {};
+            repaint();
+        });
     }
 
     // Repaints only when something visible changed (table, warp, live position, camera).
@@ -121,7 +204,8 @@ public:
         const int warp = (int) proc.apvts.getRawParameterValue (prefix + "Warp")->load();
         const float warpAmt = proc.apvts.getRawParameterValue (prefix + "WarpAmt")->load();
         const float pos = proc.shownPos[osc].load();
-        const auto& wt = WavetableBank::get().table (tableIndex);
+        const auto* user = proc.currentUserTable (osc);
+        const auto& wt = user != nullptr ? *user : WavetableBank::get().table (tableIndex);
         cam.centre = { r.getCentreX(), r.getCentreY() + r.getHeight() * 0.06f };
         cam.scale = juce::jmin (r.getWidth() * 0.33f, r.getHeight() * 0.74f);
 
@@ -162,6 +246,16 @@ public:
         g.setFont (mono (10.0f));
         g.drawText ("FRAME " + juce::String (nearest + 1) + "/" + juce::String (wtFrames), r.reduced (10, 7).removeFromTop (14),
                     juce::Justification::topRight, false);
+
+        if (dropHover)
+        {
+            g.setColour (colour.withAlpha (0.18f));
+            g.fillRoundedRectangle (r.reduced (2), 8.0f);
+            g.setColour (colour);
+            g.drawRoundedRectangle (r.reduced (2), 8.0f, 2.0f);
+            g.setFont (font (12.0f, true));
+            g.drawText ("DROP TO USE AS THIS WAVETABLE", r, juce::Justification::centred, false);
+        }
     }
 
 private:
@@ -172,6 +266,8 @@ private:
     juce::Image stack;
     juce::String stackKey;
     float lastPos = -1, lastWarpAmt = -1;
+    bool dropHover = false;
+    std::unique_ptr<juce::FileChooser> chooser;
 
     static float zFor (float framePos) { return -0.75f + 1.5f * framePos; } // frame 0 at the front
 
@@ -179,7 +275,7 @@ private:
     {
         const int table = (int) proc.apvts.getRawParameterValue (prefix + "Table")->load();
         const bool on = proc.apvts.getRawParameterValue (prefix + "On")->load() > 0.5f;
-        return juce::String (table) + (on ? "+" : "-") + juce::String (juce::roundToInt (cam.yaw * 200.0f)) + ":"
+        return proc.userTableName (osc) + juce::String (table) + (on ? "+" : "-") + juce::String (juce::roundToInt (cam.yaw * 200.0f)) + ":"
              + juce::String (juce::roundToInt (cam.pitch * 200.0f)) + "@" + juce::String (getWidth()) + "x" + juce::String (getHeight());
     }
 
@@ -646,6 +742,52 @@ private:
 };
 
 //==============================================================================
+// An effect's name, used as its on/off switch: click the title to bypass that effect. Off dims the name and
+// strikes it through, so it reads at a glance which effects are doing anything.
+class SectionToggle : public juce::Button
+{
+public:
+    SectionToggle (const juce::String& title, juce::Colour c) : juce::Button (title), name (title), colour (c)
+    {
+        setClickingTogglesState (true);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paintButton (juce::Graphics& g, bool over, bool) override
+    {
+        const bool on = getToggleState();
+        auto r = getLocalBounds().toFloat();
+        auto dot = r.removeFromLeft (14.0f).withSizeKeepingCentre (7.0f, 7.0f);
+        if (on)
+        {
+            g.setColour (colour.withAlpha (0.3f));
+            g.fillEllipse (dot.expanded (2.0f));
+            g.setColour (colour);
+            g.fillEllipse (dot);
+        }
+        else
+        {
+            g.setColour (Colours::textFaint);
+            g.drawEllipse (dot, 1.0f);
+        }
+
+        const auto f = font (10.5f, true).withExtraKerningFactor (0.22f);
+        g.setColour (on ? (over ? Colours::text : colour) : Colours::textFaint);
+        g.setFont (f);
+        g.drawText (name, r, juce::Justification::centredLeft, false);
+        if (! on)
+        {
+            const float w = juce::jmin (r.getWidth(), (float) juce::GlyphArrangement::getStringWidthInt (f, name) + 2.0f);
+            g.drawLine (r.getX(), r.getCentreY(), r.getX() + w, r.getCentreY(), 1.0f);
+        }
+    }
+
+private:
+    juce::String name;
+    juce::Colour colour;
+};
+
+//==============================================================================
 // Two-button segmented switch (e.g. SPECTRUM / ORBIT).
 class Segmented : public juce::Component
 {
@@ -744,47 +886,53 @@ private:
 };
 
 //==============================================================================
-class EnvView : public juce::Component
+class EnvView : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    EnvView (HypernovaAudioProcessor& p, const juce::String& prefixIn, juce::Colour c, bool live) : proc (p), prefix (prefixIn), colour (c), showLive (live) {}
+    EnvView (HypernovaAudioProcessor& p, const juce::String& prefixIn, juce::Colour c, bool live) : proc (p), prefix (prefixIn), colour (c), showLive (live)
+    {
+        setTooltip ("Drag the handles: attack, decay/sustain, release. Double-click a handle to reset it.");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
 
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
         g.setColour (Colours::inset);
         g.fillRoundedRectangle (r, 8.0f);
-        auto area = r.reduced (8, 7);
-        auto get = [&] (const char* s) { return proc.apvts.getRawParameterValue (prefix + s)->load(); };
-        const float a = get ("A"), d = get ("D"), s = get ("S"), rl = get ("R");
-
-        // Times on a sqrt scale so short and long envelopes both read well.
-        auto tw = [] (float t) { return std::sqrt (juce::jmax (0.0f, t)); };
-        const float total = tw (a) + tw (d) + 0.35f + tw (rl);
-        const float k = area.getWidth() / total;
-        const float x0 = area.getX(), yb = area.getBottom(), h = area.getHeight();
-        const float xa = x0 + tw (a) * k, xd = xa + tw (d) * k, xs = xd + 0.35f * k, xr = xs + tw (rl) * k;
+        const auto sh = shape();
 
         juce::Path p;
-        p.startNewSubPath (x0, yb);
-        p.lineTo (xa, yb - h);
+        p.startNewSubPath (sh.x0, sh.yb);
+        p.lineTo (sh.xa, sh.yb - sh.h);
         for (int i = 1; i <= 24; ++i)
         {
             const float t = (float) i / 24;
-            p.lineTo (xa + (xd - xa) * t, yb - h * (s + (1.0f - s) * std::pow (0.001f, t)));
+            p.lineTo (sh.xa + (sh.xd - sh.xa) * t, sh.yb - sh.h * (sh.s + (1.0f - sh.s) * std::pow (0.001f, t)));
         }
-        p.lineTo (xs, yb - h * s);
+        p.lineTo (sh.xs, sh.yb - sh.h * sh.s);
         for (int i = 1; i <= 24; ++i)
         {
             const float t = (float) i / 24;
-            p.lineTo (xs + (xr - xs) * t, yb - h * s * std::pow (0.001f, t));
+            p.lineTo (sh.xs + (sh.xr - sh.xs) * t, sh.yb - sh.h * sh.s * std::pow (0.001f, t));
         }
         juce::Path fill (p);
-        fill.lineTo (xr, yb);
+        fill.lineTo (sh.xr, sh.yb);
         fill.closeSubPath();
-        g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.22f), 0, area.getY(), colour.withAlpha (0.0f), 0, yb, false));
+        g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.22f), 0, sh.top, colour.withAlpha (0.0f), 0, sh.yb, false));
         g.fillPath (fill);
         glowStroke (g, p, colour, 1.5f, 0.7f);
+
+        // Drag handles, brighter under the mouse.
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto pt = handle (sh, i);
+            const bool hot = i == hover || i == dragging;
+            g.setColour (colour.withAlpha (hot ? 0.9f : 0.45f));
+            g.fillEllipse (juce::Rectangle<float> (hot ? 8.0f : 6.0f, hot ? 8.0f : 6.0f).withCentre (pt));
+            g.setColour (Colours::bg0.withAlpha (0.8f));
+            g.drawEllipse (juce::Rectangle<float> (hot ? 8.0f : 6.0f, hot ? 8.0f : 6.0f).withCentre (pt), 1.0f);
+        }
 
         if (showLive)
         {
@@ -792,16 +940,134 @@ public:
             if (lvl > 0.001f)
             {
                 g.setColour (colour.withAlpha (0.6f));
-                g.fillRect (juce::Rectangle<float> (area.getRight() - 3, yb - h * lvl, 3, h * lvl));
+                g.fillRect (juce::Rectangle<float> (sh.area.getRight() - 3, sh.yb - sh.h * lvl, 3, sh.h * lvl));
             }
         }
     }
 
+    void mouseMove (const juce::MouseEvent& e) override { setHover (nearest (e.position)); }
+    void mouseExit (const juce::MouseEvent&) override { setHover (-1); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = nearest (e.position);
+        dragStart = e.position;
+        if (dragging >= 0)
+        {
+            startA = value ("A"); startD = value ("D"); startS = value ("S"); startR = value ("R");
+            proc.undoManager.beginNewTransaction ("envelope");
+            for (auto* id : { "A", "D", "S", "R" })
+                if (auto* p = proc.apvts.getParameter (prefix + id)) p->beginChangeGesture();
+        }
+        repaint();
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragging < 0) return;
+        const auto d = e.position - dragStart;
+        const float w = juce::jmax (1.0f, getWidth() - 16.0f);
+        // Times move on the same square-root scale the curve is drawn with, so dragging feels linear.
+        auto timeDrag = [&] (float start, float dx, const char* id)
+        {
+            const float t = std::sqrt (juce::jmax (0.0f, start)) + dx / w * 2.4f;
+            setValue (id, t * t);
+        };
+        switch (dragging)
+        {
+            case 0: timeDrag (startA, d.x, "A"); break;
+            case 1: timeDrag (startD, d.x, "D");
+                    setValue ("S", juce::jlimit (0.0f, 1.0f, startS - d.y / juce::jmax (1.0f, getHeight() - 14.0f))); break;
+            default: timeDrag (startR, d.x, "R"); break;
+        }
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (dragging >= 0)
+            for (auto* id : { "A", "D", "S", "R" })
+                if (auto* p = proc.apvts.getParameter (prefix + id)) p->endChangeGesture();
+        dragging = -1;
+        repaint();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        const int h = nearest (e.position);
+        if (h < 0) return;
+        auto reset = [&] (const char* id)
+        {
+            if (auto* p = proc.apvts.getParameter (prefix + id))
+                p->setValueNotifyingHost (p->getDefaultValue());
+        };
+        if (h == 0) reset ("A");
+        else if (h == 1) { reset ("D"); reset ("S"); }
+        else reset ("R");
+        repaint();
+    }
+
 private:
+    struct Shape { juce::Rectangle<float> area; float x0, xa, xd, xs, xr, yb, top, h, s; };
+
+    Shape shape() const
+    {
+        auto area = getLocalBounds().toFloat().reduced (8, 7);
+        const float a = value ("A"), d = value ("D"), s = value ("S"), rl = value ("R");
+        auto tw = [] (float t) { return std::sqrt (juce::jmax (0.0f, t)); };
+        const float total = tw (a) + tw (d) + 0.35f + tw (rl);
+        const float k = area.getWidth() / juce::jmax (0.0001f, total);
+        Shape sh;
+        sh.area = area;
+        sh.x0 = area.getX();
+        sh.xa = sh.x0 + tw (a) * k;
+        sh.xd = sh.xa + tw (d) * k;
+        sh.xs = sh.xd + 0.35f * k;
+        sh.xr = sh.xs + tw (rl) * k;
+        sh.yb = area.getBottom();
+        sh.top = area.getY();
+        sh.h = area.getHeight();
+        sh.s = s;
+        return sh;
+    }
+
+    static juce::Point<float> handle (const Shape& sh, int i)
+    {
+        if (i == 0) return { sh.xa, sh.yb - sh.h };
+        if (i == 1) return { sh.xd, sh.yb - sh.h * sh.s };
+        return { sh.xr, sh.yb };
+    }
+
+    int nearest (juce::Point<float> p) const
+    {
+        const auto sh = shape();
+        int best = -1;
+        float bestD = 14.0f;
+        for (int i = 0; i < 3; ++i)
+        {
+            const float d = handle (sh, i).getDistanceFrom (p);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        return best;
+    }
+
+    void setHover (int h) { if (h != hover) { hover = h; repaint(); } }
+
+    float value (const char* id) const { return proc.apvts.getRawParameterValue (prefix + id)->load(); }
+
+    void setValue (const char* id, float v)
+    {
+        if (auto* p = proc.apvts.getParameter (prefix + id))
+            p->setValueNotifyingHost (p->convertTo0to1 (v));
+    }
+
     HypernovaAudioProcessor& proc;
     juce::String prefix;
     juce::Colour colour;
     bool showLive;
+    int hover = -1, dragging = -1;
+    juce::Point<float> dragStart;
+    float startA = 0, startD = 0, startS = 0, startR = 0;
 };
 
 //==============================================================================
