@@ -140,6 +140,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     for (int i = 1; i <= 4; ++i)
         addFloat (l, "macro" + juce::String (i), "Macro " + juce::String (i), { 0.0f, 1.0f }, 0.0f, pctText);
 
+    // Second effects page.
+    add<Choice> (l, pid ("chorusMode"), "Chorus Mode", juce::StringArray { "Classic", "Ensemble", "Dimension" }, 0);
+    add<Choice> (l, pid ("dlyStyle"), "Delay Style", juce::StringArray { "Digital", "Reverse", "Granular" }, 0);
+    add<Choice> (l, pid ("verbMode"), "Reverb Mode", juce::StringArray { "Space", "Plate", "Spring", "Room" }, 0);
+    addFloat (l, "flangMix", "Flanger Mix", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "flangRate", "Flanger Rate", skewed (0.02f, 8.0f, 0.6f), 0.3f, lfoHzText);
+    addFloat (l, "flangDepth", "Flanger Depth", { 0.0f, 1.0f }, 0.5f, pctText);
+    addFloat (l, "flangFb", "Flanger Feedback", { -1.0f, 1.0f }, 0.4f, bipolarPct);
+    addFloat (l, "tapeWow", "Tape Wobble", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "tapeNoise", "Tape Noise", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "tapeSat", "Tape Saturation", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "gateDepth", "Gate Depth", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "gateShape", "Gate Shape", { 0.0f, 1.0f }, 0.3f, pctText);
+    add<Choice> (l, pid ("gateRate"), "Gate Rate", ab::dsp::syncRateNames(), 6);
+    add<Choice> (l, pid ("gatePattern"), "Gate Pattern", ab::dsp::GateAndPan::patternNames(), 0);
+    addFloat (l, "panDepth", "Auto Pan Depth", { 0.0f, 1.0f }, 0.0f, pctText);
+    add<Choice> (l, pid ("panRate"), "Auto Pan Rate", ab::dsp::syncRateNames(), 4);
+    add<Choice> (l, pid ("fxFltType"), "FX Filter Type", ab::dsp::FxFilter::typeNames(), 0);
+    addFloat (l, "fxFltFreq", "FX Filter Freq", skewed (20.0f, 20000.0f, 1000.0f), 20000.0f, hzText);
+    addFloat (l, "fxFltRes", "FX Filter Resonance", { 0.0f, 1.0f }, 0.2f, pctText);
+    addFloat (l, "fxFltDepth", "FX Filter Sweep", { 0.0f, 1.0f }, 0.0f, pctText);
+    add<Choice> (l, pid ("fxFltRate"), "FX Filter Rate", ab::dsp::syncRateNames(), 4);
+    addFloat (l, "shiftSemis", "Pitch Shift", { -12.0f, 12.0f, 1.0f }, 0.0f, semiText);
+    addFloat (l, "shiftMix", "Pitch Shift Mix", { 0.0f, 1.0f }, 0.0f, pctText);
+    for (auto* fx : { "flang", "tape", "gate", "fxFlt", "shift" })
+        add<Bool> (l, pid (juce::String (fx) + "On"), juce::String (fx) + " On", true);
     for (auto* fx : { "dist", "ott", "chorus", "dly", "verb", "eq" })
         add<Bool> (l, pid (juce::String (fx) + "On"), juce::String (fx).substring (0, 1).toUpperCase() + juce::String (fx).substring (1) + " On", true);
     add<Choice> (l, pid ("distType"), "Distortion Type", distNames(), 0);
@@ -384,9 +410,39 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.delayOn = param ("dlyOn") > 0.5f;
     f.reverbOn = param ("verbOn") > 0.5f;
     f.eqOn = param ("eqOn") > 0.5f;
+    f.chorusMode = (int) param ("chorusMode");
+    f.delayStyle = (int) param ("dlyStyle");
+    f.reverbMode = (int) param ("verbMode");
+    f.flangerMix = param ("flangMix");
+    f.flangerRate = param ("flangRate");
+    f.flangerDepth = param ("flangDepth");
+    f.flangerFeedback = param ("flangFb");
+    f.tapeWobble = param ("tapeWow");
+    f.tapeNoise = param ("tapeNoise");
+    f.tapeSat = param ("tapeSat");
+    f.gateDepth = param ("gateDepth");
+    f.gateShape = param ("gateShape");
+    f.gateRate = (int) param ("gateRate");
+    f.gatePattern = (int) param ("gatePattern");
+    f.panDepth = param ("panDepth");
+    f.panRate = (int) param ("panRate");
+    f.fxFilterType = (int) param ("fxFltType");
+    f.fxFilterFreq = param ("fxFltFreq");
+    f.fxFilterRes = param ("fxFltRes");
+    f.fxFilterDepth = param ("fxFltDepth");
+    f.fxFilterRate = (int) param ("fxFltRate");
+    f.pitchSemis = param ("shiftSemis");
+    f.pitchMix = param ("shiftMix");
+    f.flangerOn = param ("flangOn") > 0.5f;
+    f.tapeOn = param ("tapeOn") > 0.5f;
+    f.gateOn = param ("gateOn") > 0.5f;
+    f.fxFilterOn = param ("fxFltOn") > 0.5f;
+    f.pitchOn = param ("shiftOn") > 0.5f;
     f.eqLow = param ("eqLow");
     f.eqHigh = param ("eqHigh");
     f.bpm = bpm;
+    f.ppq = hostPpq;
+    f.playing = hostPlaying;
     return f;
 }
 
@@ -602,6 +658,8 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
             if (auto p = pos->getPpqPosition()) ppq = *p;
             playing = pos->getIsPlaying();
         }
+    hostPpq = ppq >= 0.0 ? ppq : 0.0;
+    hostPlaying = playing && ppq >= 0.0;
 
     blockSettings = readSynthSettings();
     applyQuality ((int) param ("quality"));

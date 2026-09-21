@@ -207,6 +207,8 @@ private:
     float bpm = 120.0f;
     int pitchWheel = 8192;
     std::atomic<bool> panicRequested { false };
+    double hostPpq = 0;
+    bool hostPlaying = false;
     std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;
     std::array<std::atomic<const ab::Wavetable*>, 2> userTable { nullptr, nullptr };
     std::array<juce::String, 2> userTableSlot;

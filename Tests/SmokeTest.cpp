@@ -186,6 +186,67 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // SmokeTest --newfx: switches on each of the newer effects in turn and checks the output stays sane.
+    if (argc == 2 && juce::String (argv[1]) == "--newfx")
+    {
+        struct Head : juce::AudioPlayHead
+        {
+            double ppq = 0;
+            juce::Optional<PositionInfo> getPosition() const override
+            { PositionInfo i; i.setBpm (124.0); i.setPpqPosition (ppq); i.setIsPlaying (true); return i; }
+        } head;
+        struct Case { const char* name; std::vector<std::pair<const char*, float>> params; };
+        const std::vector<Case> cases {
+            { "flanger",        { { "flangMix", 0.8f }, { "flangDepth", 0.7f }, { "flangFb", 0.6f } } },
+            { "tape wear",      { { "tapeWow", 0.8f }, { "tapeNoise", 0.4f }, { "tapeSat", 0.7f } } },
+            { "trance gate",    { { "gateDepth", 1.0f }, { "gatePattern", 1 }, { "gateRate", 6 } } },
+            { "auto pan",       { { "panDepth", 1.0f } } },
+            { "fx filter",      { { "fxFltFreq", 700.0f }, { "fxFltRes", 0.7f }, { "fxFltDepth", 0.8f } } },
+            { "pitch shift up", { { "shiftSemis", 7.0f }, { "shiftMix", 1.0f } } },
+            { "pitch shift dn", { { "shiftSemis", -12.0f }, { "shiftMix", 1.0f } } },
+            { "reverse delay",  { { "dlyStyle", 1 }, { "dlyMix", 0.6f }, { "dlyFb", 0.5f } } },
+            { "granular delay", { { "dlyStyle", 2 }, { "dlyMix", 0.6f }, { "dlyFb", 0.5f } } },
+            { "plate reverb",   { { "verbMode", 1 }, { "verbMix", 0.6f } } },
+            { "spring reverb",  { { "verbMode", 2 }, { "verbMix", 0.6f } } },
+            { "room reverb",    { { "verbMode", 3 }, { "verbMix", 0.6f } } },
+            { "ensemble chorus",{ { "chorusMode", 1 }, { "chorusMix", 0.8f } } },
+            { "dimension chorus",{ { "chorusMode", 2 }, { "chorusMix", 0.8f } } },
+        };
+        int bad = 0;
+        for (const auto& c : cases)
+        {
+            HypernovaAudioProcessor p;
+            p.setPlayHead (&head);
+            p.prepareToPlay (48000.0, 256);
+            p.setCurrentProgram (1);
+            for (const auto& kv : c.params) p.setParam (kv.first, kv.second);
+            float peak = 0;
+            bool finite = true;
+            const int total = (int) (48000 * 2.0);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 100), 0);
+                if (pos == (int) (48000 * 1.0)) midi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+                head.ppq = pos / 48000.0 * 124.0 / 60.0;
+                p.processBlock (buf, midi);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < 256; ++i)
+                    {
+                        const float v = buf.getSample (ch, i);
+                        finite = finite && std::isfinite (v);
+                        peak = juce::jmax (peak, std::abs (v));
+                    }
+            }
+            const bool ok = finite && peak > 0.005f && peak < 1.0f;
+            if (! ok) ++bad;
+            std::printf ("%-18s peak %5.3f  %s\n", c.name, peak, ok ? "ok" : "BAD");
+        }
+        std::printf ("%s\n", bad == 0 ? "ALL OK" : "FAILURES");
+        return bad == 0 ? 0 : 1;
+    }
+
     // SmokeTest --import <audio file>: imports it as osc A's wavetable and renders a note through it.
     if (argc == 3 && juce::String (argv[1]) == "--import")
     {

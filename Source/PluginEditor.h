@@ -8,6 +8,7 @@
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                       public juce::FileDragAndDropTarget,
+                                      public juce::DragAndDropContainer,
                                       private juce::Timer
 {
 public:
@@ -44,6 +45,10 @@ private:
     void showMessage (const juce::String&);
     void showDiceMenu();
     void showSettingsMenu();
+    // Modulation by drag and drop: chips carry a source, knobs receive it.
+    void assignMod (const juce::String& dragDescription, const juce::String& paramId);
+    void showModMenu (const juce::String& paramId);
+    ab::ui::Knob::ModInfo modInfoFor (const juce::String& paramId) const;
     void applyScale (int percent);
     bool keyPressed (const juce::KeyPress&) override;
 
@@ -74,6 +79,7 @@ private:
                         juce::Component* parent = nullptr);
     void layoutModPage();
     void layoutFxPage();
+    void layoutMoreFxPage();
     void layoutPlayPage();
     void showDeckPage (int page);
 
@@ -100,6 +106,8 @@ private:
     bool staticFramePainted = false;
     int editQuietTicks = 0, lastActionCount = 0;
     static constexpr float logoHoleRadius = 12.5f;
+    juce::TextButton logoButton; // invisible: clicking the logo sets the black hole off
+    float logoFlare = 0.0f;
     const juce::Point<float> logoHole { 48.0f, 44.0f };
 
     ab::ui::WavetableView viewA, viewB;
@@ -109,8 +117,9 @@ private:
     ab::ui::EnvView ampView, modView;
     ab::ui::LfoView lfoView1, lfoView2;
     std::vector<std::unique_ptr<ab::ui::ModRow>> modRows;
-    std::array<DeckPage, 3> pages;
-    ab::ui::Segmented deckTabs { { "MODULATION", "EFFECTS", "PLAY" }, ab::ui::Palette::mod };
+    std::vector<std::unique_ptr<ab::ui::ModChip>> modChips;
+    std::array<DeckPage, 4> pages;
+    ab::ui::Segmented deckTabs { { "MODULATION", "EFFECTS", "MORE FX", "PLAY" }, ab::ui::Palette::mod };
 
     std::vector<std::unique_ptr<ab::ui::Knob>> knobs;
     std::array<ab::ui::Knob*, 4> macroKnobs {};
