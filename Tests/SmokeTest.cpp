@@ -186,6 +186,75 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // SmokeTest --audition <outDir> [category...]: renders a short, consistent phrase per preset into WAVs
+    // (basses play a low line, chords and keys a progression, percussion a straight pattern) at 124 BPM.
+    if (argc >= 3 && juce::String (argv[1]) == "--audition")
+    {
+        const juce::File outDir (juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]));
+        outDir.createDirectory();
+        juce::StringArray wanted;
+        for (int i = 3; i < argc; ++i) wanted.add (argv[i]);
+        const double rate = 48000.0, beat = 60.0 / 124.0;
+        struct Head : juce::AudioPlayHead
+        {
+            double ppq = 0;
+            juce::Optional<PositionInfo> getPosition() const override
+            { PositionInfo i; i.setBpm (124.0); i.setPpqPosition (ppq); i.setIsPlaying (true); return i; }
+        } head;
+        HypernovaAudioProcessor p;
+        p.setPlayHead (&head);
+        p.prepareToPlay (rate, 256);
+        juce::WavAudioFormat wav;
+        int written = 0;
+        for (int prog = 1; prog < p.getNumPrograms(); ++prog)
+        {
+            p.setCurrentProgram (prog);
+            const auto cat = p.getPresetCategory();
+            if (! wanted.isEmpty() && ! wanted.contains (cat)) continue;
+            const bool perc = cat.containsIgnoreCase ("percussion") || cat == "Synth Drums";
+            const bool low = cat.containsIgnoreCase ("bass") || cat.containsIgnoreCase ("dub") || cat == "Sub" || cat == "808";
+            // (note, start beat, length in beats)
+            std::vector<std::tuple<int, double, double>> phrase;
+            if (perc)       for (int i = 0; i < 8; ++i) phrase.push_back ({ 60, i * 0.5, 0.25 });
+            else if (low)   phrase = { { 36, 0, 0.75 }, { 36, 1, 0.5 }, { 43, 1.75, 0.75 }, { 34, 3, 0.9 } };
+            else            phrase = { { 48, 0, 0.9 }, { 51, 1, 0.9 }, { 53, 2, 0.9 }, { 46, 3, 0.9 } };
+            const int total = (int) ((4.0 * beat + 1.5) * rate);
+            juce::AudioBuffer<float> outBuf (2, total);
+            outBuf.clear();
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                const int n = juce::jmin (256, total - pos);
+                juce::AudioBuffer<float> buf (2, n);
+                buf.clear();
+                juce::MidiBuffer midi;
+                for (auto& [note, start, len] : phrase)
+                {
+                    const int on = (int) (start * beat * rate), off = (int) ((start + len) * beat * rate);
+                    if (on >= pos && on < pos + n) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), on - pos);
+                    if (off >= pos && off < pos + n) midi.addEvent (juce::MidiMessage::noteOff (1, note), off - pos);
+                }
+                head.ppq = pos / rate / beat;
+                p.processBlock (buf, midi);
+                for (int c = 0; c < 2; ++c) outBuf.copyFrom (c, pos, buf, c, 0, n);
+            }
+            const auto file = outDir.getChildFile (juce::String (prog).paddedLeft ('0', 3) + " " + cat + " - "
+                                                   + juce::File::createLegalFileName (p.getProgramName (prog)) + ".wav");
+            file.deleteFile();
+            if (auto stream = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+                if (auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (stream.get(), rate, 2, 24, {}, 0)))
+                {
+                    stream.release();
+                    writer->writeFromAudioSampleBuffer (outBuf, 0, total);
+                    ++written;
+                }
+            p.panic();
+            juce::AudioBuffer<float> flush (2, 256); juce::MidiBuffer none;
+            p.processBlock (flush, none);
+        }
+        std::printf ("%d auditions written to %s\n", written, outDir.getFullPathName().toRawUTF8());
+        return 0;
+    }
+
     // SmokeTest --newfx: switches on each of the newer effects in turn and checks the output stays sane.
     if (argc == 2 && juce::String (argv[1]) == "--newfx")
     {

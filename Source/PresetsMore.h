@@ -81,6 +81,41 @@ inline std::vector<Preset> morePresets()
 
     auto P = [] (const char* name, const char* cat, PresetValues v, Macros m) { return Preset { name, cat, std::move (v), m }; };
 
+    // Club studies: original synthesis recipes, no third-party samples.
+    // Four deliberately assigned controls on every patch: colour, motion, echo, space.
+    static const PresetValues club = {
+        { "ampA", 0.003f }, { "ampD", 0.5f }, { "ampS", 0.35f }, { "ampR", 0.16f },
+        { "aLevel", 0.72f }, { "velSens", 0.65f }, { "monoBass", 1 }, { "fltType", 0 }, { "cutoff", 1800 },
+        { "modA", 0.002f }, { "modD", 0.18f }, { "modS", 0 }, { "modR", 0.15f },
+        { "mod1Src", 7 }, { "mod1Dest", 8 }, { "mod1Amt", 0.5f },
+        { "mod2Src", 8 }, { "mod2Dest", 1 }, { "mod2Amt", 0.35f },
+        { "mod3Src", 9 }, { "mod3Dest", 22 }, { "mod3Amt", 0.35f },
+        { "mod4Src", 10 }, { "mod4Dest", 23 }, { "mod4Amt", 0.4f },
+        { "dlyTime", 5 }, { "dlyFb", 0.28f }, { "dlyTone", 0.35f }, { "verbSize", 0.5f }
+    };
+    static const Macros mClub { "OPEN", "COLOUR", "ECHO", "SPACE" };
+    static const PresetValues clubBass = with (club, {
+        { "mode", 2 }, { "glide", 0.055f }, { "aTable", 12 }, { "aPos", 0.16f },
+        { "subOn", 1 }, { "subOct", 0 }, { "subLevel", 0.3f }, { "cutoff", 700 },
+        { "distType", 0 }, { "distDrive", 0.18f }, { "distMix", 0.25f }, { "ampS", 0.65f }
+    });
+    static const PresetValues clubStab = with (club, {
+        { "aTable", 0 }, { "aPos", 0.55f }, { "aUni", 2 }, { "aDetune", 0.065f },
+        { "ampD", 0.28f }, { "ampS", 0 }, { "ampR", 0.18f }, { "fltEnv", 0.28f },
+        { "chord", 9 }, { "chorusMix", 0.16f }, { "dlyMix", 0.12f }, { "verbMix", 0.12f }
+    });
+    static const PresetValues clubHit = with (club, {
+        { "aTable", 12 }, { "aPos", 0.06f }, { "ampD", 0.15f }, { "ampS", 0 }, { "ampR", 0.08f },
+        { "dropAmt", 12 }, { "dropTime", 0.018f }, { "velSens", 0.85f }, { "cutoff", 9000 },
+        { "mod1Dest", 19 }, { "mod1Amt", 0.4f }, { "distDrive", 0.25f }
+    });
+    static const PresetValues clubAir = with (club, {
+        { "aTable", 14 }, { "aPos", 0.3f }, { "aUni", 3 }, { "aDetune", 0.12f },
+        { "ampA", 0.15f }, { "ampD", 2 }, { "ampS", 0.65f }, { "ampR", 1.5f },
+        { "lfo1Rate", 0.16f }, { "lfo1Retrig", 0 }, { "mod5Src", 1 }, { "mod5Dest", 1 }, { "mod5Amt", 0.22f },
+        { "verbMix", 0.3f }, { "verbSize", 0.8f }, { "dlyStyle", 2 }, { "dlyMix", 0.1f }
+    });
+
     return {
         //================================================================ Keys
         P ("FM Rhodes", "Keys", with (fm, { { "chorusMix", 0.25f }, { "lfo1Rate", 4.5f }, { "lfo1Retrig", 0 },
@@ -483,6 +518,57 @@ inline std::vector<Preset> morePresets()
             { "fltType", 2 }, { "cutoff", 250 }, { "lfo1Rate", 0.1f }, { "mod1Dest", 13 }, { "mod1Amt", 0.3f }, { "chorusMix", 0.4f } }), mPad),
         P ("Glass Harp", "Experimental", with (string, { { "res", 0.993f }, { "noiseTone", 1.0f }, { "aOn", 1 }, { "aTable", 13 }, { "aLevel", 0.08f },
             { "ampD", 4.0f }, { "verbShimmer", 0.3f }, { "verbMix", 0.35f } }), mString),
+        //================================================================ Club studies (0.6)
+        // Appended, so existing host program numbers stay fixed. Dub, UK garage, house, baile funk and
+        // club percussion/experimental. Macros: OPEN (GRIT on percussion), COLOUR, ECHO, SPACE.
+        P ("Pressure Vessel", "Dub & Dancehall", with (clubBass, { { "aPos", 0.03f }, { "cutoff", 280.0f }, { "ampD", 1.3f }, { "ampS", 0.75f }, { "dropAmt", 7.0f }, { "dropTime", 0.012f }, { "subLevel", 0.48f } }), mClub),
+        P ("Concrete Echo", "Dub & Dancehall", with (clubStab, { { "aTable", 2.0f }, { "aPos", 0.28f }, { "cutoff", 820.0f }, { "fltEnv", 0.4f }, { "dlyTime", 8.0f }, { "dlyFb", 0.48f }, { "dlyMix", 0.25f }, { "verbMode", 2.0f }, { "verbMix", 0.18f } }), mClub),
+        P ("Submerged Organ", "Dub & Dancehall", with (clubStab, { { "aTable", 9.0f }, { "aPos", 0.18f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bOct", 1.0f }, { "bLevel", 0.22f }, { "chord", 11.0f }, { "cutoff", 1700.0f }, { "tapeWow", 0.12f }, { "tapeSat", 0.2f } }), mClub),
+        P ("Cable Hum", "Dub & Dancehall", with (clubBass, { { "aTable", 0.0f }, { "aPos", 0.38f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bFine", 6.0f }, { "bLevel", 0.25f }, { "cutoff", 430.0f }, { "drift", 0.16f }, { "distMix", 0.38f } }), mClub),
+        P ("Rust Chamber", "Dub & Dancehall", with (clubHit, { { "aTable", 10.0f }, { "aPos", 0.22f }, { "dropAmt", 0.0f }, { "ampD", 0.46f }, { "fltType", 6.0f }, { "cutoff", 320.0f }, { "res", 0.68f }, { "verbMode", 2.0f }, { "verbMix", 0.3f }, { "dlyMix", 0.18f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Drowned Reed", "Dub & Dancehall", with (club, { { "aTable", 6.0f }, { "aPos", 0.25f }, { "mode", 1.0f }, { "fltType", 7.0f }, { "cutoff", 540.0f }, { "res", 0.38f }, { "ampD", 0.6f }, { "ampS", 0.55f }, { "tapeWow", 0.13f }, { "dlyTime", 8.0f }, { "dlyMix", 0.2f } }), mClub),
+        P ("Return Current", "Dub & Dancehall", with (clubAir, { { "aTable", 9.0f }, { "aPos", 0.15f }, { "fltType", 2.0f }, { "cutoff", 380.0f }, { "tapeWow", 0.18f }, { "tapeSat", 0.2f }, { "dlyStyle", 1.0f }, { "dlyMix", 0.25f } }), mClub),
+        P ("Dry Dock", "Dub & Dancehall", with (clubBass, { { "aTable", 2.0f }, { "aPos", 0.08f }, { "ampD", 0.24f }, { "ampS", 0.0f }, { "ampR", 0.07f }, { "cutoff", 540.0f }, { "fltEnv", 0.18f }, { "distType", 3.0f }, { "distMix", 0.25f } }), mClub),
+        P ("Hollow Exchange", "UK Garage", with (clubBass, { { "aTable", 2.0f }, { "aPos", 0.12f }, { "cutoff", 1100.0f }, { "fltEnv", 0.4f }, { "modD", 0.1f }, { "ampD", 0.32f }, { "ampS", 0.1f }, { "subLevel", 0.35f } }), mClub),
+        P ("Elastic Tooth", "UK Garage", with (clubBass, { { "aWarp", 6.0f }, { "aWarpAmt", 0.045f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.0f }, { "bOct", 1.0f }, { "bLevel", 0.001f }, { "mod5Src", 3.0f }, { "mod5Dest", 3.0f }, { "mod5Amt", 0.42f }, { "ampD", 0.25f }, { "ampS", 0.1f }, { "fltOn", 0.0f } }), mClub),
+        P ("Pocket Organ", "UK Garage", with (clubStab, { { "aTable", 9.0f }, { "aPos", 0.08f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bOct", 1.0f }, { "bLevel", 0.18f }, { "ampD", 0.19f }, { "ampR", 0.09f }, { "chord", 9.0f }, { "cutoff", 3400.0f }, { "chorusMix", 0.08f } }), mClub),
+        P ("Late Connection", "UK Garage", with (club, { { "aTable", 12.0f }, { "aPos", 0.2f }, { "aWarp", 6.0f }, { "aWarpAmt", 0.035f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.0f }, { "bOct", 2.0f }, { "bLevel", 0.001f }, { "mod5Src", 3.0f }, { "mod5Dest", 3.0f }, { "mod5Amt", 0.3f }, { "ampD", 1.1f }, { "ampS", 0.0f }, { "chorusMix", 0.2f }, { "cutoff", 5000.0f } }), mClub),
+        P ("Rubber Stamp", "UK Garage", with (clubBass, { { "aTable", 5.0f }, { "aPos", 0.13f }, { "fltType", 3.0f }, { "cutoff", 720.0f }, { "res", 0.32f }, { "fltEnv", 0.4f }, { "modD", 0.085f }, { "ampD", 0.2f }, { "ampS", 0.0f }, { "subLevel", 0.4f } }), mClub),
+        P ("Glass Pager", "UK Garage", with (clubHit, { { "aTable", 13.0f }, { "aPos", 0.5f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bOct", 2.0f }, { "bLevel", 0.12f }, { "xRing", 0.25f }, { "dropAmt", 0.0f }, { "ampD", 0.35f }, { "dlyTime", 3.0f }, { "dlyMix", 0.13f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Velvet Choke", "UK Garage", with (clubStab, { { "aTable", 6.0f }, { "aPos", 0.28f }, { "fltType", 7.0f }, { "cutoff", 950.0f }, { "res", 0.32f }, { "ampD", 0.15f }, { "ampR", 0.07f }, { "chord", 11.0f }, { "dlyMix", 0.08f } }), mClub),
+        P ("Side Street", "UK Garage", with (clubBass, { { "aTable", 0.0f }, { "aPos", 0.6f }, { "aUni", 2.0f }, { "aDetune", 0.09f }, { "cutoff", 950.0f }, { "fltEnv", 0.3f }, { "ampD", 0.42f }, { "ampS", 0.3f }, { "subLevel", 0.42f }, { "glide", 0.025f } }), mClub),
+        P ("Dust Circuit", "House Stabs", with (clubStab, { { "aTable", 0.0f }, { "aPos", 0.67f }, { "cutoff", 1300.0f }, { "chord", 14.0f }, { "tapeSat", 0.26f }, { "tapeWow", 0.08f }, { "verbMode", 3.0f } }), mClub),
+        P ("Blue Hour Keys", "House Stabs", with (club, { { "aTable", 12.0f }, { "aPos", 0.2f }, { "aWarp", 6.0f }, { "aWarpAmt", 0.025f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.0f }, { "bOct", 1.0f }, { "bLevel", 0.001f }, { "mod5Src", 3.0f }, { "mod5Dest", 3.0f }, { "mod5Amt", 0.22f }, { "ampD", 1.5f }, { "ampS", 0.05f }, { "cutoff", 6000.0f }, { "chorusMode", 2.0f }, { "chorusMix", 0.28f } }), mClub),
+        P ("Wire Blossom", "House Stabs", with (clubStab, { { "aTable", 13.0f }, { "aPos", 0.35f }, { "chord", 12.0f }, { "ampD", 0.6f }, { "cutoff", 2700.0f }, { "verbMix", 0.2f }, { "verbShimmer", 0.1f } }), mClub),
+        P ("Soft Machinery", "House Bass", with (clubBass, { { "aTable", 0.0f }, { "aPos", 0.5f }, { "cutoff", 630.0f }, { "fltEnv", 0.25f }, { "modD", 0.16f }, { "ampD", 0.3f }, { "ampS", 0.12f }, { "subLevel", 0.3f }, { "tapeSat", 0.15f } }), mClub),
+        P ("Pressed Wax", "House Stabs", with (clubStab, { { "aTable", 2.0f }, { "aPos", 0.25f }, { "chord", 10.0f }, { "fltType", 0.0f }, { "cutoff", 1700.0f }, { "distType", 5.0f }, { "distDrive", 0.1f }, { "distMix", 0.15f }, { "tapeWow", 0.06f } }), mClub),
+        P ("Open Shutters", "House Stabs", with (club, { { "aTable", 9.0f }, { "aPos", 0.45f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.5f }, { "bOct", 1.0f }, { "bLevel", 0.14f }, { "ampD", 0.8f }, { "ampS", 0.2f }, { "cutoff", 3600.0f }, { "chorusMix", 0.3f }, { "fltEnv", 0.2f } }), mClub),
+        P ("Pinhole Acid", "House Bass", with (clubBass, { { "aTable", 0.0f }, { "aPos", 0.65f }, { "cutoff", 450.0f }, { "res", 0.65f }, { "fltEnv", 0.65f }, { "modD", 0.12f }, { "ampD", 0.2f }, { "ampS", 0.1f }, { "subLevel", 0.15f }, { "distDrive", 0.3f }, { "distMix", 0.3f } }), mClub),
+        P ("Empty Room Chord", "House Stabs", with (clubStab, { { "aTable", 12.0f }, { "aPos", 0.38f }, { "chord", 13.0f }, { "ampD", 0.48f }, { "cutoff", 2100.0f }, { "verbMode", 3.0f }, { "verbMix", 0.22f }, { "dlyMix", 0.08f } }), mClub),
+        P ("Chrome Tambor", "Baile Funk", with (clubHit, { { "aWarp", 6.0f }, { "aWarpAmt", 0.09f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.0f }, { "bSemi", 7.0f }, { "bLevel", 0.001f }, { "mod5Src", 3.0f }, { "mod5Dest", 3.0f }, { "mod5Amt", 0.7f }, { "modD", 0.028f }, { "dropAmt", 19.0f }, { "ampD", 0.18f }, { "distType", 3.0f }, { "distMix", 0.4f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Wire Whistle", "Baile Funk", with (club, { { "aTable", 12.0f }, { "aPos", 0.01f }, { "aOct", 2.0f }, { "mode", 1.0f }, { "ampD", 0.16f }, { "ampS", 0.35f }, { "ampR", 0.035f }, { "dropAmt", -5.0f }, { "dropTime", 0.025f }, { "fltOn", 0.0f }, { "lfo1Rate", 7.0f }, { "mod5Src", 1.0f }, { "mod5Dest", 7.0f }, { "mod5Amt", 0.012f } }), mClub),
+        P ("Piston Knock", "Baile Funk", with (clubHit, { { "aTable", 3.0f }, { "aPos", 0.08f }, { "dropAmt", 36.0f }, { "dropTime", 0.015f }, { "ampD", 0.22f }, { "distType", 3.0f }, { "distDrive", 0.42f }, { "distMix", 0.65f }, { "subOn", 1.0f }, { "subOct", 0.0f }, { "subLevel", 0.18f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Razor Reed", "Baile Funk", with (club, { { "aTable", 2.0f }, { "aPos", 0.35f }, { "aWarp", 4.0f }, { "aWarpAmt", 0.35f }, { "mode", 1.0f }, { "ampD", 0.2f }, { "ampS", 0.4f }, { "ampR", 0.035f }, { "fltType", 3.0f }, { "cutoff", 1800.0f }, { "res", 0.25f }, { "distType", 1.0f }, { "distMix", 0.25f } }), mClub),
+        P ("Steel Tongue", "Baile Funk", with (clubHit, { { "aTable", 10.0f }, { "aPos", 0.32f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bSemi", 6.0f }, { "bLevel", 0.25f }, { "xRing", 0.45f }, { "dropAmt", 7.0f }, { "ampD", 0.12f }, { "cutoff", 4500.0f }, { "distMix", 0.2f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Bent Horn", "Baile Funk", with (club, { { "aTable", 0.0f }, { "aPos", 0.66f }, { "bOn", 1.0f }, { "bTable", 2.0f }, { "bSemi", 7.0f }, { "bLevel", 0.18f }, { "mode", 1.0f }, { "dropAmt", -12.0f }, { "dropTime", 0.04f }, { "ampD", 0.28f }, { "ampS", 0.1f }, { "fltType", 7.0f }, { "cutoff", 1700.0f }, { "res", 0.4f } }), mClub),
+        P ("Concrete Slap", "Baile Funk", with (clubHit, { { "ott", 0.45f }, { "aLevel", 0.3f }, { "noiseLevel", 1.0f }, { "noiseTone", 0.82f }, { "noiseType", 0.0f }, { "fltType", 3.0f }, { "cutoff", 2200.0f }, { "res", 0.2f }, { "dropAmt", 0.0f }, { "ampD", 0.2f }, { "distType", 1.0f }, { "distMix", 0.35f }, { "verbMode", 3.0f }, { "verbMix", 0.12f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Torn Cone", "Baile Funk", with (clubBass, { { "aTable", 3.0f }, { "aPos", 0.28f }, { "dropAmt", 19.0f }, { "dropTime", 0.022f }, { "ampD", 0.42f }, { "ampS", 0.0f }, { "cutoff", 3800.0f }, { "distType", 3.0f }, { "distDrive", 0.55f }, { "distMix", 0.75f }, { "subLevel", 0.26f } }), mClub),
+        P ("Broken Ceramic", "Club Percussion", with (clubHit, { { "ott", 0.4f }, { "distType", 1.0f }, { "distDrive", 0.35f }, { "distMix", 0.4f }, { "aTable", 13.0f }, { "aPos", 0.6f }, { "xRing", 0.6f }, { "bOn", 1.0f }, { "bTable", 10.0f }, { "bSemi", 6.0f }, { "bLevel", 0.12f }, { "dropAmt", 0.0f }, { "ampD", 0.12f }, { "aLevel", 1.0f }, { "fltType", 2.0f }, { "cutoff", 2400.0f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Pressure Rim", "Club Percussion", with (clubHit, { { "ott", 0.4f }, { "aTable", 12.0f }, { "aPos", 0.05f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.0f }, { "bSemi", 11.0f }, { "bLevel", 0.001f }, { "aWarp", 6.0f }, { "aWarpAmt", 0.65f }, { "ampD", 0.1f }, { "aLevel", 1.0f }, { "dropAmt", 0.0f }, { "fltType", 3.0f }, { "cutoff", 1500.0f }, { "res", 0.4f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Foil Shaker", "Club Percussion", with (clubHit, { { "ott", 0.45f }, { "aOn", 0.0f }, { "noiseLevel", 1.0f }, { "noiseTone", 1.0f }, { "noiseType", 3.0f }, { "fltType", 2.0f }, { "cutoff", 5500.0f }, { "ampD", 0.09f }, { "dropAmt", 0.0f }, { "distType", 5.0f }, { "distMix", 0.12f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Drainpipe Tom", "Club Percussion", with (clubHit, { { "aTable", 12.0f }, { "aPos", 0.14f }, { "dropAmt", 12.0f }, { "dropTime", 0.035f }, { "fltType", 6.0f }, { "cutoff", 240.0f }, { "res", 0.73f }, { "ampD", 0.28f }, { "verbMode", 3.0f }, { "verbMix", 0.12f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Magnet Clave", "Club Percussion", with (clubHit, { { "ott", 0.5f }, { "distType", 1.0f }, { "distDrive", 0.4f }, { "distMix", 0.5f }, { "aTable", 10.0f }, { "aPos", 0.1f }, { "dropAmt", 3.0f }, { "dropTime", 0.008f }, { "ampD", 0.08f }, { "aLevel", 1.0f }, { "fltType", 3.0f }, { "cutoff", 2800.0f }, { "res", 0.55f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Paper Kick", "Club Percussion", with (clubHit, { { "aTable", 3.0f }, { "aPos", 0.01f }, { "aOct", -1.0f }, { "dropAmt", 30.0f }, { "dropTime", 0.028f }, { "ampD", 0.32f }, { "noiseLevel", 0.02f }, { "noiseTone", 0.7f }, { "distType", 3.0f }, { "distMix", 0.3f }, { "cutoff", 5500.0f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Ceramic Bell", "Club Percussion", with (clubHit, { { "aTable", 12.0f }, { "aWarp", 6.0f }, { "aWarpAmt", 0.2f }, { "bOn", 1.0f }, { "bTable", 0.0f }, { "bPos", 0.0f }, { "bOct", 2.0f }, { "bSemi", 3.0f }, { "bLevel", 0.001f }, { "dropAmt", 0.0f }, { "ampD", 0.5f }, { "mod5Src", 3.0f }, { "mod5Dest", 3.0f }, { "mod5Amt", 0.25f }, { "modD", 0.045f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Scraped Alloy", "Club Percussion", with (clubHit, { { "aTable", 10.0f }, { "aPos", 0.45f }, { "noiseLevel", 0.3f }, { "noiseType", 6.0f }, { "fltType", 2.0f }, { "cutoff", 2200.0f }, { "ampA", 0.015f }, { "ampD", 0.22f }, { "dropAmt", -7.0f }, { "dropTime", 0.12f }, { "flangMix", 0.2f }, { "flangFb", 0.35f } }), Macros { "GRIT", "COLOUR", "ECHO", "SPACE" }),
+        P ("Liquid Relay", "Club Experimental", with (clubBass, { { "aTable", 6.0f }, { "aPos", 0.3f }, { "fltType", 7.0f }, { "cutoff", 740.0f }, { "res", 0.4f }, { "lfo1Rate", 3.1f }, { "mod5Src", 1.0f }, { "mod5Dest", 8.0f }, { "mod5Amt", 0.25f }, { "xFmBA", 0.15f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bLevel", 0.1f }, { "subLevel", 0.35f } }), mClub),
+        P ("Hollow Hologram", "Club Experimental", with (clubAir, { { "aTable", 13.0f }, { "aPos", 0.45f }, { "fltType", 6.0f }, { "cutoff", 520.0f }, { "res", 0.72f }, { "ampA", 0.03f }, { "ampD", 1.2f }, { "ampS", 0.25f }, { "shiftMix", 0.18f }, { "shiftSemis", 7.0f } }), mClub),
+        P ("Melted Dialtone", "Club Experimental", with (club, { { "aTable", 12.0f }, { "aPos", 0.06f }, { "bOn", 1.0f }, { "bTable", 12.0f }, { "bSemi", 6.0f }, { "bLevel", 0.3f }, { "xRing", 0.32f }, { "mode", 1.0f }, { "glide", 0.15f }, { "fltType", 3.0f }, { "cutoff", 1500.0f }, { "res", 0.3f }, { "dlyStyle", 1.0f }, { "dlyMix", 0.23f } }), mClub),
+        P ("Breathing Plastic", "Club Experimental", with (clubAir, { { "aTable", 6.0f }, { "aPos", 0.2f }, { "fltType", 7.0f }, { "cutoff", 1100.0f }, { "res", 0.3f }, { "lfo1Rate", 0.38f }, { "mod5Dest", 8.0f }, { "mod5Amt", 0.3f }, { "noiseLevel", 0.025f }, { "noiseType", 1.0f } }), mClub),
+        P ("Fracture Bloom", "Club Experimental", with (clubStab, { { "aTable", 7.0f }, { "aPos", 0.5f }, { "chord", 15.0f }, { "aWarp", 5.0f }, { "aWarpAmt", 0.16f }, { "ampD", 0.65f }, { "fltType", 4.0f }, { "cutoff", 2400.0f }, { "verbShimmer", 0.22f }, { "dlyStyle", 2.0f }, { "dlyMix", 0.2f } }), mClub),
+        P ("Ghost Carrier", "Club Experimental", with (clubAir, { { "aTable", 12.0f }, { "aPos", 0.08f }, { "bOn", 1.0f }, { "bTable", 14.0f }, { "bLevel", 0.08f }, { "bOct", 1.0f }, { "xFmBA", 0.09f }, { "fltType", 2.0f }, { "cutoff", 420.0f }, { "chorusMode", 2.0f }, { "chorusMix", 0.35f }, { "verbShimmer", 0.15f } }), mClub),
+        P ("Folded Rubber", "Club Experimental", with (clubBass, { { "aTable", 8.0f }, { "aPos", 0.24f }, { "aWarp", 2.0f }, { "aWarpAmt", 0.16f }, { "fltType", 4.0f }, { "cutoff", 900.0f }, { "dropAmt", -7.0f }, { "dropTime", 0.055f }, { "ampD", 0.32f }, { "ampS", 0.2f }, { "distType", 2.0f }, { "distMix", 0.3f }, { "subLevel", 0.4f } }), mClub),
+        P ("Afterimage Dust", "Club Experimental", with (clubAir, { { "aTable", 14.0f }, { "aPos", 0.6f }, { "noiseLevel", 0.035f }, { "noiseType", 4.0f }, { "fltType", 2.0f }, { "cutoff", 650.0f }, { "tapeWow", 0.2f }, { "tapeSat", 0.2f }, { "dlyStyle", 1.0f }, { "dlyFb", 0.4f }, { "dlyMix", 0.22f }, { "ampA", 0.6f }, { "ampR", 2.2f } }), mClub),
     };
 }
 
