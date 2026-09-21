@@ -33,7 +33,8 @@ juce_add_plugin(Hypernova
 
 set(HYPERNOVA_SOURCES
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/EditorLayout.cpp)
 
 target_sources(Hypernova PRIVATE ${HYPERNOVA_SOURCES})
 

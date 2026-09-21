@@ -5,6 +5,7 @@
 #include "UI/Cosmos.h"
 #include "UI/PresetBrowser.h"
 #include "UI/Updater.h"
+#include "UI/Widgets.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                       public juce::FileDragAndDropTarget,
@@ -27,7 +28,34 @@ public:
     void setBrowserOpen (bool open);
     void setSpaceMode (int m) { spaceMode.setSelected (m); space.setMode ((ab::ui::SoundSpace::Mode) m); }
     void setSpaceExpanded (bool e);
+
+    // Widgets and workspaces (layout only; the sound is never touched).
+    ab::ui::Widget* findWidget (const juce::String& id) const;
+    void loadWorkspace (const juce::String& name, bool recordHistory);
+    void setLayoutEditing (bool editing);
+    bool isLayoutEditing() const { return layoutEditing; }
+    juce::ValueTree captureLayout() const;
+    void applyLayout (const juce::ValueTree& layout);
     void applyTheme();
+    void wireWidget (ab::ui::Widget&);
+    void showWidget (ab::ui::Widget&);
+    void addWidget (ab::ui::Widget&);             // what + ADD WIDGET does: bring it on screen, record it
+    void hideWidget (ab::ui::Widget&);
+    void activateInStack (ab::ui::Widget&, bool recordHistory);
+    void updateStacks();
+    void placeWidget (ab::ui::Widget&, juce::Rectangle<int> bounds);
+    juce::Rectangle<int> snapped (const ab::ui::Widget&, juce::Rectangle<int> r) const;
+    bool overlapsOthers (const ab::ui::Widget&, juce::Rectangle<int> r) const;
+    juce::Rectangle<int> freeSpotFor (const ab::ui::Widget&) const;
+    juce::Rectangle<int> layoutArea() const;
+    bool layoutKeyboardVisible() const;
+    juce::ValueTree defaultLayout (const juce::String& name) const;
+    void layoutChanged();                         // after every structural edit: history + autosave
+    void undoLayout();
+    void redoLayout();
+    void setupEditBar();
+    void showAddWidgetMenu();
+    void showWorkspaceMenu();
 
     static constexpr int baseWidth = 1280, baseHeight = 986;
 
@@ -119,6 +147,31 @@ private:
 
     ab::ui::WavetableView viewA, viewB;
     ab::ui::SoundSpace space;
+    std::vector<std::unique_ptr<ab::ui::Widget>> widgets;
+    ab::ui::Widget* spaceWidget = nullptr;
+    bool layoutEditing = false;
+    juce::String workspaceName;
+    std::vector<juce::ValueTree> layoutHistory;
+    int layoutHistoryIndex = -1;
+    juce::Rectangle<int> dragStart;
+    ab::ui::IconButton layoutButton { ab::ui::IconButton::Layout };
+    class EditBar : public juce::Component
+    {
+    public:
+        juce::TextButton add { "+ ADD WIDGET" }, workspace { "WORKSPACE" }, undo { "UNDO" }, redo { "REDO" }, reset { "RESET" }, done { "DONE" };
+        EditBar() { for (auto* b : { &add, &workspace, &undo, &redo, &reset, &done }) addAndMakeVisible (b); }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (0, 6);
+            add.setBounds (r.removeFromLeft (110)); r.removeFromLeft (6);
+            workspace.setBounds (r.removeFromLeft (150)); r.removeFromLeft (6);
+            undo.setBounds (r.removeFromLeft (54)); r.removeFromLeft (4);
+            redo.setBounds (r.removeFromLeft (54)); r.removeFromLeft (6);
+            reset.setBounds (r.removeFromLeft (60)); r.removeFromLeft (6);
+            done.setBounds (r);
+        }
+    };
+    EditBar editBar;
     ab::ui::IconButton expandButton { ab::ui::IconButton::Expand }, popOutButton { ab::ui::IconButton::PopOut };
     bool spaceExpanded = false;
 
@@ -134,7 +187,7 @@ private:
         std::function<void()> whenClosed;
     };
     std::unique_ptr<SpaceWindow> spaceWindow;
-    ab::ui::Segmented spaceMode { { "SPECTRUM", "ORBIT", "STEREO" }, ab::ui::Palette::oscA };
+    ab::ui::Segmented spaceMode { { "SPECTRUM", "ORBIT" }, ab::ui::Palette::oscA };
     ab::ui::FilterView filterView;
     ab::ui::EnvView ampView, modView;
     ab::ui::LfoView lfoView1, lfoView2;
@@ -144,7 +197,6 @@ private:
     std::vector<std::unique_ptr<ab::ui::IconButton>> sectionDice;
     int hoveredModSource = -1, lastParameterChanges = -1, viewTick = 0;
     std::array<DeckPage, 4> pages;
-    ab::ui::Segmented deckTabs { { "MODULATION", "EFFECTS", "MORE FX", "PLAY" }, ab::ui::Palette::mod };
 
     std::vector<std::unique_ptr<ab::ui::Knob>> knobs;
     std::array<ab::ui::Knob*, 4> macroKnobs {};

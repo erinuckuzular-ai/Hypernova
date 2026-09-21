@@ -1088,7 +1088,7 @@ private:
 class IconButton : public juce::Button
 {
 public:
-    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear, Expand, PopOut, Close };
+    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear, Expand, PopOut, Close, Layout };
     IconButton (Kind k, ThemeColour c = Colours::text) : juce::Button ({}), kind (k), colour (c) {}
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
@@ -1174,6 +1174,17 @@ public:
                 g.fillRoundedRectangle (front, 2.0f);
                 g.setColour (c);
                 g.drawRoundedRectangle (front, 2.0f, 1.6f);
+                return;
+            }
+            case Layout: // four tiles, one of them lifted: arrange the panels
+            {
+                const float gap = icon.getWidth() * 0.12f, cw = (icon.getWidth() - gap) * 0.5f;
+                for (int i = 0; i < 4; ++i)
+                {
+                    auto cell = juce::Rectangle<float> (icon.getX() + (float) (i % 2) * (cw + gap), icon.getY() + (float) (i / 2) * (cw + gap), cw, cw);
+                    if (i == 1) g.fillRoundedRectangle (cell.translated (1.0f, -1.0f), 2.0f);
+                    else g.drawRoundedRectangle (cell, 2.0f, 1.4f);
+                }
                 return;
             }
             case Close:

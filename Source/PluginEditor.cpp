@@ -23,13 +23,19 @@ namespace
 
     const juce::Rectangle<int> messageArea { 334, 72, 496, 16 };
 
+    // Where a control sits inside its widget (widget-relative, in the widget's design size). Rows breathe: the
+    // design heights are taller than the layouts they came from, so y is spread over the extra height.
     juce::Rectangle<int> at (const juce::Rectangle<int>& panel, int x, int y, int w, int h)
     {
         const float design = panel.getHeight() == topRowH ? (float) topRowDesign : panel.getHeight() == midRowH ? (float) midRowDesign
                                                                                                            : (float) panel.getHeight();
         const float k = (float) panel.getHeight() / design;
-        return { panel.getX() + x, panel.getY() + juce::roundToInt ((float) y * k), w, h };
+        return { x, juce::roundToInt ((float) y * k), w, h };
     }
+
+    // The work area widgets live in: under the header, above the keyboard.
+    const juce::Rectangle<int> workArea { 24, 96, 1232, 810 };
+    constexpr int gutter = 12, snapGrid = 4, snapReach = 10;
 }
 
 //==============================================================================
@@ -145,45 +151,6 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     canvas.addChildComponent (browser);
     browser.setBounds (0, 86, baseWidth, baseHeight - 86);
 
-    // A small dice and a padlock on each panel: re-roll just that part of the sound, or keep it safe.
-    auto sectionTools = [this] (int section, juce::Rectangle<int> area, ThemeColour c)
-    {
-        auto die = std::make_unique<ab::ui::IconButton> (ab::ui::IconButton::Dice, c);
-        die->setTooltip ("Re-roll the " + HypernovaAudioProcessor::sectionName (section) + " (hold shift for a bigger change)");
-        die->onClick = [this, section]
-        {
-            const float amount = juce::ModifierKeys::currentModifiers.isShiftDown() ? 0.3f : 0.1f;
-            processor.mutateSection (section, amount);
-            if (processor.sectionLocked[(size_t) section].load())
-                showMessage (HypernovaAudioProcessor::sectionName (section) + " locked: click the padlock to unlock");
-        };
-        die->setBounds (area.removeFromLeft (22));
-        canvas.addAndMakeVisible (*die);
-        sectionDice.push_back (std::move (die));
-
-        auto lock = std::make_unique<ab::ui::LockButton> (c);
-        lock->setTooltip ("Lock the " + HypernovaAudioProcessor::sectionName (section) + " so the dice leave it alone");
-        lock->onClick = [this, section, l = lock.get()] { processor.sectionLocked[(size_t) section] = l->getToggleState(); };
-        lock->setBounds (area.removeFromLeft (20));
-        canvas.addAndMakeVisible (*lock);
-        lockButtons.push_back (std::move (lock));
-    };
-    // One row in the deck header: dice and padlock per section of the sound.
-    {
-        const int y = deckPanel.getY() + 10;
-        int x = deckPanel.getX() + 540;
-        const std::pair<int, ThemeColour> secs[] { { HypernovaAudioProcessor::SecOsc, Palette::oscA },
-                                                    { HypernovaAudioProcessor::SecFilter, Palette::filter },
-                                                    { HypernovaAudioProcessor::SecEnvLfo, Palette::env },
-                                                    { HypernovaAudioProcessor::SecFx, Palette::fx } };
-        for (const auto& sec : secs)
-        {
-            sectionTools (sec.first, { x + 52, y, 46, 22 }, sec.second);
-            x += 8;
-            x += 100;
-        }
-    }
-
     // Clicking the logo flares the black hole.
     logoButton.setTooltip ("Hypernova");
     logoButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
@@ -244,8 +211,12 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     gearButton.onClick = [this] { showSettingsMenu(); };
     saveButton.setTooltip ("Save this sound to My Sounds (then export it to share with friends)");
     saveButton.onClick = [this] { showSaveDialog(); };
-    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton, &undoButton, &redoButton, &gearButton })
+    layoutButton.setTooltip ("Arrange the panels: move, resize, stack, hide and add widgets, and switch workspaces");
+    layoutButton.onClick = [this] { setLayoutEditing (! layoutEditing); };
+    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
         canvas.addAndMakeVisible (b);
+    setupEditBar();
+    loadWorkspace (ab::ui::WorkspaceStore::current(), false);
 
     spaceMode.onChange = [this] (int m)
     {
@@ -263,7 +234,6 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     keyboard.setKeyWidth ((float) keysArea.getWidth() / 43.0f);
 
     refreshPresetInfo();
-    showDeckPage (processor.uiDeckPage);
 
     setResizable (true, true);
     setResizeLimits (baseWidth / 2, baseHeight / 2, baseWidth * 2, baseHeight * 2);
@@ -301,17 +271,31 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
 {
     // Header
     prevButton.setBounds (334, 22, 32, 44);
-    presetPlate.setBounds (370, 22, 226, 44);
-    nextButton.setBounds (600, 22, 32, 44);
-    diceButton.setBounds (640, 22, 40, 44);
-    saveButton.setBounds (684, 22, 40, 44);
-    undoButton.setBounds (732, 22, 30, 44);
-    redoButton.setBounds (764, 22, 30, 44);
-    gearButton.setBounds (798, 22, 32, 44);
+    presetPlate.setBounds (370, 22, 206, 44);
+    nextButton.setBounds (580, 22, 32, 44);
+    diceButton.setBounds (618, 22, 38, 44);
+    saveButton.setBounds (660, 22, 38, 44);
+    undoButton.setBounds (704, 22, 30, 44);
+    redoButton.setBounds (736, 22, 30, 44);
+    layoutButton.setBounds (770, 22, 32, 44);
+    gearButton.setBounds (804, 22, 30, 44);
+    editBar.setBounds (334, 22, 520, 44);
     for (int m = 0; m < 4; ++m)
         macroKnobs[(size_t) m] = &knob ("macro" + juce::String (m + 1), "MACRO " + juce::String (m + 1), Palette::fx,
                                         { 842 + m * 84, 12, 84, 68 }, 40);
     knob ("volume", "VOLUME", Colours::text, { 1188, 12, 68, 68 }, 40);
+
+    // Every panel is a widget. Controls are placed in widget coordinates at the panel's design size.
+    auto makeWidget = [this] (const juce::String& id, const juce::String& title, ThemeColour c, juce::Rectangle<int> design,
+                              int titleX = 14, int headerH = 40) -> Widget&
+    {
+        widgets.push_back (std::make_unique<Widget> (id, title, c, design.getWidth(), design.getHeight(), titleX, headerH));
+        auto& w = *widgets.back();
+        canvas.addAndMakeVisible (w);
+        w.setBounds (design);
+        wireWidget (w);
+        return w;
+    };
 
     // Oscillators
     for (int o = 0; o < 2; ++o)
@@ -319,11 +303,15 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         const auto& P = o == 0 ? oscAPanel : oscBPanel;
         const juce::String p = o == 0 ? "a" : "b";
         const auto c = o == 0 ? Palette::oscA : Palette::oscB;
-        toggle (std::make_unique<PowerLed> (c), p + "On", at (P, 10, 10, 26, 26), "Oscillator on/off");
-        combo (p + "Table", WavetableBank::names(), at (P, 92, 11, 138, 24));
-        combo (p + "Warp", warpNames(), at (P, 236, 11, 80, 24));
-        toggle (std::make_unique<PillToggle> ("FILTER", c), p + "Filter", at (P, 322, 12, 66, 22), "Send this oscillator through the filter");
-        (o == 0 ? viewA : viewB).setBounds (at (P, 12, 44, 376, 168));
+        auto& w = makeWidget (o == 0 ? "oscA" : "oscB", o == 0 ? "OSC A" : "OSC B", c, P, 40);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (c), p + "On", at (P, 10, 10, 26, 26), "Oscillator on/off", W);
+        combo (p + "Table", WavetableBank::names(), at (P, 92, 11, 138, 24), W);
+        combo (p + "Warp", warpNames(), at (P, 236, 11, 80, 24), W);
+        toggle (std::make_unique<PillToggle> ("FILTER", c), p + "Filter", at (P, 322, 12, 66, 22), "Send this oscillator through the filter", W);
+        auto& view = o == 0 ? viewA : viewB;
+        W->addAndMakeVisible (view);
+        view.setBounds (at (P, 12, 44, 376, 168));
 
         const char* ids1[] = { "Pos", "WarpAmt", "Uni", "Detune", "Blend" };
         const char* names1[] = { "POSITION", "WARP", "UNISON", "DETUNE", "BLEND" };
@@ -331,14 +319,32 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         const char* names2[] = { "LEVEL", "PAN", "OCTAVE", "SEMI", "FINE" };
         for (int i = 0; i < 5; ++i)
         {
-            knob (p + ids1[i], names1[i], c, at (P, 12 + i * 75, 212, 75, 68));
-            knob (p + ids2[i], names2[i], c, at (P, 12 + i * 75, 280, 75, 68));
+            knob (p + ids1[i], names1[i], c, at (P, 12 + i * 75, 212, 75, 68), 42, W);
+            knob (p + ids2[i], names2[i], c, at (P, 12 + i * 75, 280, 75, 68), 42, W);
         }
     }
 
     // Sound space
-    spaceMode.setBounds (at (spacePanel, 150, 11, 186, 24));
-    space.setBounds (at (spacePanel, 12, 44, 384, 318));
+    {
+        auto& w = makeWidget ("space", "SOUND SPACE", Colours::text, spacePanel);
+        auto* W = &w.content;
+        for (auto* c : std::initializer_list<juce::Component*> { &space, &spaceMode, &expandButton, &popOutButton }) W->addAndMakeVisible (c);
+        spaceMode.setBounds (at (spacePanel, 214, 11, 122, 24));
+        space.setBounds (at (spacePanel, 12, 44, 384, 318));
+        expandButton.setBounds (at (spacePanel, 340, 11, 26, 24));
+        popOutButton.setBounds (at (spacePanel, 370, 11, 26, 24));
+        w.extraPaint = [this] (juce::Graphics& g)
+        {
+            const int note = processor.shownNote.load();
+            const int voices = processor.shownVoices.load();
+            g.setColour (Colours::textDim);
+            g.setFont (mono (10.0f));
+            const juce::String info = note >= 0 ? juce::MidiMessage::getMidiNoteName (note, true, true, 3) + "   " + juce::String (voices) + (voices == 1 ? " voice" : " voices")
+                                                : "play a note";
+            g.drawText (info, juce::Rectangle<float> (118, 10, 90, 24), juce::Justification::centredRight, false);
+        };
+        spaceWidget = &w;
+    }
     expandButton.setTooltip ("Fill the window with the Sound Space");
     popOutButton.setTooltip ("Open the Sound Space in its own resizable window");
     expandButton.onClick = [this] { setSpaceExpanded (! spaceExpanded); };
@@ -347,69 +353,104 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         if (spaceWindow != nullptr) { spaceWindow.reset(); return; }
         spaceWindow = std::make_unique<SpaceWindow> (processor, (int) space.getMode(), [this] { spaceWindow.reset(); });
     };
-    for (auto* b : { &expandButton, &popOutButton }) canvas.addAndMakeVisible (b);
-    expandButton.setBounds (at (spacePanel, 340, 11, 26, 24));
-    popOutButton.setBounds (at (spacePanel, 370, 11, 26, 24));
 
     // Sub + noise
-    toggle (std::make_unique<PowerLed> (Palette::sub), "subOn", at (subPanel, 8, 8, 26, 26), "Sub oscillator on/off");
-    combo ("subShape", subShapeNames(), at (subPanel, 12, 40, 104, 24));
-    knob ("subOct", "OCTAVE", Palette::sub, at (subPanel, 6, 72, 56, 68), 40);
-    knob ("subLevel", "LEVEL", Palette::sub, at (subPanel, 62, 72, 56, 68), 40);
-    toggle (std::make_unique<PillToggle> ("FILTER", Palette::sub), "subFilter", at (subPanel, 12, 152, 104, 22), "Send the sub through the filter (off keeps the low end clean)");
-    combo ("noiseType", ab::dsp::noiseNames(), at (subPanel, 126, 40, 110, 24));
-    knob ("noiseLevel", "NOISE", Colours::textDim, at (subPanel, 126, 72, 56, 68), 40);
-    knob ("noiseTone", "TONE", Colours::textDim, at (subPanel, 180, 72, 56, 68), 40);
-    toggle (std::make_unique<PillToggle> ("FILTER", Colours::textDim), "noiseFilter", at (subPanel, 128, 152, 104, 22), "Send the noise through the filter");
+    {
+        auto& w = makeWidget ("sub", "SUB", Palette::sub, subPanel, 38);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (Palette::sub), "subOn", at (subPanel, 8, 8, 26, 26), "Sub oscillator on/off", W);
+        combo ("subShape", subShapeNames(), at (subPanel, 12, 40, 104, 24), W);
+        knob ("subOct", "OCTAVE", Palette::sub, at (subPanel, 6, 72, 56, 68), 40, W);
+        knob ("subLevel", "LEVEL", Palette::sub, at (subPanel, 62, 72, 56, 68), 40, W);
+        toggle (std::make_unique<PillToggle> ("FILTER", Palette::sub), "subFilter", at (subPanel, 12, 152, 104, 22), "Send the sub through the filter (off keeps the low end clean)", W);
+        combo ("noiseType", ab::dsp::noiseNames(), at (subPanel, 126, 40, 110, 24), W);
+        knob ("noiseLevel", "NOISE", Colours::textDim, at (subPanel, 126, 72, 56, 68), 40, W);
+        knob ("noiseTone", "TONE", Colours::textDim, at (subPanel, 180, 72, 56, 68), 40, W);
+        toggle (std::make_unique<PillToggle> ("FILTER", Colours::textDim), "noiseFilter", at (subPanel, 128, 152, 104, 22), "Send the noise through the filter", W);
+        w.extraPaint = [] (juce::Graphics& g)
+        {
+            sectionLabel (g, "NOISE", juce::Rectangle<float> (130, 10, 80, 24), Colours::textDim);
+            g.setColour (Colours::line);
+            g.drawVerticalLine (121, 14.0f, (float) midRowH - 14.0f);
+        };
+    }
 
     // Pitch + voice
-    knob ("dropAmt", "DROP", Palette::sub, at (voicePanel, 10, 30, 59, 68));
-    knob ("dropTime", "DROP TIME", Palette::sub, at (voicePanel, 69, 30, 59, 68));
-    knob ("glide", "GLIDE", Palette::sub, at (voicePanel, 128, 30, 59, 68));
-    knob ("bendRange", "BEND", Palette::sub, at (voicePanel, 187, 30, 59, 68));
-    combo ("mode", voiceModeNames(), at (voicePanel, 12, 118, 100, 24))
-        .setTooltip ("Poly: chords. Mono: one note at a time. Legato: one note, and overlapping notes slide using GLIDE.");
-    toggle (std::make_unique<PillToggle> ("RETRIG", Palette::sub), "retrig", at (voicePanel, 12, 150, 100, 22),
-            "Restart the waveform on every note: same punch every hit (808s, log drums)");
-    knob ("velSens", "VELOCITY", Palette::sub, at (voicePanel, 128, 110, 59, 68));
+    {
+        auto& w = makeWidget ("pitch", "PITCH", Palette::sub, voicePanel);
+        auto* W = &w.content;
+        knob ("dropAmt", "DROP", Palette::sub, at (voicePanel, 10, 30, 59, 68), 42, W);
+        knob ("dropTime", "DROP TIME", Palette::sub, at (voicePanel, 69, 30, 59, 68), 42, W);
+        knob ("glide", "GLIDE", Palette::sub, at (voicePanel, 128, 30, 59, 68), 42, W);
+        knob ("bendRange", "BEND", Palette::sub, at (voicePanel, 187, 30, 59, 68), 42, W);
+        combo ("mode", voiceModeNames(), at (voicePanel, 12, 118, 100, 24), W)
+            .setTooltip ("Poly: chords. Mono: one note at a time. Legato: one note, and overlapping notes slide using GLIDE.");
+        toggle (std::make_unique<PillToggle> ("RETRIG", Palette::sub), "retrig", at (voicePanel, 12, 150, 100, 22),
+                "Restart the waveform on every note: same punch every hit (808s, log drums)", W);
+        knob ("velSens", "VELOCITY", Palette::sub, at (voicePanel, 128, 110, 59, 68), 42, W);
+        modChips.push_back (std::make_unique<ModChip> ("DRAG VEL", 4, modSourceColour (4)));
+        modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
+        W->addAndMakeVisible (*modChips.back());
+        modChips.back()->setBounds (at (voicePanel, 186, 150, 60, 20));
+        w.extraPaint = [] (juce::Graphics& g)
+        {
+            sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> (12, 108, 240, 18), Palette::sub);
+        };
+    }
 
     // Filter
-    toggle (std::make_unique<PowerLed> (Palette::filter), "fltOn", at (filterPanel, 8, 8, 26, 26), "Filter on/off");
-    combo ("fltType", filterNames(), at (filterPanel, 190, 11, 130, 24));
-    filterView.setBounds (at (filterPanel, 12, 42, 308, 62));
-    const char* fIds[] = { "cutoff", "res", "fltDrive", "fltEnv", "fltKey", "fltMix" };
-    const char* fNames[] = { "CUTOFF", "RES", "DRIVE", "ENV", "KEY", "MIX" };
-    for (int i = 0; i < 6; ++i)
-        knob (fIds[i], fNames[i], Palette::filter, at (filterPanel, 12 + i * 51, 110, 51, 68), 40);
+    {
+        auto& w = makeWidget ("filter", "FILTER", Palette::filter, filterPanel, 38);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (Palette::filter), "fltOn", at (filterPanel, 8, 8, 26, 26), "Filter on/off", W);
+        combo ("fltType", filterNames(), at (filterPanel, 190, 11, 130, 24), W);
+        W->addAndMakeVisible (filterView);
+        filterView.setBounds (at (filterPanel, 12, 42, 308, 62));
+        const char* fIds[] = { "cutoff", "res", "fltDrive", "fltEnv", "fltKey", "fltMix" };
+        const char* fNames[] = { "CUTOFF", "RES", "DRIVE", "ENV", "KEY", "MIX" };
+        for (int i = 0; i < 6; ++i)
+            knob (fIds[i], fNames[i], Palette::filter, at (filterPanel, 12 + i * 51, 110, 51, 68), 40, W);
+    }
 
     // Envelopes
-    ampView.setBounds (at (envPanel, 12, 36, 164, 64));
-    modView.setBounds (at (envPanel, 192, 36, 164, 64));
-    modChips.push_back (std::make_unique<ModChip> ("DRAG", 3, modSourceColour (3)));
-    modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
-    canvas.addAndMakeVisible (*modChips.back());
-    modChips.back()->setBounds (at (envPanel, 268, 12, 52, 20));
-    modChips.push_back (std::make_unique<ModChip> ("DRAG VEL", 4, modSourceColour (4)));
-    modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
-    canvas.addAndMakeVisible (*modChips.back());
-    modChips.back()->setBounds (at (voicePanel, 186, 150, 60, 20));
+    {
+        auto& w = makeWidget ("env", "AMP ENV", Palette::env, envPanel);
+        auto* W = &w.content;
+        W->addAndMakeVisible (ampView);
+        W->addAndMakeVisible (modView);
+        ampView.setBounds (at (envPanel, 12, 36, 164, 64));
+        modView.setBounds (at (envPanel, 192, 36, 164, 64));
+        modChips.push_back (std::make_unique<ModChip> ("DRAG", 3, modSourceColour (3)));
+        modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
+        W->addAndMakeVisible (*modChips.back());
+        modChips.back()->setBounds (at (envPanel, 268, 12, 52, 20));
+        const char* adsr[] = { "A", "D", "S", "R" };
+        for (int i = 0; i < 4; ++i)
+        {
+            knob (juce::String ("amp") + adsr[i], adsr[i], Palette::env, at (envPanel, 12 + i * 41, 108, 41, 66), 36, W);
+            knob (juce::String ("mod") + adsr[i], adsr[i], Palette::lfo, at (envPanel, 192 + i * 41, 108, 41, 66), 36, W);
+        }
+        w.extraPaint = [] (juce::Graphics& g)
+        {
+            sectionLabel (g, "MOD ENV", juce::Rectangle<float> (194, 10, 120, 24), Palette::lfo);
+        };
+    }
 
-    const char* adsr[] = { "A", "D", "S", "R" };
+    // The four deck pages are widgets too, stacked as tabs where the deck used to be.
+    const char* pageIds[] = { "mod", "fx", "morefx", "play" };
+    const char* pageTitles[] = { "MODULATION", "EFFECTS", "MORE FX", "PLAY" };
     for (int i = 0; i < 4; ++i)
     {
-        knob (juce::String ("amp") + adsr[i], adsr[i], Palette::env, at (envPanel, 12 + i * 41, 108, 41, 66), 36);
-        knob (juce::String ("mod") + adsr[i], adsr[i], Palette::lfo, at (envPanel, 192 + i * 41, 108, 41, 66), 36);
+        auto& w = makeWidget (pageIds[i], pageTitles[i], Palette::mod, deckPanel, 14, 44);
+        w.content.addAndMakeVisible (pages[(size_t) i]);
+        pages[(size_t) i].setVisible (true);
+        pages[(size_t) i].setBounds (0, deckContent.getY() - deckPanel.getY(), deckContent.getWidth(), deckContent.getHeight());
+        w.extraPaint = [] (juce::Graphics& g)
+        {
+            g.setColour (Colours::line);
+            g.drawHorizontalLine (42, 12.0f, (float) deckPanel.getWidth() - 12.0f);
+        };
     }
-
-    // Tabbed deck
-    for (auto& pg : pages)
-    {
-        canvas.addChildComponent (pg);
-        pg.setBounds (deckContent);
-    }
-    deckTabs.setBounds (deckPanel.getX() + 12, deckPanel.getY() + 9, 500, 26);
-    deckTabs.onChange = [this] (int i) { showDeckPage (i); };
-    canvas.addAndMakeVisible (deckTabs);
     layoutModPage();
     layoutFxPage();
     layoutMoreFxPage();
@@ -453,28 +494,6 @@ void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
         g.drawText ("wavetable synthesizer", juce::Rectangle<float> (72, 52, 250, 16), juce::Justification::centredLeft, false);
     }
 
-    auto titled = [&] (const juce::Rectangle<int>& r, const juce::String& title, juce::Colour c, int titleX = 14)
-    {
-        panel (g, r.toFloat(), 14.0f);
-        sectionLabel (g, title, juce::Rectangle<float> ((float) r.getX() + (float) titleX, (float) r.getY() + 10, 200, 24), c);
-    };
-
-    titled (oscAPanel, "OSC A", Palette::oscA, 40);
-    titled (oscBPanel, "OSC B", Palette::oscB, 40);
-    titled (spacePanel, "SOUND SPACE", Colours::text);
-    titled (subPanel, "SUB", Palette::sub, 38);
-    sectionLabel (g, "NOISE", juce::Rectangle<float> ((float) subPanel.getX() + 130, (float) subPanel.getY() + 10, 80, 24), Colours::textDim);
-    g.setColour (Colours::line);
-    g.drawVerticalLine (subPanel.getX() + 121, (float) subPanel.getY() + 14, (float) subPanel.getBottom() - 14);
-    titled (voicePanel, "PITCH", Palette::sub);
-    sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> ((float) voicePanel.getX() + 12, (float) voicePanel.getY() + 108, 240, 18), Palette::sub);
-    titled (filterPanel, "FILTER", Palette::filter, 38);
-    titled (envPanel, "AMP ENV", Palette::env);
-    sectionLabel (g, "MOD ENV", juce::Rectangle<float> ((float) envPanel.getX() + 194, (float) envPanel.getY() + 10, 120, 24), Palette::lfo);
-    panel (g, deckPanel.toFloat(), 14.0f);
-    g.setColour (Colours::line);
-    g.drawHorizontalLine (deckPanel.getY() + 42, (float) deckPanel.getX() + 12, (float) deckPanel.getRight() - 12);
-
     auto tray = juce::Rectangle<float> (838, 8, 342, 76);
     g.setColour (Colours::inset.withAlpha (0.55f));
     g.fillRoundedRectangle (tray, 12.0f);
@@ -499,22 +518,6 @@ void HypernovaAudioProcessorEditor::paintDynamic (juce::Graphics& g)
         g.fillEllipse (juce::Rectangle<float> (logoHoleRadius * 1.5f, logoHoleRadius * 1.5f).withCentre (c));
     }
 
-
-    // Captions for the per-section dice.
-    {
-        static const char* names[] = { "OSC", "FILTER", "MOD", "FX" };
-        static const juce::Colour cols[] = { Palette::oscA, Palette::filter, Palette::env, Palette::fx };
-        for (int i = 0; i < 4; ++i)
-            sectionLabel (g, names[i], juce::Rectangle<float> ((float) deckPanel.getX() + 540 + i * 108, (float) deckPanel.getY() + 12, 50, 18), cols[i]);
-    }
-
-    const int note = processor.shownNote.load();
-    const int voices = processor.shownVoices.load();
-    g.setColour (Colours::textDim);
-    g.setFont (mono (10.0f));
-    const juce::String info = note >= 0 ? juce::MidiMessage::getMidiNoteName (note, true, true, 3) + "   " + juce::String (voices) + (voices == 1 ? " voice" : " voices")
-                                        : "play a note";
-    g.drawText (info, juce::Rectangle<float> ((float) spacePanel.getX() + 118, (float) spacePanel.getY() + 10, 104, 24), juce::Justification::centredRight, false);
 
     if (message.isNotEmpty() && juce::Time::currentTimeMillis() < messageUntil)
     {
@@ -627,7 +630,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (readout != lastReadout)
     {
         lastReadout = readout;
-        canvas.repaint (spacePanel.getX() + 110, spacePanel.getY() + 8, 120, 28);
+        if (spaceWidget != nullptr) spaceWidget->content.repaint (110, 8, 110, 28);
     }
     if (message.isNotEmpty() && juce::Time::currentTimeMillis() >= messageUntil)
     {
@@ -836,11 +839,13 @@ void HypernovaAudioProcessorEditor::DeckPage::paint (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::showDeckPage (int page)
 {
-    processor.uiDeckPage = juce::jlimit (0, (int) pages.size() - 1, page);
-    for (int i = 0; i < (int) pages.size(); ++i)
-        pages[(size_t) i].setVisible (i == processor.uiDeckPage);
-    deckTabs.setSelected (processor.uiDeckPage);
-    canvas.repaint (deckPanel);
+    static const char* ids[] = { "mod", "fx", "morefx", "play" };
+    processor.uiDeckPage = juce::jlimit (0, 3, page);
+    if (auto* w = findWidget (ids[processor.uiDeckPage]))
+    {
+        if (w->shown && w->stack.isNotEmpty()) activateInStack (*w, false);
+        else if (! w->isVisible()) showWidget (*w);
+    }
 }
 
 void HypernovaAudioProcessorEditor::layoutModPage()
@@ -1284,19 +1289,27 @@ void HypernovaAudioProcessorEditor::showColourPicker()
 // The Sound Space filling the whole window, and back again.
 void HypernovaAudioProcessorEditor::setSpaceExpanded (bool expand)
 {
+    // Expanded, the Sound Space leaves its widget and covers the work area; shrunk, it goes back.
     spaceExpanded = expand;
     space.setSolid (expand);
     if (expand)
     {
-        space.setBounds (24, 96, baseWidth - 48, keysArea.getY() - 96 - 8); // everything down to the keyboard
+        const auto area = workArea.withBottom (layoutKeyboardVisible() ? keysArea.getY() - 8 : baseHeight - 12);
+        canvas.addAndMakeVisible (space);
+        space.setBounds (area);
+        canvas.addAndMakeVisible (expandButton);
+        expandButton.setBounds (area.getRight() - 34, area.getY() + 8, 26, 24);
         space.toFront (false);
-        spaceMode.toFront (false);
         expandButton.toFront (false);
-        popOutButton.toFront (false);
         showMessage ("Sound Space expanded: click the arrows again to shrink it");
     }
-    else
+    else if (spaceWidget != nullptr)
+    {
+        spaceWidget->content.addAndMakeVisible (space);
+        spaceWidget->content.addAndMakeVisible (expandButton);
         space.setBounds (at (spacePanel, 12, 44, 384, 318));
+        expandButton.setBounds (at (spacePanel, 340, 11, 26, 24));
+    }
     canvas.repaint();
 }
 

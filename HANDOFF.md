@@ -59,6 +59,8 @@ Source/
                         knob styles (incl. cached machined bodies), panel styles
   UI/Components.h       knobs (mod rings, trails, right-click), views (wavetable, Sound Space, envelopes,
                         LFOs, filter), chips, toggles, keyboard (DeepKeyboard), icons
+  UI/Widgets.h          Widget (movable/resizable/collapsible panel with layout-mode chrome), StackTabs, WorkspaceStore
+  EditorLayout.cpp      the widget host: default workspaces, snapping, stacking, hide/add, layout undo, workspace menu
   UI/Cosmos.h           GPU backdrop shader (cosmos / neon horizon / plain) + CPU fallback
   UI/PresetBrowser.h    browser overlay
   UI/Updater.h          GitHub release check + download banner
@@ -150,10 +152,12 @@ Sound packs (separate from app releases): `./scripts/publish-pack.sh "<folder of
 
 ## 7. Open work (in rough priority)
 
+**The current source of truth is `ROADMAP.md`**: the full retained roadmap with a status for each item, plus the explicit exclusions (Flight Recorder, Groove Gravity, Pilot Mode, Tape Desk, Dub Desk, per-step parameter changes, performance scenes). Where the list below conflicts with it, ROADMAP.md wins; in particular, no step sequencer.
+
 From the user's requests and research that haven't been done yet:
 
 1. **More 3D / "edgy and fun"** — the user's latest direction. Ideas queued: a persistent modulation strip above the deck with live mini-scopes (the Pigments feature reviewers love most), an XY "orbiter" macro pad (drag a comet through a star field to morph many parameters), wavetable views reacting harder to modulation (ghost frame at the modulated position tinted by the source colour), hover-to-reveal targets in both directions, knob "click" feedback.
-2. **Playing and control:** MIDI learn for knobs, MPE, velocity and mod-wheel curves, a step sequencer as a mod source.
+2. **Playing and control:** MIDI learn for knobs, MPE, velocity and mod-wheel curves. (The step sequencer is excluded; see ROADMAP.md.)
 3. **From the feature research:** mod-matrix remap curves and drawable LFO shapes, a second filter with serial/parallel routing, unison spread modes, microtuning (MTS-ESP / Scala), envelope follower / sidechain as a mod source, A/B compare, reorderable effects chain, per-voice random / free-running phase, more filter models (ladder, diode). Formant shifter was requested but skipped (needs spectral processing).
 4. **Preset browser:** tags, audition on hover, preset thumbnails.
 5. **Verification gaps:** the installer app has not been run on a real macOS 12 machine; notes on the standalone's on-screen keyboard weren't audibly checked in the last session (automated audio tests pass); pop-out window behaviour in hosts other than the standalone is untested.
