@@ -22,7 +22,7 @@ enum ThemeSlot
 };
 
 enum BackdropStyle { BackdropCosmos, BackdropHorizon, BackdropFlat };
-enum KnobStyle { KnobPlanet, KnobRing, KnobMinimal };
+enum KnobStyle { KnobPlanet, KnobRing, KnobMinimal, KnobMachined };
 enum PanelStyle { PanelGlass, PanelFlat, PanelOutline };
 
 struct Theme
@@ -51,7 +51,7 @@ inline std::vector<Theme> builtInThemes()
         make ("Paper", { 0xfff2f1ee, 0xffe9e8e4, 0xffffffff, 0xffffffff, 0xffeeede9, 0x1f000000, 0x40000000,
                          0xff111111, 0xff4a4a4a, 0xff8b8b88, 0xffff5a1f, 0xff2f5bff, 0xffff5a1f, 0xffe8363d,
                          0xffff5a1f, 0xff2f5bff, 0xffe0a100, 0xffe8363d, 0xff16a37b, 0xff2f5bff, 0xff7a5cff, 0xff111111 },
-              BackdropFlat, 0.0f, KnobRing, PanelFlat, true),
+              BackdropFlat, 0.0f, KnobMachined, PanelFlat, true),
         // Cosmic: deep space, but with panels that read as surfaces and a backdrop that sits back.
         make ("Cosmic", { 0xff03040a, 0xff070914, 0xc40d1022, 0xff181d35, 0xc206081a, 0x24ffffff, 0x45ffffff,
                           0xfff4f5ff, 0xffa3a8d0, 0xff676d96, 0xff46e8ff, 0xff8a5cff, 0xffffa94a, 0xffff4f9a,
@@ -293,10 +293,19 @@ inline void panel (juce::Graphics& g, juce::Rectangle<float> r, float radius = 1
     const int style = ThemeState::get().panels();
     if (style == PanelFlat)
     {
+        // A card lifted off the page: layered soft shadow, solid face, a lit top edge.
+        const float rad = radius * 0.6f;
+        for (int i = 4; i >= 1; --i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.018f * (float) (5 - i)));
+            g.fillRoundedRectangle (r.translated (0, 1.5f * (float) i).expanded (0.5f * (float) i), rad + (float) i);
+        }
         g.setColour (base.withAlpha (1.0f));
-        g.fillRoundedRectangle (r, radius * 0.6f);
+        g.fillRoundedRectangle (r, rad);
         g.setColour (Colours::line);
-        g.drawRoundedRectangle (r.reduced (0.5f), radius * 0.6f, 1.0f);
+        g.drawRoundedRectangle (r.reduced (0.5f), rad, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (ThemeState::get().base.light ? 0.9f : 0.06f));
+        g.drawHorizontalLine ((int) r.getY() + 1, r.getX() + rad, r.getRight() - rad);
         return;
     }
     if (style == PanelOutline)
@@ -494,6 +503,50 @@ public:
 
         const int knobStyle = ThemeState::get().knobs();
         const float angle = a0 + pos * (a1 - a0);
+        if (knobStyle == KnobMachined)
+        {
+            // Machined: a solid cylinder with a coloured cap, lit from the top left, sitting on its own shadow.
+            // The side wall shows below the cap, so the knob reads as a physical object you could grab.
+            const float capR = radius - juce::jmax (6.0f, radius * 0.3f);
+            const float depth = juce::jmax (2.5f, capR * 0.22f);
+            const bool over = s.isMouseOverOrDragging();
+            const auto centre = juce::Point<float> (cx, cy - depth * 0.35f);
+            auto cap = juce::Rectangle<float> (capR * 2, capR * 2).withCentre (centre);
+
+            // contact shadow, softened by stacking
+            for (int i = 3; i >= 1; --i)
+            {
+                g.setColour (juce::Colours::black.withAlpha (0.045f * (float) i));
+                g.fillEllipse (cap.translated (0, depth + 1.5f * (float) i).expanded (0.8f * (float) (4 - i)));
+            }
+            // side wall
+            const auto side = c.darker (0.55f);
+            g.setGradientFill (juce::ColourGradient (side.brighter (0.15f), cap.getX(), cy, side.darker (0.4f), cap.getRight(), cy, false));
+            g.fillEllipse (cap.translated (0, depth));
+            g.fillRect (cap.withTrimmedTop (capR).withHeight (depth).translated (0, 0));
+            // cap
+            g.setGradientFill (juce::ColourGradient (c.brighter (over ? 0.35f : 0.22f), cap.getX() + capR * 0.4f, cap.getY() + capR * 0.3f,
+                                                     c.darker (0.18f), cap.getRight(), cap.getBottom(), true));
+            g.fillEllipse (cap);
+            // machining: fine concentric rings
+            g.setColour (juce::Colours::black.withAlpha (0.05f));
+            for (float rr = capR * 0.25f; rr < capR; rr += juce::jmax (1.6f, capR * 0.12f))
+                g.drawEllipse (juce::Rectangle<float> (rr * 2, rr * 2).withCentre (centre), 0.6f);
+            // rim light and specular glint
+            g.setColour (juce::Colours::white.withAlpha (0.35f));
+            juce::Path rim;
+            rim.addCentredArc (centre.x, centre.y, capR - 0.6f, capR - 0.6f, 0.0f, -2.4f, -0.4f, true);
+            g.strokePath (rim, juce::PathStrokeType (1.0f));
+            g.setColour (juce::Colours::white.withAlpha (0.28f));
+            g.fillEllipse (juce::Rectangle<float> (capR * 0.7f, capR * 0.38f).withCentre (centre.translated (-capR * 0.28f, -capR * 0.42f)));
+            // pointer: a notch cut into the cap, in whichever ink contrasts with it
+            const auto ink = c.getPerceivedBrightness() > 0.6f ? juce::Colour (0xff111111) : juce::Colours::white;
+            const auto tip = centre.getPointOnCircumference (capR * 0.86f, angle);
+            const auto root = centre.getPointOnCircumference (capR * 0.42f, angle);
+            g.setColour (ink.withAlpha (0.9f));
+            g.drawLine (juce::Line<float> (root, tip), juce::jmax (1.8f, capR * 0.14f));
+            return;
+        }
         if (knobStyle == KnobRing)
         {
             // Ring: a flat disc with a bold pointer line, the arc does the talking.

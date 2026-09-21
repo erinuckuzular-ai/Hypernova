@@ -798,6 +798,45 @@ private:
 };
 
 //==============================================================================
+// On-screen keyboard with real keys: bevelled, shadowed, and they go down when played.
+class DeepKeyboard : public juce::MidiKeyboardComponent
+{
+public:
+    using juce::MidiKeyboardComponent::MidiKeyboardComponent;
+
+    void drawWhiteNote (int, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver, juce::Colour, juce::Colour) override
+    {
+        const bool light = ThemeState::get().base.light;
+        auto key = area.reduced (1.0f, 0.0f).withTrimmedBottom (isDown ? 1.0f : 4.0f).translated (0, isDown ? 3.0f : 0.0f);
+        g.setColour (juce::Colours::black.withAlpha (light ? 0.16f : 0.5f));
+        g.fillRoundedRectangle (key.translated (0, isDown ? 1.0f : 4.0f), 4.0f);
+        const auto top = light ? juce::Colour (0xffffffff) : Colours::panelHi.brighter (0.12f);
+        const auto bottom = light ? juce::Colour (0xffeceae5) : Colours::panelHi.get();
+        g.setGradientFill (juce::ColourGradient (isDown ? Palette::oscA.withAlpha (0.35f).overlaidWith (top.withAlpha (0.5f)) : top, 0, key.getY(),
+                                                 isDown ? Palette::oscA.withAlpha (0.55f) : bottom, 0, key.getBottom(), false));
+        g.fillRoundedRectangle (key, 4.0f);
+        g.setColour (isOver && ! isDown ? Palette::oscA.withAlpha (0.18f) : juce::Colours::transparentBlack);
+        g.fillRoundedRectangle (key, 4.0f);
+        g.setColour (juce::Colours::black.withAlpha (light ? 0.12f : 0.4f));
+        g.drawRoundedRectangle (key, 4.0f, 1.0f);
+    }
+
+    void drawBlackNote (int, juce::Graphics& g, juce::Rectangle<float> area, bool isDown, bool isOver, juce::Colour) override
+    {
+        auto key = area.reduced (1.0f, 0.0f).withTrimmedBottom (isDown ? 1.0f : 4.0f).translated (0, isDown ? 2.0f : 0.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (key.translated (0, isDown ? 1.0f : 4.0f), 3.0f);
+        g.setGradientFill (juce::ColourGradient (isDown ? Palette::oscA.get() : juce::Colour (0xff3a3a3e), 0, key.getY(),
+                                                 isDown ? Palette::oscA.darker (0.3f) : juce::Colour (0xff111113), 0, key.getBottom(), false));
+        g.fillRoundedRectangle (key, 3.0f);
+        if (isOver && ! isDown) { g.setColour (Palette::oscA.withAlpha (0.25f)); g.fillRoundedRectangle (key, 3.0f); }
+        // lit bevel on the top face
+        g.setColour (juce::Colours::white.withAlpha (0.16f));
+        g.fillRoundedRectangle (key.reduced (key.getWidth() * 0.18f, 0).withTrimmedTop (key.getHeight() * 0.72f).translated (0, -2.0f), 2.0f);
+    }
+};
+
+//==============================================================================
 // A click target with no appearance of its own (used over the painted logo).
 class InvisibleButton : public juce::Button
 {
@@ -912,12 +951,19 @@ public:
     PillToggle (const juce::String& text, ThemeColour c) : juce::ToggleButton (text), colour (c) {}
     void paintButton (juce::Graphics& g, bool over, bool) override
     {
-        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        auto r = getLocalBounds().toFloat().reduced (0.5f).withTrimmedBottom (2.0f);
         const bool on = getToggleState();
-        g.setColour (on ? colour.withAlpha (0.14f) : Colours::inset);
-        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        // Raised when off, pressed in when on: the travel sells it as a physical switch.
+        const float lift = on ? 0.5f : 2.0f;
+        g.setColour (juce::Colours::black.withAlpha (on ? 0.10f : 0.18f));
+        g.fillRoundedRectangle (r.translated (0, lift), r.getHeight() * 0.5f);
+        auto face = r.translated (0, on ? 1.5f : 0.0f);
+        g.setGradientFill (juce::ColourGradient (on ? colour.withAlpha (0.28f) : Colours::panelHi.brighter (0.04f), 0, face.getY(),
+                                                 on ? colour.withAlpha (0.16f) : Colours::inset, 0, face.getBottom(), false));
+        g.fillRoundedRectangle (face, face.getHeight() * 0.5f);
         g.setColour (on ? colour.withAlpha (0.75f) : (over ? Colours::lineHi : Colours::line));
-        g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+        g.drawRoundedRectangle (face, face.getHeight() * 0.5f, 1.0f);
+        r = face;
         auto dot = r.removeFromLeft (r.getHeight()).withSizeKeepingCentre (6, 6);
         g.setColour (on ? colour : Colours::textFaint);
         g.fillEllipse (dot);
