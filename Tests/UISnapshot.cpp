@@ -316,6 +316,58 @@ int main (int argc, char** argv)
     snap ("ui_7_effects_workspace.png", "Reese Wide", 0, 0, "Effects");
     snap ("ui_8_analysis.png", "Reese Wide", 0, 0, "Analysis");
     {
+        // Sampling: a made-up recording (a plucked, slightly noisy tone) loaded and looping.
+        const auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Glass Pluck.wav");
+        {
+            const int n = 44100 * 2;
+            juce::AudioBuffer<float> b (2, n);
+            juce::Random rnd (3);
+            for (int i = 0; i < n; ++i)
+            {
+                const double t = i / 44100.0;
+                const double env = (1.0 - std::exp (-t * 400.0)) * std::exp (-t * 1.6);
+                double v = 0;
+                for (int h = 1; h < 9; ++h) v += std::sin (juce::MathConstants<double>::twoPi * 196.0 * h * t) / (h * (1.0 + t * h * 0.8));
+                const float noise = (rnd.nextFloat() * 2.0f - 1.0f) * 0.05f * (float) std::exp (-t * 20.0);
+                b.setSample (0, i, (float) (0.45 * env * v) + noise);
+                b.setSample (1, i, (float) (0.45 * env * v * 0.95) + noise);
+            }
+            wavFile.deleteFile();
+            juce::WavAudioFormat wav;
+            auto stream = std::unique_ptr<juce::OutputStream> (wavFile.createOutputStream());
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (stream.get(), 44100.0, 2, 24, {}, 0));
+            stream.release();
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        }
+        for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Init") proc.setCurrentProgram (i);
+        juce::String error;
+        proc.loadSample (wavFile, error);
+        proc.setParam ("aOn", 0.0f);
+        proc.setParam ("smpLoop", 1.0f);
+        proc.setParam ("smpLoopStart", 0.35f);
+        proc.setParam ("smpLoopEnd", 0.8f);
+        std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
+        editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        editor->loadWorkspace ("Sampling", false);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 55, 1.0f), 0);
+        for (int i = 0; i < 60; ++i)
+        {
+            juce::AudioBuffer<float> buf (2, 512);
+            proc.processBlock (buf, midi);
+            midi.clear();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (34);
+        }
+        auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+        auto f = outDir.getChildFile ("ui_9_sampling.png");
+        f.deleteFile();
+        juce::FileOutputStream out (f);
+        juce::PNGImageFormat().writeImageToStream (image, out);
+        std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
+        wavFile.deleteFile();
+        proc.clearSample();
+    }
+    {
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         editor->setBrowserOpen (true);

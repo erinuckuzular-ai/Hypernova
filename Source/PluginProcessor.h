@@ -135,6 +135,16 @@ public:
     const ab::Wavetable* currentUserTable (int osc) const { return userTable[(size_t) osc].load(); }
     static juce::StringArray installedWavetables();
     std::atomic<int> tableVersion { 0 };
+
+    //==========================================================================
+    // Sampler. Samples load on the message thread; the audio thread reads the current one through an atomic,
+    // and replaced samples stay alive for a few seconds so nothing it's still reading goes away.
+    static constexpr double maxSampleSeconds = 60.0;
+    bool loadSample (const juce::File& audioFile, juce::String& error); // message thread
+    void clearSample();
+    std::shared_ptr<const ab::SampleData> sampleForUi() const { return sampleHeld; }
+    std::atomic<int> sampleVersion { 0 };
+    std::atomic<float> shownSample { -1.0f };
     std::atomic<int> parameterChanges { 0 }; // bumped on any parameter change, so the editor redraws only when needed
     int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
@@ -227,6 +237,15 @@ private:
     double hostPpq = 0;
     bool hostPlaying = false;
     std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;
+    std::shared_ptr<const ab::SampleData> sampleHeld;
+    std::atomic<const ab::SampleData*> currentSample { nullptr };
+    std::vector<std::pair<juce::uint32, std::shared_ptr<const ab::SampleData>>> retiredSamples;
+    juce::MemoryBlock sampleFlac; // the sample as it's saved in sessions and presets (encoded once, on load)
+    static std::shared_ptr<ab::SampleData> makeSample (const juce::AudioBuffer<float>&, double rate, const juce::String& name);
+    static juce::MemoryBlock encodeFlac (const juce::AudioBuffer<float>&, double rate);
+    void installSample (std::shared_ptr<ab::SampleData>, juce::MemoryBlock flac);
+    void addSampleTo (juce::ValueTree& state) const;
+    void takeSampleFrom (juce::ValueTree& state, bool clearIfMissing);
     std::array<std::atomic<const ab::Wavetable*>, 2> userTable { nullptr, nullptr };
     std::array<juce::String, 2> userTableSlot;
     juce::SmoothedValue<float> masterGain;

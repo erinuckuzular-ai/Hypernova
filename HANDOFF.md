@@ -59,6 +59,10 @@ Source/
                         knob styles (incl. cached machined bodies), panel styles
   UI/Components.h       knobs (mod rings, trails, right-click), views (wavetable, Sound Space, envelopes,
                         LFOs, filter), chips, toggles, keyboard (DeepKeyboard), icons
+  DSP/Sampler.h         SampleData (guard-padded, cubic read), SamplerSettings, SamplePlayer (loops, reverse, fades),
+                        pitch detection. Samples load on the message thread (HypernovaAudioProcessor::loadSample);
+                        the audio thread reads an atomic pointer; replaced ones are retired for 3 s; FLAC in state
+  UI/SamplerView.h      sampler waveform editor (flags, loop brackets, playhead, drop to load)
   UI/Dock.h             docking layout tree (splits and tabbed leaves): layout, drop targets, dividers, save/load
   UI/Widgets.h          Widget (panel + Spread responsive relayout + edit chrome), StackTabs, DockOverlay (all
                         drag/resize/drop interaction), WorkspaceStore

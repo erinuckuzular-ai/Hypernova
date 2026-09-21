@@ -7,6 +7,7 @@
 #include "UI/PresetBrowser.h"
 #include "UI/Updater.h"
 #include "UI/ToolWidgets.h"
+#include "UI/SamplerView.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                       public juce::FileDragAndDropTarget,
@@ -181,6 +182,10 @@ private:
 
     ab::ui::WavetableView viewA, viewB;
     ab::ui::SoundSpace space;
+    ab::ui::SamplerView samplerView;
+    juce::TextButton sampleButton { "LOAD" };
+    void showSampleMenu();
+    void chooseSample();
     std::vector<std::unique_ptr<ab::ui::Widget>> widgets;
     ab::ui::Widget* spaceWidget = nullptr;
     ab::ui::dock::Tree tree;

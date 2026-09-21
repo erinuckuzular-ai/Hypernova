@@ -463,6 +463,152 @@ int main (int argc, char** argv)
     }
 
     // SmokeTest --note "<preset>" <midiNote> <out.wav>: one 300 ms note, for A/B checks against references.
+    // SmokeTest --sampler: loading, pitch detection, key tracking, loops, reverse, clicks and saving.
+    if (argc == 2 && juce::String (argv[1]) == "--sampler")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        // A test recording: 0.1 s of silence, then 1 s of a 220 Hz tone (A3, MIDI 57) with a few harmonics.
+        const auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("hn_sampler_test.wav");
+        {
+            const int n = (int) (1.1 * 44100.0);
+            juce::AudioBuffer<float> b (1, n);
+            for (int i = 0; i < n; ++i)
+            {
+                const double t = (i - 4410) / 44100.0;
+                const double ph = juce::MathConstants<double>::twoPi * 220.0 * t;
+                b.setSample (0, i, i < 4410 ? 0.0f : (float) (0.5 * std::sin (ph) + 0.2 * std::sin (2 * ph) + 0.1 * std::sin (3 * ph)));
+            }
+            wavFile.deleteFile();
+            juce::WavAudioFormat wav;
+            auto stream = std::unique_ptr<juce::OutputStream> (wavFile.createOutputStream());
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (stream.get(), 44100.0, 1, 24, {}, 0));
+            stream.release();
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        }
+
+        auto isolate = [] (HypernovaAudioProcessor& p)
+        {
+            for (auto* id : { "aOn", "bOn", "subOn", "fltOn" }) p.setParam (id, 0.0f);
+            p.setParam ("noiseLevel", 0.0f);
+        };
+        // Renders a note and returns the output (mono sum).
+        auto render = [&] (HypernovaAudioProcessor& p, int note, double seconds, double offAt)
+        {
+            const int total = (int) (seconds * rate), off = (int) (offAt * rate);
+            std::vector<float> out ((size_t) total, 0.0f);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 110), 0);
+                if (off >= pos && off < pos + 256) midi.addEvent (juce::MidiMessage::noteOff (1, note), off - pos);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256 && pos + i < total; ++i) out[(size_t) (pos + i)] = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            }
+            return out;
+        };
+        auto frequency = [&] (const std::vector<float>& x, double from, double to)
+        {
+            int crossings = 0, first = -1, last = -1;
+            for (int i = (int) (from * rate) + 1; i < (int) (to * rate) && i < (int) x.size(); ++i)
+                if (x[(size_t) i - 1] < 0.0f && x[(size_t) i] >= 0.0f) { if (first < 0) first = i; last = i; ++crossings; }
+            return crossings > 1 ? (crossings - 1) * rate / (last - first) : 0.0;
+        };
+        auto rms = [&] (const std::vector<float>& x, double from, double to)
+        {
+            double sum = 0; int n = 0;
+            for (int i = (int) (from * rate); i < (int) (to * rate) && i < (int) x.size(); ++i) { sum += x[(size_t) i] * x[(size_t) i]; ++n; }
+            return n > 0 ? std::sqrt (sum / n) : 0.0;
+        };
+        auto maxStep = [&] (const std::vector<float>& x, double from, double to)
+        {
+            float m = 0;
+            for (int i = (int) (from * rate) + 1; i < (int) (to * rate) && i < (int) x.size(); ++i) m = juce::jmax (m, std::abs (x[(size_t) i] - x[(size_t) i - 1]));
+            return m;
+        };
+
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        isolate (p);
+        juce::String error;
+        check (p.loadSample (wavFile, error), "loads a WAV " + error);
+        auto* sp = p.apvts.getRawParameterValue ("smpRoot");
+        check ((int) sp->load() == 57, "detects the root note (A3 = 57, got " + juce::String ((int) sp->load()) + ")");
+        check (p.apvts.getRawParameterValue ("smpOn")->load() > 0.5f, "switches the sampler on");
+        const float start = p.apvts.getRawParameterValue ("smpStart")->load();
+        check (std::abs (start - 0.1f / 1.1f) < 0.01f, "starts at the sound, not the silence (" + juce::String (start, 3) + ")");
+
+        auto a3 = render (p, 57, 0.6, 0.5);
+        const double f57 = frequency (a3, 0.1, 0.45);
+        check (std::abs (f57 - 220.0) < 1.5, "plays at its own pitch on its root (" + juce::String (f57, 1) + " Hz)");
+        auto a4 = render (p, 69, 0.6, 0.5);
+        const double f69 = frequency (a4, 0.1, 0.4);
+        check (std::abs (f69 - 440.0) < 3.0, "an octave up plays an octave up (" + juce::String (f69, 1) + " Hz)");
+        check (rms (a3, 0.05, 0.1) > 0.02, "it starts straight away (no silent lead-in)");
+
+        // One-shot ends with the sample (1 s long): silent well before a long-held note is released.
+        auto shot = render (p, 57, 1.6, 1.5);
+        check (rms (shot, 1.2, 1.45) < 1.0e-4, "one-shot stops at the end of the sample");
+        check (maxStep (shot, 0.9, 1.2) < 0.05f, "and fades out instead of clicking");
+
+        // Looping: sustains past the end with no click at the seam.
+        p.setParam ("smpLoop", 1.0f);
+        p.setParam ("smpLoopStart", 0.5f);
+        p.setParam ("smpLoopEnd", 0.9f);
+        auto loop = render (p, 57, 2.5, 2.4);
+        check (rms (loop, 1.5, 2.3) > 0.05, "a loop keeps sounding after the sample ends");
+        const float normalStep = maxStep (loop, 0.2, 0.5);
+        check (maxStep (loop, 0.9, 2.3) < normalStep * 1.6f + 0.01f, "no click where the loop wraps (" + juce::String (maxStep (loop, 0.9, 2.3), 3)
+                                                                       + " vs " + juce::String (normalStep, 3) + ")");
+        p.setParam ("smpLoop", 2.0f);
+        auto ping = render (p, 57, 2.5, 2.4);
+        check (rms (ping, 1.5, 2.3) > 0.05, "ping-pong loop sustains too");
+
+        // Reverse starts at the end of the region.
+        p.setParam ("smpLoop", 0.0f);
+        p.setParam ("smpReverse", 1.0f);
+        auto rev = render (p, 57, 1.2, 1.1);
+        check (rms (rev, 0.02, 0.2) > 0.05 && rms (rev, 1.04, 1.1) < 0.001, "reverse plays from the end back to the start");
+        p.setParam ("smpReverse", 0.0f);
+
+        // Key tracking off: every key plays at the sample's own pitch.
+        p.setParam ("smpTrack", 0.0f);
+        auto fixed = render (p, 72, 0.6, 0.5);
+        check (std::abs (frequency (fixed, 0.1, 0.45) - 220.0) < 1.5, "key tracking off plays every key at the sample's pitch");
+        p.setParam ("smpTrack", 1.0f);
+
+        // The sample travels with the session and with an exported preset.
+        juce::MemoryBlock state;
+        p.getStateInformation (state);
+        HypernovaAudioProcessor q;
+        q.prepareToPlay (rate, 256);
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        check (q.sampleForUi() != nullptr && q.sampleForUi()->length == p.sampleForUi()->length, "a saved session restores the sample");
+        check (! q.apvts.state.getChildWithName ("Sample").isValid(), "and keeps it out of the parameter tree");
+        auto restored = render (q, 57, 0.6, 0.5);
+        check (std::abs (frequency (restored, 0.1, 0.45) - 220.0) < 1.5, "and it plays the same");
+        const auto presetFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("hn_sampler_test.hnpreset");
+        check (p.exportPreset (presetFile, "test"), "exports a preset");
+        HypernovaAudioProcessor r;
+        r.prepareToPlay (rate, 256);
+        check (r.loadUserPreset (presetFile) && r.sampleForUi() != nullptr, "the exported preset carries the sample");
+        std::printf ("preset with sample: %.0f KB\n", presetFile.getSize() / 1024.0);
+
+        // A session without a sample clears it; the sampler off costs nothing.
+        HypernovaAudioProcessor e;
+        juce::MemoryBlock empty;
+        e.getStateInformation (empty);
+        q.setStateInformation (empty.getData(), (int) empty.getSize());
+        check (q.sampleForUi() == nullptr, "loading a session without a sample clears it");
+        wavFile.deleteFile();
+        presetFile.deleteFile();
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc == 5 && juce::String (argv[1]) == "--note")
     {
         HypernovaAudioProcessor p;

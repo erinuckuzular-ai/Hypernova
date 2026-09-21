@@ -134,7 +134,7 @@ ButtonType& HypernovaAudioProcessorEditor::toggle (std::unique_ptr<ButtonType> b
 //==============================================================================
 HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p),
-      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), filterView (p),
+      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), filterView (p),
       ampView (p, "amp", Palette::env, true), modView (p, "mod", Palette::lfo, false),
       lfoView1 (p, 0), lfoView2 (p, 1),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
@@ -423,6 +423,41 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (filterView, Spread::Stretch);
     }
 
+    // Sampler
+    {
+        const juce::Rectangle<int> design { 0, 0, 560, 300 };
+        auto& w = makeWidget ("sampler", "sampler", "SAMPLER", Palette::oscA, design, 38);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (Palette::oscA), "smpOn", { 8, 8, 26, 26 }, "Sampler on/off", W);
+        W->addAndMakeVisible (sampleButton);
+        sampleButton.setBounds (262, 11, 62, 24);
+        sampleButton.setTooltip ("Load a sample (or drop one on the waveform)");
+        sampleButton.onClick = [this] { showSampleMenu(); };
+        combo ("smpLoop", ab::sampleLoopNames(), { 330, 11, 120, 24 }, W);
+        toggle (std::make_unique<PillToggle> ("FILTER", Palette::oscA), "smpFilter", { 456, 12, 92, 22 }, "Send the sampler through the filter", W);
+        W->addAndMakeVisible (samplerView);
+        samplerView.setBounds (12, 44, 536, 146);
+        samplerView.onMessage = [this] (const juce::String& m) { showMessage (m); };
+        samplerView.onLoadRequest = [this] { chooseSample(); };
+        const char* ids[] = { "smpLevel", "smpPan", "smpRoot", "smpSemi", "smpFine" };
+        const char* names[] = { "LEVEL", "PAN", "ROOT", "SEMI", "FINE" };
+        for (int i = 0; i < 5; ++i) knob (ids[i], names[i], Palette::oscA, { 12 + i * 58, 194, 58, 68 }, 40, W);
+        const char* env[] = { "smpA", "smpD", "smpS", "smpR" };
+        const char* envNames[] = { "A", "D", "S", "R" };
+        for (int i = 0; i < 4; ++i) knob (env[i], envNames[i], Palette::env, { 330 + i * 54, 194, 54, 68 }, 38, W);
+        toggle (std::make_unique<PillToggle> ("TRACK KEYS", Palette::oscA), "smpTrack", { 12, 268, 118, 22 },
+                "On: the sample follows the keyboard. Off: every key plays it at its own pitch (drums, one-shots).", W);
+        toggle (std::make_unique<PillToggle> ("REVERSE", Palette::oscA), "smpReverse", { 138, 268, 100, 22 }, "Play the sample backwards", W);
+        w.extraPaint = [&w] (juce::Graphics& g)
+        {
+            g.setColour (Colours::textFaint);
+            g.setFont (font (9.5f, true).withExtraKerningFactor (0.2f));
+            g.drawText ("SAMPLE ENVELOPE", w.spread.map ({ 330, 270, 216, 18 }), juce::Justification::centredLeft, false);
+        };
+        w.finishBuilding();
+        w.spread.setFlags (samplerView, Spread::Stretch);
+    }
+
     // Envelopes
     {
         auto& w = makeWidget ("env", "env", "AMP ENV", Palette::env, envPanel);
@@ -634,6 +669,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     }
     if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
     tickTools (sounding);
+    if (samplerView.isVisible()) samplerView.refresh();
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
     if (sounding || changes != lastParameterChanges)
@@ -816,6 +852,7 @@ bool HypernovaAudioProcessorEditor::isInterestedInFileDrag (const juce::StringAr
     {
         const juce::File f (path);
         if (f.isDirectory() || HypernovaAudioProcessor::isPresetFile (f) || f.hasFileExtension ("zip")) return true;
+        if (SamplerView::isAudioFile (f)) return true;
     }
     return false;
 }
@@ -827,6 +864,15 @@ void HypernovaAudioProcessorEditor::filesDropped (const juce::StringArray& files
 {
     dragHover = false;
     repaint();
+    // A recording dropped anywhere goes into the sampler, which comes on screen if it wasn't.
+    for (const auto& path : files)
+        if (SamplerView::isAudioFile (juce::File (path)))
+        {
+            if (! layoutTree().contains ("sampler")) addWidgetType ("sampler");
+            else activateWidget ("sampler");
+            samplerView.load (juce::File (path));
+            return;
+        }
     juce::Array<juce::File> items;
     for (const auto& path : files) items.add (juce::File (path));
     importAndReport (items);
@@ -1346,6 +1392,34 @@ HypernovaAudioProcessorEditor::SpaceWindow::SpaceWindow (HypernovaAudioProcessor
     centreWithSize (720, 520);
     setVisible (true);
     setAlwaysOnTop (true);
+}
+
+void HypernovaAudioProcessorEditor::chooseSample()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Load a sample", juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.m4a;*.caf;*.ogg");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [this] (const juce::FileChooser& fc)
+                          {
+                              const auto f = fc.getResult();
+                              if (f.existsAsFile()) samplerView.load (f);
+                          });
+}
+
+void HypernovaAudioProcessorEditor::showSampleMenu()
+{
+    const auto current = processor.sampleForUi();
+    if (current == nullptr) { chooseSample(); return; }
+    juce::PopupMenu m;
+    m.setLookAndFeel (&lookAndFeel);
+    m.addSectionHeader (current->name.toUpperCase());
+    m.addItem (1, "Replace with another sample...");
+    m.addItem (2, "Remove the sample");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&sampleButton), [this] (int r)
+    {
+        if (r == 1) chooseSample();
+        else if (r == 2) { processor.clearSample(); processor.setParam ("smpOn", 0.0f); showMessage ("Sample removed"); }
+    });
 }
 
 void HypernovaAudioProcessorEditor::showDiceMenu()

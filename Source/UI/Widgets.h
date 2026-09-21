@@ -867,7 +867,7 @@ struct WorkspaceStore
         return o;
     }
 
-    static juce::StringArray builtIn() { return { "Sound Design", "Effects", "Analysis" }; }
+    static juce::StringArray builtIn() { return { "Sound Design", "Sampling", "Effects", "Analysis" }; }
 
     static juce::String current()
     {

@@ -13,6 +13,7 @@ namespace
     const TypeInfo catalogue[] = {
         { "oscA",     "Osc A",          "SOUND",      "Wavetable oscillator with its 3D table view",                   false, SlotOscA },
         { "oscB",     "Osc B",          "SOUND",      "The second wavetable oscillator",                               false, SlotOscB },
+        { "sampler",  "Sampler",        "SOUND",      "Play any recording: drop it in, trim it, loop it, tune it",     false, SlotOscA },
         { "sub",      "Sub + Noise",    "SOUND",      "Sub oscillator and the noise source",                           false, SlotSub },
         { "pitch",    "Pitch",          "SOUND",      "Drop, glide, bend, voice mode and velocity",                    false, SlotSub },
         { "filter",   "Filter",         "SOUND",      "The filter and its response curve",                             false, SlotFilter },
@@ -188,6 +189,14 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
         root = split (false, 1.0f, {
             leaf ({ "fx" }, 190), leaf ({ "morefx" }, 190), leaf ({ "mod", "play" }, 190),
             split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "sub" }, 240) }) });
+    }
+    else if (name == "Sampling")
+    {
+        // The sampler big, with what shapes it: filter, envelopes, pitch, and the effects underneath.
+        root = split (false, 1.0f, {
+            split (true, 330, { leaf ({ "sampler" }, 740), leaf ({ "space" }, 480) }),
+            split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "oscA" }, 280) }),
+            leaf ({ "fx", "morefx", "mod", "play" }, 190) });
     }
     else if (name == "Analysis")
     {

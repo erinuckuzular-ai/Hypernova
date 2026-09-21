@@ -200,6 +200,33 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     addFloat (l, "arpGate", "Arp Gate", { 0.05f, 1.0f }, 0.6f, pctText);
     addFloat (l, "volume", "Master Volume", { -36.0f, 12.0f, 0.1f }, -6.0f, dbText);
 
+    // Sampler (appended: existing IDs and their order stay put).
+    {
+        juce::NormalisableRange<float> sAtt (0.001f, 5.0f), sDec (0.005f, 10.0f);
+        sAtt.setSkewForCentre (0.15f);
+        sDec.setSkewForCentre (0.8f);
+        add<Bool> (l, pid ("smpOn"), "Sampler On", false);
+        addFloat (l, "smpLevel", "Sampler Level", { 0.0f, 1.0f }, 0.8f, pctText);
+        addFloat (l, "smpPan", "Sampler Pan", { -1.0f, 1.0f }, 0.0f, bipolarPct);
+        l.add (std::make_unique<Int> (pid ("smpRoot"), "Sampler Root Note", 0, 127, 60,
+                                      juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int)
+                                      { return juce::MidiMessage::getMidiNoteName (v, true, true, 3); })));
+        add<Bool> (l, pid ("smpTrack"), "Sampler Key Tracking", true);
+        addFloat (l, "smpSemi", "Sampler Semitone", { -24.0f, 24.0f, 1.0f }, 0.0f, semiText);
+        addFloat (l, "smpFine", "Sampler Fine", { -100.0f, 100.0f }, 0.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ct"; });
+        addFloat (l, "smpStart", "Sampler Start", { 0.0f, 1.0f }, 0.0f, pctText);
+        addFloat (l, "smpEnd", "Sampler End", { 0.0f, 1.0f }, 1.0f, pctText);
+        add<Choice> (l, pid ("smpLoop"), "Sampler Loop", ab::sampleLoopNames(), 0);
+        addFloat (l, "smpLoopStart", "Sampler Loop Start", { 0.0f, 1.0f }, 0.25f, pctText);
+        addFloat (l, "smpLoopEnd", "Sampler Loop End", { 0.0f, 1.0f }, 1.0f, pctText);
+        add<Bool> (l, pid ("smpReverse"), "Sampler Reverse", false);
+        add<Bool> (l, pid ("smpFilter"), "Sampler To Filter", true);
+        addFloat (l, "smpA", "Sampler Attack", sAtt, 0.001f, timeText);
+        addFloat (l, "smpD", "Sampler Decay", sDec, 0.6f, timeText);
+        addFloat (l, "smpS", "Sampler Sustain", { 0.0f, 1.0f }, 1.0f, pctText);
+        addFloat (l, "smpR", "Sampler Release", sDec, 0.25f, timeText);
+    }
+
     return l;
 }
 
@@ -348,6 +375,26 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
         const std::string p = "mod" + std::to_string (i + 1);
         s.mod[(size_t) i] = { (int) param ((p + "Src").c_str()), (int) param ((p + "Dest").c_str()), param ((p + "Amt").c_str()) };
     }
+    auto& sm = s.smp;
+    sm.data = currentSample.load (std::memory_order_acquire);
+    sm.on = param ("smpOn") > 0.5f && sm.data != nullptr;
+    sm.level = param ("smpLevel");
+    sm.pan = param ("smpPan");
+    sm.root = (int) param ("smpRoot");
+    sm.track = param ("smpTrack") > 0.5f;
+    sm.semi = param ("smpSemi");
+    sm.fine = param ("smpFine");
+    sm.start = param ("smpStart");
+    sm.end = param ("smpEnd");
+    sm.loop = (int) param ("smpLoop");
+    sm.loopStart = param ("smpLoopStart");
+    sm.loopEnd = param ("smpLoopEnd");
+    sm.reverse = param ("smpReverse") > 0.5f;
+    sm.toFilter = param ("smpFilter") > 0.5f;
+    sm.a = param ("smpA");
+    sm.d = param ("smpD");
+    sm.s = param ("smpS");
+    sm.r = param ("smpR");
     return s;
 }
 
@@ -384,6 +431,8 @@ void HypernovaAudioProcessor::smoothSettings (SynthSettings& s, int numSamples)
     s.subLevel = glide (smoothed.subLevel, s.subLevel);
     s.noiseLevel = glide (smoothed.noiseLevel, s.noiseLevel);
     s.noiseTone = glide (smoothed.noiseTone, s.noiseTone);
+    s.smp.level = glide (smoothed.smp.level, s.smp.level);
+    s.smp.pan = glide (smoothed.smp.pan, s.smp.pan);
     {
         // cutoff glides in octaves so sweeps sound even
         float lc = std::log2 (smoothed.cutoff);
@@ -855,6 +904,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         shownEnv = newest->ampLevel();
         shownCutoff = newest->shownCutoff;
         shownNote = newest->note;
+        shownSample = newest->shownSample;
         publishModSources (newest->shownLfo[0], newest->shownLfo[1], newest->shownModEnv, newest->shownVelocity, (float) newest->note);
     }
     else
@@ -868,6 +918,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         shownEnv = 0;
         shownCutoff = settings.cutoff;
         shownNote = -1;
+        shownSample = -1.0f;
         publishModSources (shownLfo[0].load(), shownLfo[1].load(), 0.0f, 0.0f, -1.0f);
     }
 }
@@ -898,7 +949,7 @@ void HypernovaAudioProcessor::applyGlobalModulation (FxSettings& fx)
     bool any = false;
     for (const auto& slot : blockSettings.mod)
     {
-        if (slot.dest < FirstGlobalDest || slot.dest >= NumDest || slot.src == SrcNone) continue;
+        if (! isGlobalDest (slot.dest) || slot.src == SrcNone) continue;
         float v = 0;
         if (slot.src >= SrcMacro1 && slot.src <= SrcMacro4) v = globalMod.macros[(size_t) (slot.src - SrcMacro1)];
         else if (slot.src == SrcModWheel) v = globalMod.modWheel;
@@ -1194,6 +1245,8 @@ bool HypernovaAudioProcessor::writePresetFile (const juce::File& file, const juc
     for (int i = 0; i < 4; ++i) state.setProperty ("macro" + juce::String (i + 1) + "Name", getMacroName (i), nullptr);
     state.removeProperty ("program", nullptr);
     state.removeProperty ("presetCategory", nullptr);
+    // A sound that uses the sampler carries its sample, so a shared preset never has a missing file.
+    if (param ("smpOn") > 0.5f) addSampleTo (state);
     auto xml = state.createXml();
     file.getParentDirectory().createDirectory();
     return xml != nullptr && xml->writeTo (file);
@@ -1228,6 +1281,7 @@ bool HypernovaAudioProcessor::loadUserPreset (const juce::File& file)
     auto state = juce::ValueTree::fromXml (*xml);
     if (! state.hasType (apvts.state.getType())) return false;
     applyPresetValues ({}); // anything the file doesn't mention (older versions) starts from Init
+    takeSampleFrom (state, false);
     apvts.replaceState (state);
     {
         const juce::ScopedLock sl (nameLock);
@@ -1474,6 +1528,7 @@ void HypernovaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         state.setProperty (o == 0 ? "aUserTable" : "bUserTable", userTableSlot[(size_t) o], nullptr);
     state.setProperty ("uiAnimation", uiAnimation.load(), nullptr);
     state.setProperty ("uiScale", uiScalePercent.load(), nullptr);
+    addSampleTo (state);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -1484,6 +1539,7 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
     {
         auto state = juce::ValueTree::fromXml (*xml);
         if (! state.hasType (apvts.state.getType())) return;
+        takeSampleFrom (state, true);
         apvts.replaceState (state);
         const juce::ScopedLock sl (nameLock);
         presetName = state.getProperty ("presetName", "Init").toString();
@@ -1497,6 +1553,126 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         uiScalePercent = (int) state.getProperty ("uiScale", 100);
     }
     ++presetVersion;
+}
+
+//==============================================================================
+// Sampler: loading, keeping samples alive for the audio thread, and saving them inside sessions and presets.
+std::shared_ptr<ab::SampleData> HypernovaAudioProcessor::makeSample (const juce::AudioBuffer<float>& buffer, double rate, const juce::String& name)
+{
+    auto d = std::make_shared<ab::SampleData>();
+    d->name = name;
+    d->rate = rate;
+    d->length = buffer.getNumSamples();
+    d->l.assign ((size_t) d->length + 4, 0.0f);
+    d->r.assign ((size_t) d->length + 4, 0.0f);
+    const int chans = buffer.getNumChannels();
+    for (int i = 0; i < d->length; ++i)
+    {
+        d->l[(size_t) i + 2] = buffer.getSample (0, i);
+        d->r[(size_t) i + 2] = buffer.getSample (juce::jmin (1, chans - 1), i);
+    }
+    // Where the sound starts, and what note it is, so a dropped sample plays in tune from the first key.
+    std::vector<float> mono ((size_t) d->length);
+    float peak = 0;
+    for (int i = 0; i < d->length; ++i)
+    {
+        mono[(size_t) i] = 0.5f * (d->l[(size_t) i + 2] + d->r[(size_t) i + 2]);
+        peak = juce::jmax (peak, std::abs (mono[(size_t) i]));
+    }
+    const float floor = peak * 0.0056f; // -45 dB under the peak
+    while (d->onset < d->length - 1 && std::abs (mono[(size_t) d->onset]) < floor) ++d->onset;
+    d->onset = juce::jmax (0, d->onset - (int) (0.002 * rate)); // keep a hair of the lead-in
+    d->rootGuess = ab::dsp::detectPitch (mono, rate, juce::jmin (d->length - 1, d->onset + (int) (0.05 * rate)));
+    return d;
+}
+
+void HypernovaAudioProcessor::installSample (std::shared_ptr<ab::SampleData> d, juce::MemoryBlock flac)
+{
+    // The audio thread reads through the atomic; the one it may still be reading is kept for a few seconds.
+    const auto now = juce::Time::getMillisecondCounter();
+    retiredSamples.erase (std::remove_if (retiredSamples.begin(), retiredSamples.end(),
+                                          [now] (const auto& r) { return now - r.first > 3000; }),
+                          retiredSamples.end());
+    if (sampleHeld != nullptr) retiredSamples.push_back ({ now, sampleHeld });
+    sampleHeld = std::move (d);
+    sampleFlac = std::move (flac);
+    currentSample.store (sampleHeld.get(), std::memory_order_release);
+    ++sampleVersion;
+}
+
+void HypernovaAudioProcessor::clearSample()
+{
+    if (sampleHeld == nullptr) return;
+    installSample (nullptr, {});
+}
+
+juce::MemoryBlock HypernovaAudioProcessor::encodeFlac (const juce::AudioBuffer<float>& buffer, double rate)
+{
+    juce::MemoryBlock block;
+    {
+        juce::FlacAudioFormat flac;
+        auto* stream = new juce::MemoryOutputStream (block, false);
+        std::unique_ptr<juce::AudioFormatWriter> writer (flac.createWriterFor (stream, rate, (unsigned int) buffer.getNumChannels(), 24, {}, 5));
+        if (writer == nullptr) { delete stream; return {}; }
+        writer->writeFromAudioSampleBuffer (buffer, 0, buffer.getNumSamples());
+    }
+    return block;
+}
+
+bool HypernovaAudioProcessor::loadSample (const juce::File& file, juce::String& error)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr) { error = "Couldn't read that file as audio"; return false; }
+    const double rate = reader->sampleRate > 0 ? reader->sampleRate : 44100.0;
+    const auto maxFrames = (juce::int64) (rate * maxSampleSeconds);
+    const int frames = (int) juce::jmin (reader->lengthInSamples, maxFrames);
+    if (frames < 32) { error = "That file is too short"; return false; }
+    const int chans = juce::jlimit (1, 2, (int) reader->numChannels);
+    juce::AudioBuffer<float> buffer (chans, frames);
+    reader->read (&buffer, 0, frames, 0, true, chans > 1);
+    auto d = makeSample (buffer, rate, file.getFileNameWithoutExtension());
+    if (reader->lengthInSamples > maxFrames) error = "Trimmed to the first " + juce::String ((int) maxSampleSeconds) + " seconds";
+    const float guess = d->rootGuess;
+    const float onset = (float) d->onset / (float) juce::jmax (1, d->length);
+    installSample (d, encodeFlac (buffer, rate));
+    // A new sample starts from its onset, in tune, and switched on: drop it in and play.
+    undoManager.beginNewTransaction ("Load sample");
+    setParam ("smpOn", 1.0f);
+    setParam ("smpStart", onset);
+    setParam ("smpEnd", 1.0f);
+    if (guess >= 0.0f) setParam ("smpRoot", (float) juce::jlimit (0, 127, juce::roundToInt (guess)));
+    if (guess >= 0.0f) setParam ("smpFine", juce::jlimit (-50.0f, 50.0f, (float) (juce::roundToInt (guess) - guess) * 100.0f));
+    return true;
+}
+
+void HypernovaAudioProcessor::addSampleTo (juce::ValueTree& state) const
+{
+    if (sampleHeld == nullptr || sampleFlac.isEmpty()) return;
+    juce::ValueTree s ("Sample");
+    s.setProperty ("name", sampleHeld->name, nullptr);
+    s.setProperty ("rate", sampleHeld->rate, nullptr);
+    s.setProperty ("flac", sampleFlac.toBase64Encoding(), nullptr);
+    state.appendChild (s, nullptr);
+}
+
+// Pulls the embedded sample (if any) out of a loaded state so it doesn't end up inside the parameter tree.
+// A session without one clears the sampler; a preset without one leaves the loaded sample alone.
+void HypernovaAudioProcessor::takeSampleFrom (juce::ValueTree& state, bool clearIfMissing)
+{
+    auto s = state.getChildWithName ("Sample");
+    if (! s.isValid()) { if (clearIfMissing) clearSample(); return; }
+    state.removeChild (s, nullptr);
+    juce::MemoryBlock block;
+    if (! block.fromBase64Encoding (s.getProperty ("flac").toString())) return;
+    juce::FlacAudioFormat flac;
+    std::unique_ptr<juce::AudioFormatReader> reader (flac.createReaderFor (new juce::MemoryInputStream (block, false), true));
+    if (reader == nullptr) return;
+    const int frames = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (reader->sampleRate * maxSampleSeconds));
+    juce::AudioBuffer<float> buffer ((int) reader->numChannels, frames);
+    reader->read (&buffer, 0, frames, 0, true, reader->numChannels > 1);
+    installSample (makeSample (buffer, reader->sampleRate, s.getProperty ("name").toString()), std::move (block));
 }
 
 juce::AudioProcessorEditor* HypernovaAudioProcessor::createEditor()

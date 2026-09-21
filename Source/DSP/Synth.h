@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 #include "Wavetables.h"
+#include "Sampler.h"
 #include <atomic>
 
 // Voice engine: two unison wavetable oscillators, sub, noise, pitch drop, glide, filter, two envelopes,
@@ -33,13 +34,15 @@ inline juce::StringArray modSrcNames()
 
 // Append only (saved sessions store indices). Everything from DDistFx on is global: the processor applies it to the effects.
 enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DCutoff, DRes, DDrive, DSub, DNoise, DADetune, DBDetune, DPan, DAmp,
-               DLfo1Rate, DLfo2Rate, DDistFx, DOttFx, DChorusFx, DDelayFx, DReverbFx, DShimmerFx, NumDest };
+               DLfo1Rate, DLfo2Rate, DDistFx, DOttFx, DChorusFx, DDelayFx, DReverbFx, DShimmerFx, DSmpLevel, NumDest };
 constexpr int FirstGlobalDest = DDistFx;
+inline bool isGlobalDest (int d) { return d >= FirstGlobalDest && d < DSmpLevel; } // per-voice destinations after the effects
 inline juce::StringArray modDestNames()
 {
     return { "-", "A Position", "B Position", "A Warp", "B Warp", "A Level", "B Level", "Pitch", "Cutoff", "Resonance",
              "Filter Drive", "Sub Level", "Noise Level", "A Detune", "B Detune", "Pan", "Volume",
-             "LFO 1 Rate", "LFO 2 Rate", "FX Distortion", "FX OTT", "FX Chorus", "FX Delay", "FX Reverb", "FX Shimmer" };
+             "LFO 1 Rate", "LFO 2 Rate", "FX Distortion", "FX OTT", "FX Chorus", "FX Delay", "FX Reverb", "FX Shimmer",
+             "Sample Level" };
 }
 
 // The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
@@ -48,7 +51,8 @@ inline juce::String modDestParam (int dest)
 {
     static const char* ids[] = { "", "aPos", "bPos", "aWarpAmt", "bWarpAmt", "aLevel", "bLevel", "", "cutoff", "res",
                                  "fltDrive", "subLevel", "noiseLevel", "aDetune", "bDetune", "", "",
-                                 "lfo1Rate", "lfo2Rate", "distDrive", "ott", "chorusMix", "dlyMix", "verbMix", "verbShimmer" };
+                                 "lfo1Rate", "lfo2Rate", "distDrive", "ott", "chorusMix", "dlyMix", "verbMix", "verbShimmer",
+                                 "smpLevel" };
     return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
 
@@ -58,7 +62,7 @@ inline int modDestForParam (const juce::String& paramId)
     static const std::unordered_map<juce::String, int> lookup = []
     {
         std::unordered_map<juce::String, int> m;
-        for (int d = 1; d < 25; ++d)
+        for (int d = 1; d < NumDest; ++d)
             if (modDestParam (d).isNotEmpty()) m[modDestParam (d)] = d;
         return m;
     }();
@@ -114,6 +118,7 @@ struct SynthSettings
     std::array<ModSlot, NumModSlots> mod;
     float velSens = 0.5f;
     float transpose = 0, drift = 0; // semitones (incl. fine tune), 0..1
+    SamplerSettings smp;
 };
 
 struct GlobalMod
@@ -416,6 +421,7 @@ public:
 
     // Modulated values of the last rendered sub-block, for the UI.
     float shownPos[2] {}, shownLfo[2] {}, shownCutoff = 0, shownModEnv = 0, shownVelocity = 0;
+    float shownSample = -1; // sampler playhead, 0..1 of the sample (-1 when it isn't playing)
     double shownLfoPhase[2] {};
     float lastSrc[NumSrc] {}; // per-voice mod sources of the last sub-block (drives global FX destinations)
 
@@ -482,6 +488,8 @@ public:
         }
         ampEnv.noteOn();
         modEnv.noteOn();
+        smpPlay.start (s.smp);
+        smpEnv.noteOn();
     }
 
     // Glide to another note without retriggering (legato / note stack fallbacks).
@@ -492,7 +500,7 @@ public:
         held = true;
     }
 
-    void stop() { held = false; ampEnv.noteOff(); modEnv.noteOff(); }
+    void stop() { held = false; ampEnv.noteOff(); modEnv.noteOff(); smpEnv.noteOff(); }
     // Hand the note over: this voice fades out in ~4 ms while the new note starts on another voice.
     // Smooth raised-cosine fade (~12 ms): no corner in the waveform, so no click even on a deep sub.
     void fadeOut() { held = false; fading = true; trigger = -1; fadeLen = fadeLeft = juce::jmax (1, (int) (0.012 * sr)); }
@@ -511,6 +519,7 @@ public:
         }
         ampEnv.set (s.env[0], sr);
         modEnv.set (s.env[1], sr);
+        smpEnv.set ({ s.smp.a, s.smp.d, s.smp.s, s.smp.r }, sr);
 
         const auto& bank = WavetableBank::get();
         const double glideCoef = s.glide > 0.0005f ? std::exp (-4.6 * SubBlock / (s.glide * sr)) : 0.0;
@@ -679,6 +688,24 @@ public:
             const float ampMod = juce::jlimit (0.0f, 2.0f, 1.0f + dst[DAmp]);
             const float velGain = 1.0f - s.velSens + s.velSens * velocity;
 
+            // Sampler: pitch follows the voice (glide, bend, drop, drift) unless key tracking is off.
+            const auto& sm = s.smp;
+            const bool smpOn = sm.on && sm.data != nullptr && ! smpPlay.done;
+            double smpInc = 0;
+            float smpGL = 0, smpGR = 0;
+            if (smpOn)
+            {
+                const float notePart = sm.track ? basePitch : basePitch - currentPitch + (float) sm.root;
+                smpInc = std::exp2 ((notePart + sm.semi + sm.fine * 0.01f - (float) sm.root) / 12.0) * sm.data->rate / sr;
+                const float lvl = juce::jlimit (0.0f, 1.5f, sm.level + dst[DSmpLevel]);
+                const float p = juce::jlimit (-1.0f, 1.0f, sm.pan + dst[DPan]);
+                const float ang = (p + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+                smpGL = lvl * std::cos (ang) * 1.41421356f;
+                smpGR = lvl * std::sin (ang) * 1.41421356f;
+                shownSample = (float) (smpPlay.pos / juce::jmax (1, sm.data->length));
+            }
+            else shownSample = -1.0f;
+
             // ---- audio rate ----
             for (int i = 0; i < n; ++i)
             {
@@ -781,6 +808,14 @@ public:
                     noiseState[1] += noiseCoef * (noise[1].tick (s.noiseType, sr) - noiseState[1]);
                     const float nl = noiseState[0] * noiseLevel * 1.6f, nr = noiseState[1] * noiseLevel * 1.6f;
                     if (s.noiseToFilter) { fL += nl; fR += nr; } else { dL += nl; dR += nr; }
+                }
+
+                if (smpOn)
+                {
+                    float sl = 0, sr2 = 0;
+                    smpPlay.tick (sm, smpInc, smpGL, smpGR, sl, sr2);
+                    const float e = smpEnv.tick();
+                    if (sm.toFilter) { fL += sl * e; fR += sr2 * e; } else { dL += sl * e; dR += sr2 * e; }
                 }
 
                 if (crossOn && s.xFltFm > 0.0001f && s.filterOn && s.filterType != FFormant)
@@ -891,7 +926,8 @@ private:
     int combPos = 0;
     double lfoPhase[2] {};
     float lfoHeld[2] {}, lfoPrevHeld[2] {};
-    dsp::Env ampEnv, modEnv;
+    dsp::Env ampEnv, modEnv, smpEnv;
+    dsp::SamplePlayer smpPlay;
     dsp::SVF svf[2][2];
     dsp::Rng rng;
 };
