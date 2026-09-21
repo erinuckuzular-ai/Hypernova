@@ -27,6 +27,7 @@ public:
     void setBrowserOpen (bool open);
     void setSpaceMode (int m) { spaceMode.setSelected (m); space.setMode ((ab::ui::SoundSpace::Mode) m); }
     void setSpaceExpanded (bool e);
+    void applyTheme();
 
     static constexpr int baseWidth = 1280, baseHeight = 914;
 
@@ -46,6 +47,11 @@ private:
     void showMessage (const juce::String&);
     void showDiceMenu();
     void showSettingsMenu();
+    void colourKeyboard();
+    void addLookMenu (juce::PopupMenu&);
+    bool handleLookMenu (int result);
+    void showColourPicker();
+    std::unique_ptr<juce::ChangeListener> colourListener;
     // Modulation by drag and drop: chips carry a source, knobs receive it.
     void assignMod (const juce::String& dragDescription, const juce::String& paramId);
     void showModMenu (const juce::String& paramId);
@@ -72,7 +78,7 @@ private:
     using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
-    ab::ui::Knob& knob (const juce::String& id, const juce::String& label, juce::Colour c, juce::Rectangle<int> bounds, int size = 42,
+    ab::ui::Knob& knob (const juce::String& id, const juce::String& label, ab::ui::ThemeColour c, juce::Rectangle<int> bounds, int size = 42,
                         juce::Component* parent = nullptr);
     juce::ComboBox& combo (const juce::String& id, const juce::StringArray& items, juce::Rectangle<int> bounds, juce::Component* parent = nullptr);
     template <typename ButtonType>
@@ -85,7 +91,7 @@ private:
     void showDeckPage (int page);
 
     // One page of the tabbed deck along the bottom. Paints its own group captions and dividers.
-    struct Caption { juce::Rectangle<int> area; juce::String text; juce::Colour colour; bool divider; };
+    struct Caption { juce::Rectangle<int> area; juce::String text; ab::ui::ThemeColour colour { ab::ui::SlotTextDim }; bool divider; };
     class DeckPage : public juce::Component
     {
     public:
@@ -107,7 +113,7 @@ private:
     bool staticFramePainted = false;
     int editQuietTicks = 0, lastActionCount = 0;
     static constexpr float logoHoleRadius = 12.5f;
-    juce::TextButton logoButton; // invisible: clicking the logo sets the black hole off
+    ab::ui::InvisibleButton logoButton; // clicking the painted logo sets the black hole off
     float logoFlare = 0.0f;
     const juce::Point<float> logoHole { 48.0f, 44.0f };
 
@@ -134,6 +140,9 @@ private:
     ab::ui::LfoView lfoView1, lfoView2;
     std::vector<std::unique_ptr<ab::ui::ModRow>> modRows;
     std::vector<std::unique_ptr<ab::ui::ModChip>> modChips;
+    std::vector<std::unique_ptr<ab::ui::LockButton>> lockButtons;
+    std::vector<std::unique_ptr<ab::ui::IconButton>> sectionDice;
+    int hoveredModSource = -1;
     std::array<DeckPage, 4> pages;
     ab::ui::Segmented deckTabs { { "MODULATION", "EFFECTS", "MORE FX", "PLAY" }, ab::ui::Palette::mod };
 

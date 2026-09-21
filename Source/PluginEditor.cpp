@@ -50,7 +50,20 @@ void HypernovaAudioProcessorEditor::PresetPlate::paintButton (juce::Graphics& g,
 }
 
 //==============================================================================
-Knob& HypernovaAudioProcessorEditor::knob (const juce::String& id, const juce::String& label, juce::Colour c, juce::Rectangle<int> bounds, int size,
+// Colour per modulation source, so a knob's ring says where its movement comes from.
+static ThemeColour modSourceColour (int src)
+{
+    switch (src)
+    {
+        case 1: case 2: return Palette::lfo;   // LFO 1 / 2
+        case 3:         return Palette::env;   // mod envelope
+        case 4:         return Palette::sub;   // velocity
+        case 11:        return Palette::oscB;  // random
+        default:        return Palette::mod;   // macros, mod wheel, note
+    }
+}
+
+Knob& HypernovaAudioProcessorEditor::knob (const juce::String& id, const juce::String& label, ThemeColour c, juce::Rectangle<int> bounds, int size,
                                             juce::Component* parent)
 {
     knobs.push_back (std::make_unique<Knob> (processor.apvts, id, label, c, size));
@@ -123,10 +136,46 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     canvas.addChildComponent (browser);
     browser.setBounds (0, 86, baseWidth, baseHeight - 86);
 
+    // A small dice and a padlock on each panel: re-roll just that part of the sound, or keep it safe.
+    auto sectionTools = [this] (int section, juce::Rectangle<int> area, ThemeColour c)
+    {
+        auto die = std::make_unique<ab::ui::IconButton> (ab::ui::IconButton::Dice, c);
+        die->setTooltip ("Re-roll the " + HypernovaAudioProcessor::sectionName (section) + " (hold shift for a bigger change)");
+        die->onClick = [this, section]
+        {
+            const float amount = juce::ModifierKeys::currentModifiers.isShiftDown() ? 0.3f : 0.1f;
+            processor.mutateSection (section, amount);
+            if (processor.sectionLocked[(size_t) section].load())
+                showMessage (HypernovaAudioProcessor::sectionName (section) + " locked: click the padlock to unlock");
+        };
+        die->setBounds (area.removeFromLeft (22));
+        canvas.addAndMakeVisible (*die);
+        sectionDice.push_back (std::move (die));
+
+        auto lock = std::make_unique<ab::ui::LockButton> (c);
+        lock->setTooltip ("Lock the " + HypernovaAudioProcessor::sectionName (section) + " so the dice leave it alone");
+        lock->onClick = [this, section, l = lock.get()] { processor.sectionLocked[(size_t) section] = l->getToggleState(); };
+        lock->setBounds (area.removeFromLeft (20));
+        canvas.addAndMakeVisible (*lock);
+        lockButtons.push_back (std::move (lock));
+    };
+    // One row in the deck header: dice and padlock per section of the sound.
+    {
+        const int y = deckPanel.getY() + 10;
+        int x = deckPanel.getX() + 540;
+        const std::pair<int, ThemeColour> secs[] { { HypernovaAudioProcessor::SecOsc, Palette::oscA },
+                                                    { HypernovaAudioProcessor::SecFilter, Palette::filter },
+                                                    { HypernovaAudioProcessor::SecEnvLfo, Palette::env },
+                                                    { HypernovaAudioProcessor::SecFx, Palette::fx } };
+        for (const auto& sec : secs)
+        {
+            sectionTools (sec.first, { x + 52, y, 46, 22 }, sec.second);
+            x += 8;
+            x += 100;
+        }
+    }
+
     // Clicking the logo flares the black hole.
-    logoButton.setButtonText ({});
-    logoButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-    logoButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
     logoButton.setTooltip ("Hypernova");
     logoButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     logoButton.onClick = [this]
@@ -169,6 +218,9 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     };
     if (juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_NO_UPDATE_CHECK", {}).isEmpty())
         updater.check (false);
+
+    ab::ui::LookSettings::load();
+    applyTheme();
     prevButton.setTooltip ("Previous preset");
     prevButton.onClick = [this] { processor.stepPreset (-1); };
     nextButton.setTooltip ("Next preset");
@@ -196,13 +248,7 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     keyboard.setOctaveForMiddleC (3); // Ableton naming: C3 = middle C
     keyboard.setLowestVisibleKey (24);
     keyboard.setWantsKeyboardFocus (false);
-    keyboard.setColour (juce::MidiKeyboardComponent::whiteNoteColourId, juce::Colour (0xff1a2130));
-    keyboard.setColour (juce::MidiKeyboardComponent::blackNoteColourId, Colours::bg0);
-    keyboard.setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, Colours::bg0);
-    keyboard.setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, Palette::oscA.withAlpha (0.25f));
-    keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, Palette::oscA.withAlpha (0.75f));
-    keyboard.setColour (juce::MidiKeyboardComponent::shadowColourId, juce::Colours::transparentBlack);
-    keyboard.setColour (juce::MidiKeyboardComponent::textLabelColourId, Colours::textFaint);
+    colourKeyboard();
     canvas.addAndMakeVisible (keyboard);
     keyboard.setBounds (keysArea);
     keyboard.setKeyWidth ((float) keysArea.getWidth() / 43.0f);
@@ -330,10 +376,12 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     // Envelopes
     ampView.setBounds (at (envPanel, 12, 36, 164, 64));
     modView.setBounds (at (envPanel, 192, 36, 164, 64));
-    modChips.push_back (std::make_unique<ModChip> ("DRAG", 3, Palette::lfo));
+    modChips.push_back (std::make_unique<ModChip> ("DRAG", 3, modSourceColour (3)));
+    modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
     canvas.addAndMakeVisible (*modChips.back());
     modChips.back()->setBounds (at (envPanel, 268, 12, 52, 20));
-    modChips.push_back (std::make_unique<ModChip> ("DRAG VEL", 4, Palette::sub));
+    modChips.push_back (std::make_unique<ModChip> ("DRAG VEL", 4, modSourceColour (4)));
+    modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
     canvas.addAndMakeVisible (*modChips.back());
     modChips.back()->setBounds (at (voicePanel, 190, 150, 56, 20));
 
@@ -440,14 +488,14 @@ void HypernovaAudioProcessorEditor::paintDynamic (juce::Graphics& g)
         g.fillEllipse (juce::Rectangle<float> (logoHoleRadius * 1.5f, logoHoleRadius * 1.5f).withCentre (c));
     }
 
-    static const char* hints[] = { "LFOs and the mod matrix: any source to any destination, including the effects",
-                                   "the main rack: distortion, OTT, chorus, delay, space, EQ",
-                                   "movement and character: click any name to switch that effect off",
-                                   "arpeggiator, one-key chords, tuning, unison width and cross modulation" };
-    g.setColour (Colours::textFaint);
-    g.setFont (font (10.5f));
-    g.drawText (hints[juce::jlimit (0, 3, processor.uiDeckPage)], juce::Rectangle<float> ((float) deckPanel.getX() + 420, (float) deckPanel.getY() + 9,
-                (float) deckPanel.getWidth() - 434, 26), juce::Justification::centredRight, false);
+
+    // Captions for the per-section dice.
+    {
+        static const char* names[] = { "OSC", "FILTER", "MOD", "FX" };
+        static const juce::Colour cols[] = { Palette::oscA, Palette::filter, Palette::env, Palette::fx };
+        for (int i = 0; i < 4; ++i)
+            sectionLabel (g, names[i], juce::Rectangle<float> ((float) deckPanel.getX() + 540 + i * 108, (float) deckPanel.getY() + 12, 50, 18), cols[i]);
+    }
 
     const int note = processor.shownNote.load();
     const int voices = processor.shownVoices.load();
@@ -539,6 +587,10 @@ void HypernovaAudioProcessorEditor::timerCallback()
         modView.repaint();
         lfoView1.repaint();
         lfoView2.repaint();
+        // Modulated knobs animate: repaint only the ones a live source is actually reaching.
+        for (auto& k : knobs)
+            if (k->isShowing() && std::abs (modInfoFor (k->paramId()).depth) > 0.001f)
+                k->repaint();
     }
     const int readout = processor.shownNote.load() * 100 + processor.shownVoices.load();
     if (readout != lastReadout)
@@ -744,7 +796,7 @@ void HypernovaAudioProcessorEditor::DeckPage::paint (juce::Graphics& g)
             continue;
         }
         g.setColour (c.colour);
-        if (c.colour == Colours::textFaint) g.setFont (font (11.0f)); // body text
+        if (c.colour.slot == SlotTextFaint) g.setFont (font (11.0f)); // body text
         else g.setFont (font (9.5f, true).withExtraKerningFactor (0.2f));
         g.drawText (c.text, c.area, juce::Justification::centredLeft, false);
     }
@@ -777,7 +829,8 @@ void HypernovaAudioProcessorEditor::layoutModPage()
         toggle (std::make_unique<PillToggle> ("RETRIGGER", Palette::lfo), p + "Retrig", { x, 106, 160, 22 },
                 "Restart the LFO on each note. Off = free-running, locked to the song when synced.", pg);
         // Drag this onto any knob to have the LFO move it.
-        modChips.push_back (std::make_unique<ModChip> ("DRAG LFO " + juce::String (l + 1), l + 1, Palette::lfo));
+        modChips.push_back (std::make_unique<ModChip> ("DRAG LFO " + juce::String (l + 1), l + 1, modSourceColour (l + 1)));
+        modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };
         pg->addAndMakeVisible (*modChips.back());
         modChips.back()->setBounds (x + 168, 106, 112, 22);
         if (l == 0) pg->captions.push_back ({ { x + 290, 4, 1, 124 }, {}, {}, true });
@@ -954,19 +1007,6 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
 }
 
 //==============================================================================
-// Colour per modulation source, so a knob's ring says where its movement comes from.
-static juce::Colour modSourceColour (int src)
-{
-    switch (src)
-    {
-        case 1: case 2: return Palette::lfo;   // LFO 1 / 2
-        case 3:         return Palette::env;   // mod envelope
-        case 4:         return Palette::sub;   // velocity
-        case 11:        return Palette::oscB;  // random
-        default:        return Palette::mod;   // macros, mod wheel, note
-    }
-}
-
 // What modulation is reaching this knob: the strongest slot pointing at it.
 Knob::ModInfo HypernovaAudioProcessorEditor::modInfoFor (const juce::String& paramId) const
 {
@@ -982,7 +1022,22 @@ Knob::ModInfo HypernovaAudioProcessorEditor::modInfoFor (const juce::String& par
         if (std::abs (amt) <= std::abs (info.depth)) continue;
         info.depth = amt;
         info.slot = i;
-        info.colour = modSourceColour ((int) processor.apvts.getRawParameterValue (p + "Src")->load());
+        const int src = (int) processor.apvts.getRawParameterValue (p + "Src")->load();
+        info.colour = modSourceColour (src);
+        info.live = processor.shownModSource[(size_t) juce::jlimit (0, 11, src)].load();
+        info.highlight = src == hoveredModSource;
+    }
+    if (info.slot < 0 && hoveredModSource > 0)
+    {
+        // Hovering a source: outline everything it could reach that it isn't already reaching.
+        for (int i = 0; i < ab::NumModSlots; ++i)
+        {
+            const juce::String p = "mod" + juce::String (i + 1);
+            if ((int) processor.apvts.getRawParameterValue (p + "Src")->load() != hoveredModSource) continue;
+            if ((int) processor.apvts.getRawParameterValue (p + "Dest")->load() != dest) continue;
+            info.highlight = true;
+            info.colour = modSourceColour (hoveredModSource);
+        }
     }
     return info;
 }
@@ -1061,6 +1116,135 @@ void HypernovaAudioProcessorEditor::showModMenu (const juce::String& paramId)
     });
 }
 
+void HypernovaAudioProcessorEditor::colourKeyboard()
+{
+    const bool light = ThemeState::get().base.light;
+    keyboard.setColour (juce::MidiKeyboardComponent::whiteNoteColourId, light ? juce::Colour (0xfffbfbfd) : Colours::panelHi.get());
+    keyboard.setColour (juce::MidiKeyboardComponent::blackNoteColourId, light ? juce::Colour (0xff2a2d38) : Colours::bg0.get());
+    keyboard.setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, light ? juce::Colour (0x33000000) : Colours::bg0.get());
+    keyboard.setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, Palette::oscA.withAlpha (0.25f));
+    keyboard.setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, Palette::oscA.withAlpha (0.75f));
+    keyboard.setColour (juce::MidiKeyboardComponent::shadowColourId, juce::Colours::transparentBlack);
+    keyboard.setColour (juce::MidiKeyboardComponent::textLabelColourId, Colours::textFaint);
+}
+
+// Pushes the current theme everywhere: shader, cached pictures, JUCE colour ids, every component.
+void HypernovaAudioProcessorEditor::applyTheme()
+{
+    const auto& t = ThemeState::get();
+    cosmos.scene = t.backdropStyle();
+    cosmos.strength = t.strength();
+    cosmos.base = Colours::bg0.get().getARGB();
+    cosmos.accent1 = Colours::accent.get().getARGB();
+    cosmos.accent2 = Colours::plasma.get().getARGB();
+    lookAndFeel.refreshColours();
+    colourKeyboard();
+    staticLayer = juce::Image();
+    fallbackBackdrop = juce::Image();
+    staticFramePainted = false;
+    keyboard.setVisible (ab::ui::LookSettings::flag ("keyboard", true));
+    sendLookAndFeelChange();
+    canvas.repaint();
+    repaint();
+    glContext.triggerRepaint();
+}
+
+// Look menu: themes and the user's own tweaks.
+void HypernovaAudioProcessorEditor::addLookMenu (juce::PopupMenu& m)
+{
+    auto& t = ThemeState::get();
+    juce::PopupMenu themes, accent, backdrop, strength, knobsMenu, panels;
+    const auto all = ab::ui::builtInThemes();
+    for (int i = 0; i < (int) all.size(); ++i)
+        themes.addItem (500 + i, all[(size_t) i].name, true, all[(size_t) i].name == t.base.name);
+
+    static const std::pair<const char*, juce::uint32> swatches[] {
+        { "Ion blue", 0xff46e8ff }, { "Nebula violet", 0xff8a5cff }, { "Plasma pink", 0xffff4f9a }, { "Accretion gold", 0xffffa94a },
+        { "Aurora green", 0xff5dffb0 }, { "Solar red", 0xffff5a4a }, { "Ice white", 0xfff2f5ff }, { "Acid lime", 0xffc8ff3a } };
+    accent.addItem (520, "Theme's own", true, t.accentOverride.isTransparent());
+    for (int i = 0; i < 8; ++i)
+        accent.addItem (521 + i, swatches[i].first, true, t.accentOverride == juce::Colour (swatches[i].second));
+    accent.addItem (530, "Custom...");
+
+    const char* scenes[] = { "Cosmos (nebula and stars)", "Neon horizon", "Plain colour" };
+    backdrop.addItem (540, "Theme's own", true, t.backdrop < 0);
+    for (int i = 0; i < 3; ++i) backdrop.addItem (541 + i, scenes[i], true, t.backdrop == i);
+    const std::pair<const char*, float> levels[] { { "Off", 0.0f }, { "Low", 0.35f }, { "Medium", 0.6f }, { "High", 0.9f } };
+    for (int i = 0; i < 4; ++i)
+        strength.addItem (550 + i, levels[i].first, true, std::abs (t.strength() - levels[i].second) < 0.01f);
+    backdrop.addSubMenu ("Brightness", strength);
+
+    const char* knobNames[] = { "Planet", "Ring", "Minimal" };
+    knobsMenu.addItem (560, "Theme's own", true, t.knobStyle < 0);
+    for (int i = 0; i < 3; ++i) knobsMenu.addItem (561 + i, knobNames[i], true, t.knobStyle == i);
+    const char* panelNames[] = { "Glass", "Flat", "Outlined" };
+    panels.addItem (570, "Theme's own", true, t.panelStyle < 0);
+    for (int i = 0; i < 3; ++i) panels.addItem (571 + i, panelNames[i], true, t.panelStyle == i);
+
+    m.addSubMenu ("Theme", themes);
+    m.addSubMenu ("Accent colour", accent);
+    m.addSubMenu ("Backdrop", backdrop);
+    m.addSubMenu ("Knobs", knobsMenu);
+    m.addSubMenu ("Panels", panels);
+    m.addItem (580, "Show keyboard", true, ab::ui::LookSettings::flag ("keyboard", true));
+}
+
+bool HypernovaAudioProcessorEditor::handleLookMenu (int r)
+{
+    auto& t = ThemeState::get();
+    static const juce::uint32 swatches[] { 0xff46e8ff, 0xff8a5cff, 0xffff4f9a, 0xffffa94a, 0xff5dffb0, 0xffff5a4a, 0xfff2f5ff, 0xffc8ff3a };
+    const auto all = ab::ui::builtInThemes();
+    if (r >= 500 && r < 500 + (int) all.size())
+    {
+        t.base = all[(size_t) (r - 500)];
+        // A new theme brings its own look; drop the per-style overrides but keep a custom accent.
+        t.backdrop = t.knobStyle = t.panelStyle = -1;
+        t.backdropStrength = -1.0f;
+    }
+    else if (r == 520) t.accentOverride = juce::Colour();
+    else if (r >= 521 && r <= 528) t.accentOverride = juce::Colour (swatches[r - 521]);
+    else if (r == 530) { showColourPicker(); return true; }
+    else if (r == 540) t.backdrop = -1;
+    else if (r >= 541 && r <= 543) t.backdrop = r - 541;
+    else if (r >= 550 && r <= 553) t.backdropStrength = std::array<float, 4> { 0.0f, 0.35f, 0.6f, 0.9f }[(size_t) (r - 550)];
+    else if (r == 560) t.knobStyle = -1;
+    else if (r >= 561 && r <= 563) t.knobStyle = r - 561;
+    else if (r == 570) t.panelStyle = -1;
+    else if (r >= 571 && r <= 573) t.panelStyle = r - 571;
+    else if (r == 580) ab::ui::LookSettings::setFlag ("keyboard", ! ab::ui::LookSettings::flag ("keyboard", true));
+    else return false;
+    ++t.version;
+    ab::ui::LookSettings::save();
+    applyTheme();
+    return true;
+}
+
+// Custom accent: a colour wheel in a call-out.
+void HypernovaAudioProcessorEditor::showColourPicker()
+{
+    auto picker = std::make_unique<juce::ColourSelector> (juce::ColourSelector::showColourspace | juce::ColourSelector::showSliders);
+    picker->setSize (300, 320);
+    picker->setCurrentColour (Colours::accent.get());
+    struct Listener : juce::ChangeListener
+    {
+        HypernovaAudioProcessorEditor& ed;
+        explicit Listener (HypernovaAudioProcessorEditor& e) : ed (e) {}
+        void changeListenerCallback (juce::ChangeBroadcaster* b) override
+        {
+            if (auto* sel = dynamic_cast<juce::ColourSelector*> (b))
+            {
+                ThemeState::get().accentOverride = sel->getCurrentColour().withAlpha (1.0f);
+                ++ThemeState::get().version;
+                ab::ui::LookSettings::save();
+                ed.applyTheme();
+            }
+        }
+    };
+    colourListener = std::make_unique<Listener> (*this);
+    picker->addChangeListener (colourListener.get());
+    juce::CallOutBox::launchAsynchronously (std::move (picker), gearButton.getScreenBounds(), nullptr);
+}
+
 // The Sound Space filling the whole window, and back again.
 void HypernovaAudioProcessorEditor::setSpaceExpanded (bool expand)
 {
@@ -1129,6 +1313,9 @@ void HypernovaAudioProcessorEditor::showSettingsMenu()
     quality.addItem (31, "High (default: oversamples only patches that need it)", true, qv == 1);
     quality.addItem (32, "Ultra (4x oversampling, cleanest)", true, qv == 2);
     m.addSubMenu ("Sound quality", quality);
+    juce::PopupMenu look;
+    addLookMenu (look);
+    m.addSubMenu ("Look", look);
     m.addSubMenu ("Window size", size);
     m.addSubMenu ("Animation", anim);
     m.addSeparator();
@@ -1139,7 +1326,8 @@ void HypernovaAudioProcessorEditor::showSettingsMenu()
     m.addSectionHeader ("Hypernova " + ab::ui::Updater::currentVersion());
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&gearButton), [this] (int r)
     {
-        if (r >= 100) applyScale (r - 100);
+        if (handleLookMenu (r)) return;
+        if (r >= 100 && r < 500) applyScale (r - 100);
         else if (r >= 10 && r <= 12) { processor.uiAnimation = r - 10; glContext.triggerRepaint(); }
         else if (r >= 30 && r <= 32) { processor.setParam ("quality", (float) (r - 30)); showMessage ("Sound quality: " + juce::StringArray { "Eco", "High", "Ultra" }[r - 30]); }
         else if (r == 20) { HypernovaAudioProcessor::userPresetFolder().createDirectory(); HypernovaAudioProcessor::userPresetFolder().revealToUser(); }

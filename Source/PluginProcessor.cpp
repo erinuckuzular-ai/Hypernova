@@ -844,6 +844,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         shownEnv = newest->ampLevel();
         shownCutoff = newest->shownCutoff;
         shownNote = newest->note;
+        publishModSources (newest->shownLfo[0], newest->shownLfo[1], newest->shownModEnv, newest->shownVelocity, (float) newest->note);
     }
     else
     {
@@ -856,7 +857,21 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         shownEnv = 0;
         shownCutoff = settings.cutoff;
         shownNote = -1;
+        publishModSources (shownLfo[0].load(), shownLfo[1].load(), 0.0f, 0.0f, -1.0f);
     }
+}
+
+// Feeds the editor the live value of every modulation source, so mod rings can animate.
+void HypernovaAudioProcessor::publishModSources (float lfo1, float lfo2, float modEnv, float velocity, float note)
+{
+    shownModSource[1] = lfo1;
+    shownModSource[2] = lfo2;
+    shownModSource[3] = modEnv;
+    shownModSource[4] = velocity;
+    shownModSource[5] = globalMod.modWheel;
+    shownModSource[6] = note >= 0 ? juce::jlimit (-1.0f, 1.0f, (note - 60.0f) / 36.0f) : 0.0f;
+    for (int m = 0; m < 4; ++m) shownModSource[(size_t) (7 + m)] = globalMod.macros[(size_t) m];
+    shownModSource[11] = 0.0f; // random is per note; its ring shows depth only
 }
 
 //==============================================================================
@@ -1266,6 +1281,56 @@ void HypernovaAudioProcessor::setMacroName (int i, const juce::String& n)
 
 // Mutate: move every continuous control a random amount (up to `amount` of its range) from where it is.
 // Levels, volume and structural choices stay put so the sound keeps its identity.
+juce::String HypernovaAudioProcessor::sectionName (int s)
+{
+    static const char* names[] = { "oscillators", "filter", "envelopes and LFOs", "effects" };
+    return juce::isPositiveAndBelow (s, NumSections) ? names[s] : juce::String();
+}
+
+// Which section a parameter belongs to, used by the section dice and the padlocks.
+bool HypernovaAudioProcessor::paramInSection (const juce::String& id, int section)
+{
+    const bool osc = id.startsWith ("a") || id.startsWith ("b") || id.startsWith ("sub") || id.startsWith ("noise")
+                     || id.startsWith ("x") || id == "drift" || id.startsWith ("drop");
+    const bool filter = id.startsWith ("flt") || id == "cutoff" || id == "res";
+    const bool modSec = id.startsWith ("amp") || id.startsWith ("mod") || id.startsWith ("lfo");
+    const bool fx = id.startsWith ("dist") || id == "ott" || id.startsWith ("chorus") || id.startsWith ("dly")
+                    || id.startsWith ("verb") || id.startsWith ("eq") || id.startsWith ("flang") || id.startsWith ("tape")
+                    || id.startsWith ("gate") || id.startsWith ("pan") || id.startsWith ("fxFlt") || id.startsWith ("shift")
+                    || id == "width";
+    switch (section)
+    {
+        case SecOsc:    return osc && ! filter;
+        case SecFilter: return filter;
+        case SecEnvLfo: return modSec;
+        case SecFx:     return fx;
+        default:        return false;
+    }
+}
+
+// Re-rolls one part of the sound and leaves the rest alone. Locked sections are never touched.
+void HypernovaAudioProcessor::mutateSection (int section, float amount)
+{
+    if (! juce::isPositiveAndBelow (section, NumSections) || sectionLocked[(size_t) section].load()) return;
+    undoManager.beginNewTransaction ("Re-roll " + sectionName (section));
+    juce::Random r;
+    static const juce::StringArray keep { "volume", "macro1", "macro2", "macro3", "macro4" };
+    for (auto* p : getParameters())
+    {
+        auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p);
+        if (rp == nullptr || keep.contains (rp->getParameterID())) continue;
+        if (! paramInSection (rp->getParameterID(), section)) continue;
+        if (dynamic_cast<juce::AudioParameterFloat*> (rp) == nullptr) continue;
+        const float v = rp->getValue();
+        rp->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v + (r.nextFloat() * 2.0f - 1.0f) * amount));
+    }
+    {
+        const juce::ScopedLock sl (nameLock);
+        if (! presetName.endsWith ("*")) presetName << " *";
+    }
+    ++presetVersion;
+}
+
 void HypernovaAudioProcessor::mutate (float amount)
 {
     undoManager.beginNewTransaction ("Mutate");
@@ -1277,6 +1342,10 @@ void HypernovaAudioProcessor::mutate (float amount)
         auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p);
         if (rp == nullptr || keep.contains (rp->getParameterID())) continue;
         if (dynamic_cast<juce::AudioParameterFloat*> (rp) == nullptr) continue; // choices/toggles/ints stay
+        bool locked = false;
+        for (int sec = 0; sec < NumSections; ++sec)
+            locked = locked || (sectionLocked[(size_t) sec].load() && paramInSection (rp->getParameterID(), sec));
+        if (locked) continue;
         const float v = rp->getValue();
         rp->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v + (r.nextFloat() * 2.0f - 1.0f) * amount));
     }
