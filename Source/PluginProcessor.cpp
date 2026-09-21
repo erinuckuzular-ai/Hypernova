@@ -82,8 +82,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     add<Bool> (l, pid ("subFilter"), "Sub To Filter", false);
     addFloat (l, "noiseLevel", "Noise Level", { 0.0f, 1.0f }, 0.0f, pctText);
     addFloat (l, "noiseTone", "Noise Tone", { 0.0f, 1.0f }, 0.7f, pctText);
+    add<Choice> (l, pid ("noiseType"), "Noise Type", ab::dsp::noiseNames(), 0);
     add<Bool> (l, pid ("noiseFilter"), "Noise To Filter", true);
 
+    addFloat (l, "xFmAB", "Cross FM A to B", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "xFmBA", "Cross FM B to A", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "xRing", "Ring Mod", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "xAm", "Amplitude Mod", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "xFltFm", "Filter FM", { 0.0f, 1.0f }, 0.0f, pctText);
     addFloat (l, "dropAmt", "Pitch Drop", { -48.0f, 48.0f, 1.0f }, 0.0f, semiText);
     addFloat (l, "dropTime", "Pitch Drop Time", skewed (0.002f, 1.0f, 0.06f), 0.05f, timeText);
     addFloat (l, "glide", "Glide", skewed (0.0f, 2.0f, 0.15f), 0.0f, timeText);
@@ -134,6 +140,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     for (int i = 1; i <= 4; ++i)
         addFloat (l, "macro" + juce::String (i), "Macro " + juce::String (i), { 0.0f, 1.0f }, 0.0f, pctText);
 
+    for (auto* fx : { "dist", "ott", "chorus", "dly", "verb", "eq" })
+        add<Bool> (l, pid (juce::String (fx) + "On"), juce::String (fx).substring (0, 1).toUpperCase() + juce::String (fx).substring (1) + " On", true);
     add<Choice> (l, pid ("distType"), "Distortion Type", distNames(), 0);
     addFloat (l, "distDrive", "Distortion Drive", { 0.0f, 1.0f }, 0.3f, pctText);
     addFloat (l, "distMix", "Distortion Mix", { 0.0f, 1.0f }, 0.0f, pctText);
@@ -242,6 +250,7 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
         auto& os = s.osc[(size_t) o];
         os.on = get ("On") > 0.5f;
         os.table = (int) get ("Table");
+        os.custom = userTable[(size_t) o].load();
         os.pos = get ("Pos");
         os.warp = (int) get ("Warp");
         os.warpAmt = get ("WarpAmt");
@@ -260,7 +269,13 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     s.subToFilter = param ("subFilter") > 0.5f;
     s.noiseLevel = param ("noiseLevel");
     s.noiseTone = param ("noiseTone");
+    s.noiseType = (int) param ("noiseType");
     s.noiseToFilter = param ("noiseFilter") > 0.5f;
+    s.xFmAB = param ("xFmAB");
+    s.xFmBA = param ("xFmBA");
+    s.xRing = param ("xRing");
+    s.xAm = param ("xAm");
+    s.xFltFm = param ("xFltFm");
     s.pitchEnvAmt = param ("dropAmt");
     s.pitchEnvDecay = param ("dropTime");
     s.glide = param ("glide");
@@ -324,6 +339,11 @@ void HypernovaAudioProcessor::smoothSettings (SynthSettings& s, int numSamples)
         d.blend = glide (m.blend, d.blend);
         d.width = glide (m.width, d.width);
     }
+    s.xFmAB = glide (smoothed.xFmAB, s.xFmAB);
+    s.xFmBA = glide (smoothed.xFmBA, s.xFmBA);
+    s.xRing = glide (smoothed.xRing, s.xRing);
+    s.xAm = glide (smoothed.xAm, s.xAm);
+    s.xFltFm = glide (smoothed.xFltFm, s.xFltFm);
     s.subLevel = glide (smoothed.subLevel, s.subLevel);
     s.noiseLevel = glide (smoothed.noiseLevel, s.noiseLevel);
     s.noiseTone = glide (smoothed.noiseTone, s.noiseTone);
@@ -358,6 +378,12 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.delayPing = param ("dlyPing") > 0.5f;
     f.delayTone = param ("dlyTone");
     f.width = param ("width");
+    f.distOn = param ("distOn") > 0.5f;
+    f.ottOn = param ("ottOn") > 0.5f;
+    f.chorusOn = param ("chorusOn") > 0.5f;
+    f.delayOn = param ("dlyOn") > 0.5f;
+    f.reverbOn = param ("verbOn") > 0.5f;
+    f.eqOn = param ("eqOn") > 0.5f;
     f.eqLow = param ("eqLow");
     f.eqHigh = param ("eqHigh");
     f.bpm = bpm;
@@ -497,6 +523,8 @@ static bool patchCanAlias (const SynthSettings& s)
     for (const auto& o : s.osc)
         if (o.on && o.warp != WarpOff) return true;
     if (s.filterOn && (s.filterDrive > 0.001f || s.filterType == FDirty)) return true;
+    // Cross modulation makes sidebands well above the table's own band limit.
+    if (s.xFmAB > 0.001f || s.xFmBA > 0.001f || s.xRing > 0.001f || s.xAm > 0.001f || s.xFltFm > 0.001f) return true;
     for (const auto& m : s.mod)
         if (m.src != SrcNone && (m.dest == DAWarp || m.dest == DBWarp || m.dest == DDrive)) return true;
     return false;
@@ -945,6 +973,111 @@ juce::File HypernovaAudioProcessor::userPresetFolder()
 }
 
 // Sound packs installed for every user by the installer (read-only), e.g. the FOUNDERS PACK.
+juce::File HypernovaAudioProcessor::wavetableFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+        .getChildFile ("Application Support/Arrow/Hypernova/Wavetables");
+}
+
+juce::StringArray HypernovaAudioProcessor::installedWavetables()
+{
+    juce::StringArray names;
+    for (const auto& f : wavetableFolder().findChildFiles (juce::File::findFiles, false, "*.hnwt"))
+        names.add (f.getFileNameWithoutExtension());
+    names.sort (true);
+    return names;
+}
+
+// Reads an audio file (or a previously imported .hnwt) and turns it into a 32-frame table. WAVs whose length
+// is a multiple of 2048 are treated as standard wavetable files; anything else is sliced evenly across its length.
+juce::String HypernovaAudioProcessor::importWavetable (const juce::File& file, int osc, juce::String& error)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::vector<float> mono;
+    int cycle = 0;
+    juce::String name = file.getFileNameWithoutExtension();
+
+    if (file.hasFileExtension ("hnwt"))
+    {
+        juce::FileInputStream in (file);
+        if (! in.openedOk()) { error = "Couldn't read " + file.getFileName(); return {}; }
+        mono.resize ((size_t) ab::wtFrames * ab::wtBaseSize);
+        if (in.read (mono.data(), (int) (mono.size() * sizeof (float))) != (int) (mono.size() * sizeof (float)))
+        { error = file.getFileName() + " is not a Hypernova wavetable."; return {}; }
+        cycle = ab::wtBaseSize;
+    }
+    else
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+        if (reader == nullptr) { error = "Couldn't read " + file.getFileName() + " as audio."; return {}; }
+        const int len = (int) juce::jmin ((juce::int64) (8 * 1024 * 1024), reader->lengthInSamples);
+        if (len < 64) { error = file.getFileName() + " is too short to be a wavetable."; return {}; }
+        juce::AudioBuffer<float> buf ((int) reader->numChannels, len);
+        reader->read (&buf, 0, len, 0, true, true);
+        mono.resize ((size_t) len);
+        for (int i = 0; i < len; ++i)
+        {
+            float sum = 0;
+            for (int c = 0; c < buf.getNumChannels(); ++c) sum += buf.getSample (c, i);
+            mono[(size_t) i] = sum / (float) juce::jmax (1, buf.getNumChannels());
+        }
+        // A serum-style wavetable file is a whole number of 2048-sample cycles.
+        if (len % ab::wtBaseSize == 0 && len >= ab::wtBaseSize * 2) cycle = ab::wtBaseSize;
+    }
+
+    auto table = std::make_shared<ab::Wavetable> (ab::WavetableBank::fromAudio (name, mono.data(), (int) mono.size(), cycle));
+
+    // Keep a copy in the user's wavetable folder as 32 raw frames, so presets can refer to it by name.
+    wavetableFolder().createDirectory();
+    const auto dest = wavetableFolder().getChildFile (name + ".hnwt");
+    if (! file.hasFileExtension ("hnwt"))
+    {
+        juce::TemporaryFile temp (dest);
+        {
+            juce::FileOutputStream out (temp.getFile());
+            if (out.openedOk())
+                for (int f = 0; f < ab::wtFrames; ++f)
+                    out.write (table->frame (f, 0), (size_t) ab::wtBaseSize * sizeof (float));
+        }
+        temp.overwriteTargetFileWithTemporary();
+    }
+
+    tableCache[name.toStdString()] = table;
+    if (juce::isPositiveAndBelow (osc, 2))
+    {
+        userTableSlot[(size_t) osc] = name;
+        userTable[(size_t) osc].store (table.get());
+        ++tableVersion;
+    }
+    return name;
+}
+
+// Points an oscillator at an imported table by name, loading it from the wavetable folder if needed.
+bool HypernovaAudioProcessor::setUserTable (int osc, const juce::String& name)
+{
+    if (! juce::isPositiveAndBelow (osc, 2)) return false;
+    if (name.isEmpty())
+    {
+        userTableSlot[(size_t) osc] = {};
+        userTable[(size_t) osc].store (nullptr);
+        ++tableVersion;
+        return true;
+    }
+    auto it = tableCache.find (name.toStdString());
+    if (it == tableCache.end())
+    {
+        const auto file = wavetableFolder().getChildFile (name + ".hnwt");
+        if (! file.existsAsFile()) return false;
+        juce::String error;
+        return importWavetable (file, osc, error).isNotEmpty();
+    }
+    userTableSlot[(size_t) osc] = name;
+    userTable[(size_t) osc].store (it->second.get());
+    ++tableVersion;
+    return true;
+}
+
 juce::File HypernovaAudioProcessor::packFolder()
 {
     return juce::File ("/Library/Application Support/Arrow/Hypernova/Packs");
@@ -1180,6 +1313,8 @@ void HypernovaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         for (int i = 0; i < 4; ++i) state.setProperty ("macro" + juce::String (i + 1) + "Name", macroNames[(size_t) i], nullptr);
     }
     state.setProperty ("program", currentProgram, nullptr);
+    for (int o = 0; o < 2; ++o)
+        state.setProperty (o == 0 ? "aUserTable" : "bUserTable", userTableSlot[(size_t) o], nullptr);
     state.setProperty ("uiAnimation", uiAnimation.load(), nullptr);
     state.setProperty ("uiScale", uiScalePercent.load(), nullptr);
     if (auto xml = state.createXml())
@@ -1199,6 +1334,8 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         for (int i = 0; i < 4; ++i)
             macroNames[(size_t) i] = state.getProperty ("macro" + juce::String (i + 1) + "Name", "MACRO " + juce::String (i + 1)).toString();
         currentProgram = state.getProperty ("program", 0);
+        for (int o = 0; o < 2; ++o)
+            setUserTable (o, state.getProperty (o == 0 ? "aUserTable" : "bUserTable", "").toString());
         uiAnimation = (int) state.getProperty ("uiAnimation", 0);
         uiScalePercent = (int) state.getProperty ("uiScale", 100);
     }

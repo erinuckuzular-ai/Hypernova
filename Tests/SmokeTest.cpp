@@ -186,6 +186,38 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // SmokeTest --import <audio file>: imports it as osc A's wavetable and renders a note through it.
+    if (argc == 3 && juce::String (argv[1]) == "--import")
+    {
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (48000.0, 256);
+        juce::String error;
+        const auto name = p.importWavetable (juce::File (argv[2]), 0, error);
+        if (name.isEmpty()) { std::printf ("import failed: %s\n", error.toRawUTF8()); return 1; }
+        float peak = 0;
+        bool finite = true;
+        for (int pos = 0; pos < 24000; pos += 256)
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer midi;
+            if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+            p.processBlock (buf, midi);
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < 256; ++i)
+                {
+                    const float v = buf.getSample (c, i);
+                    finite = finite && std::isfinite (v);
+                    peak = juce::jmax (peak, std::abs (v));
+                }
+        }
+        std::printf ("imported \"%s\", peak %.3f, %s\n", name.toRawUTF8(), peak, finite && peak > 0.01f ? "ok" : "BAD");
+        // round trip: the saved .hnwt reloads
+        p.setUserTable (0, {});
+        const bool reload = p.setUserTable (0, name);
+        std::printf ("reload from folder: %s\n", reload ? "ok" : "FAILED");
+        return finite && peak > 0.01f && reload ? 0 : 1;
+    }
+
     // SmokeTest --opentime: how long building the wavetables and one processor takes (plug-in open time).
     if (argc == 2 && juce::String (argv[1]) == "--opentime")
     {

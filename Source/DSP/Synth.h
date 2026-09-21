@@ -50,6 +50,7 @@ constexpr int SubBlock = 16;
 struct OscSettings
 {
     bool on = true, toFilter = true;
+    const Wavetable* custom = nullptr; // an imported table replacing the factory one (owned by the processor)
     int table = 0, warp = WarpOff, unison = 1;
     float pos = 0, warpAmt = 0, detune = 0.2f, blend = 0.5f, level = 0.8f, pan = 0, pitch = 0, width = 1.0f; // pitch in semitones
 };
@@ -67,7 +68,11 @@ struct SynthSettings
     int subShape = SubSine, subOct = -1;
     float subLevel = 0.6f;
     float noiseLevel = 0, noiseTone = 0.7f;
+    int noiseType = 0;
     bool noiseToFilter = true;
+
+    // Audio-rate cross modulation between the oscillators (independent of the FM warp).
+    float xFmAB = 0, xFmBA = 0, xRing = 0, xAm = 0, xFltFm = 0;
 
     float pitchEnvAmt = 0, pitchEnvDecay = 0.05f;
     float glide = 0;
@@ -175,6 +180,13 @@ namespace dsp
         }
     };
 
+    // Noise flavours. Appended only: saved sessions store the index.
+    enum NoiseType { NWhite, NPink, NBrown, NBlue, NCrackle, NHiss, NDigital, NWind, NumNoiseTypes };
+    inline juce::StringArray noiseNames()
+    {
+        return { "White", "Pink", "Brown", "Blue", "Vinyl Crackle", "Tape Hiss", "Digital", "Wind" };
+    }
+
     struct Rng
     {
         juce::uint32 s = 0x9e3779b9u;
@@ -182,6 +194,72 @@ namespace dsp
         {
             s ^= s << 13; s ^= s >> 17; s ^= s << 5;
             return (float) s * (2.0f / 4294967295.0f) - 1.0f;
+        }
+    };
+
+    // One noise voice per channel: white through a flavour-specific colouring stage.
+    struct NoiseGen
+    {
+        Rng rng;
+        float pink[3] {}, brown = 0, last = 0, held = 0, bp1 = 0, bp2 = 0, crackleEnv = 0, windPhase = 0;
+        int holdCount = 0;
+
+        void reset (juce::uint32 seed)
+        {
+            *this = NoiseGen();
+            rng.s = seed | 1u;
+        }
+
+        inline float tick (int type, double sr)
+        {
+            const float w = rng.next();
+            switch (type)
+            {
+                case NPink: // Paul Kellet's economy pink filter
+                    pink[0] = 0.99765f * pink[0] + w * 0.0990460f;
+                    pink[1] = 0.96300f * pink[1] + w * 0.2965164f;
+                    pink[2] = 0.57000f * pink[2] + w * 1.0526913f;
+                    return (pink[0] + pink[1] + pink[2] + w * 0.1848f) * 0.55f;
+                case NBrown: // leaky integrator: -6 dB/octave rumble
+                    brown = juce::jlimit (-1.0f, 1.0f, brown + w * 0.035f) * 0.999f;
+                    return brown * 3.2f;
+                case NBlue: // differentiated white: airy top end
+                {
+                    const float out = (w - last) * 0.55f;
+                    last = w;
+                    return out;
+                }
+                case NCrackle: // vinyl: sparse decaying pops over a quiet bed
+                {
+                    if (rng.next() > 0.9985f) crackleEnv = 1.0f;
+                    crackleEnv *= (float) std::exp (-1200.0 / sr);
+                    return w * (0.06f + crackleEnv * 1.6f);
+                }
+                case NHiss: // tape: band-limited hiss that breathes
+                {
+                    bp1 += 0.22f * (w - bp1);
+                    bp2 += 0.012f * (bp1 - bp2);
+                    windPhase += (float) (0.7 / sr);
+                    if (windPhase >= 1.0f) windPhase -= 1.0f;
+                    const float breathe = 0.85f + 0.15f * std::sin (juce::MathConstants<float>::twoPi * windPhase);
+                    return (bp1 - bp2) * 2.6f * breathe;
+                }
+                case NDigital: // sample and hold: gritty, aliased
+                {
+                    if (--holdCount <= 0) { held = w; holdCount = 6; }
+                    return held;
+                }
+                case NWind: // noise through a slowly sweeping band-pass
+                {
+                    windPhase += (float) (0.13 / sr);
+                    if (windPhase >= 1.0f) windPhase -= 1.0f;
+                    const float c = 0.03f + 0.12f * (0.5f + 0.5f * std::sin (juce::MathConstants<float>::twoPi * windPhase));
+                    bp1 += c * (w - bp1);
+                    bp2 += c * 0.25f * (bp1 - bp2);
+                    return (bp1 - bp2) * 4.0f;
+                }
+                default: return w;
+            }
         }
     };
 
@@ -351,6 +429,8 @@ public:
 
         pitchEnv = 1.0f;
         noteRandom = rng.next();
+        noise[0].reset ((juce::uint32) (noteRandom * 1.0e6f) + 0x2545f491u);
+        noise[1].reset ((juce::uint32) (noteRandom * 1.0e6f) + 0x9e3779b1u);
         noteAge = 0;
         if (s.phaseRetrig || ! wasActive)
         {
@@ -472,6 +552,7 @@ public:
                 int n = 1, warp = 0;
                 float warpAmt = 0, crush = 256, level = 0;
                 double fmScale = 0; // true FM: cycles of phase added per sample per unit of modulator
+                double xScale = 0;  // the same, for the cross-modulation knobs
                 double inc[MaxUnison] {};
                 float gl[MaxUnison] {}, gr[MaxUnison] {};
             } run[2];
@@ -495,7 +576,7 @@ public:
                 const float spreadCents = det * 25.0f + det * det * 35.0f;
                 const float maxDetRatio = std::exp2 (spreadCents / 1200.0f);
                 const double level2 = WavetableBank::exactLevel (freq * maxDetRatio * (r.warp == WarpSync ? 1.0 + r.warpAmt * 7.0 : 1.0), sr);
-                r.cur.set (bank.table (os.table), level2, pos);
+                r.cur.set (os.custom != nullptr ? *os.custom : bank.table (os.table), level2, pos);
 
                 float norm = 0;
                 for (int u = 0; u < r.n; ++u)
@@ -518,6 +599,16 @@ public:
             for (int o = 0; o < 2; ++o)
                 if (run[o].on && run[o].warp == WarpFm)
                     run[o].fmScale = run[o].warpAmt * 1.5 * juce::MathConstants<double>::twoPi * (run[1 - o].on ? run[1 - o].inc[0] : 0.0);
+
+            // Cross modulation: the same index scaling as the warp, but on its own knobs so a patch can use
+            // a warp and FM at once, in either direction.
+            const float xFm[2] = { s.xFmBA, s.xFmAB }; // [0] = B modulates A, [1] = A modulates B
+            for (int o = 0; o < 2; ++o)
+                run[o].xScale = run[o].on && xFm[o] > 0.0001f
+                                    ? xFm[o] * 1.5 * juce::MathConstants<double>::twoPi * (run[1 - o].on ? run[1 - o].inc[0] : 0.0)
+                                    : 0.0;
+            const bool crossOn = s.xRing > 0.0001f || s.xAm > 0.0001f || s.xFltFm > 0.0001f
+                                 || run[0].xScale != 0.0 || run[1].xScale != 0.0;
 
             const double subInc = s.subOn ? 440.0 * std::exp2 ((basePitch + 12.0f * s.subOct - 69.0) / 12.0) / sr : 0.0;
             const float subLevel = s.subOn ? juce::jlimit (0.0f, 1.5f, s.subLevel + dst[DSub]) : 0.0f;
@@ -566,6 +657,7 @@ public:
                 float fL = 0, fR = 0, dL = 0, dR = 0; // filtered bus / direct bus
                 float oscOut[2] = { 0, 0 };
 
+                float oscL[2] {}, oscR[2] {};
                 for (int o = 0; o < 2; ++o)
                 {
                     auto& r = run[o];
@@ -587,14 +679,46 @@ public:
                         }
                         else
                             wp = r.warp == WarpOff ? ph : dsp::warpPhase (r.warp, ph, r.warpAmt, r.crush, fm);
+                        if (r.xScale != 0.0)
+                        {
+                            double& acc = xAcc[o][u];
+                            acc += r.xScale * fm;
+                            acc -= std::floor (acc);
+                            wp = dsp::frac (wp + acc);
+                        }
                         const float v = r.cur.read (wp);
                         sumL += v * r.gl[u];
                         sumR += v * r.gr[u];
                         mono += v;
                     }
                     oscOut[o] = mono / (float) r.n;
-                    if (s.osc[(size_t) o].toFilter) { fL += sumL; fR += sumR; }
-                    else                            { dL += sumL; dR += sumR; }
+                    oscL[o] = sumL;
+                    oscR[o] = sumR;
+                }
+
+                if (crossOn && s.xAm > 0.0001f)
+                {
+                    // Osc B drives osc A's level: 0 % leaves A alone, 100 % is full amplitude modulation.
+                    const float m = 1.0f - s.xAm + s.xAm * (0.5f + 0.5f * oscOut[1]);
+                    oscL[0] *= m;
+                    oscR[0] *= m;
+                    oscOut[0] *= m;
+                }
+
+                for (int o = 0; o < 2; ++o)
+                {
+                    if (! run[o].on) continue;
+                    if (s.osc[(size_t) o].toFilter) { fL += oscL[o]; fR += oscR[o]; }
+                    else                            { dL += oscL[o]; dR += oscR[o]; }
+                }
+
+                if (crossOn && s.xRing > 0.0001f && run[0].on && run[1].on)
+                {
+                    // Ring modulation: the product of the two oscillators, added through osc A's routing.
+                    const float ringL = oscL[0] * oscOut[1] * s.xRing * 1.6f;
+                    const float ringR = oscR[0] * oscOut[1] * s.xRing * 1.6f;
+                    if (s.osc[0].toFilter) { fL += ringL; fR += ringR; }
+                    else                   { dL += ringL; dR += ringR; }
                 }
                 fmPrev[0] = oscOut[0];
                 fmPrev[1] = oscOut[1];
@@ -624,10 +748,22 @@ public:
 
                 if (noiseLevel > 0.0f)
                 {
-                    noiseState[0] += noiseCoef * (rng.next() - noiseState[0]);
-                    noiseState[1] += noiseCoef * (rng.next() - noiseState[1]);
+                    // TONE stays a low-pass tilt on top of whichever flavour is selected.
+                    noiseState[0] += noiseCoef * (noise[0].tick (s.noiseType, sr) - noiseState[0]);
+                    noiseState[1] += noiseCoef * (noise[1].tick (s.noiseType, sr) - noiseState[1]);
                     const float nl = noiseState[0] * noiseLevel * 1.6f, nr = noiseState[1] * noiseLevel * 1.6f;
                     if (s.noiseToFilter) { fL += nl; fR += nr; } else { dL += nl; dR += nr; }
+                }
+
+                if (crossOn && s.xFltFm > 0.0001f && s.filterOn && s.filterType != FFormant)
+                {
+                    // Filter FM: osc A shifts the cutoff at audio rate, which buzzes and growls.
+                    const float g2 = juce::jlimit (0.0005f, 1.4f, gF * (1.0f + s.xFltFm * 3.0f * oscOut[0]));
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        svf[c][0].set (g2, twoStage ? 1.414f : kRes);
+                        svf[c][1].set (g2, kRes);
+                    }
                 }
 
                 if (s.filterOn)
@@ -713,9 +849,10 @@ private:
     double sr = 44100.0;
     double phase[2][MaxUnison] {};
     double subPhase = 0;
-    double fmAcc[2][MaxUnison] {};
+    double fmAcc[2][MaxUnison] {}, xAcc[2][MaxUnison] {};
     float fmPrev[2] {};
     float noiseState[2] {};
+    dsp::NoiseGen noise[2];
     float targetPitch = 60, currentPitch = 60, pitchEnv = 0, noteRandom = 0, noteAge = 0;
     float lfoRateMod[2] {};
     float driftValue = 0, driftTarget = 0;

@@ -99,6 +99,8 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     addAndMakeVisible (canvas);
     canvas.onPaint = [this] (juce::Graphics& g) { paintCanvas (g); };
 
+    viewA.onMessage = [this] (const juce::String& m) { showMessage (m); };
+    viewB.onMessage = [this] (const juce::String& m) { showMessage (m); };
     for (auto* c : std::initializer_list<juce::Component*> { &viewA, &viewB, &space, &spaceMode, &filterView, &ampView, &modView, &lfoView1, &lfoView2 })
         canvas.addAndMakeVisible (c);
 
@@ -266,6 +268,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     knob ("subOct", "OCTAVE", Palette::sub, at (subPanel, 6, 72, 56, 68), 40);
     knob ("subLevel", "LEVEL", Palette::sub, at (subPanel, 62, 72, 56, 68), 40);
     toggle (std::make_unique<PillToggle> ("FILTER", Palette::sub), "subFilter", at (subPanel, 12, 152, 104, 22), "Send the sub through the filter (off keeps the low end clean)");
+    combo ("noiseType", ab::dsp::noiseNames(), at (subPanel, 126, 40, 110, 24));
     knob ("noiseLevel", "NOISE", Colours::textDim, at (subPanel, 126, 72, 56, 68), 40);
     knob ("noiseTone", "TONE", Colours::textDim, at (subPanel, 180, 72, 56, 68), 40);
     toggle (std::make_unique<PillToggle> ("FILTER", Colours::textDim), "noiseFilter", at (subPanel, 128, 152, 104, 22), "Send the noise through the filter");
@@ -275,7 +278,8 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     knob ("dropTime", "DROP TIME", Palette::sub, at (voicePanel, 69, 38, 59, 68));
     knob ("glide", "GLIDE", Palette::sub, at (voicePanel, 128, 38, 59, 68));
     knob ("bendRange", "BEND", Palette::sub, at (voicePanel, 187, 38, 59, 68));
-    combo ("mode", voiceModeNames(), at (voicePanel, 12, 118, 100, 24));
+    combo ("mode", voiceModeNames(), at (voicePanel, 12, 118, 100, 24))
+        .setTooltip ("Poly: chords. Mono: one note at a time. Legato: one note, and overlapping notes slide using GLIDE.");
     toggle (std::make_unique<PillToggle> ("RETRIG", Palette::sub), "retrig", at (voicePanel, 12, 150, 100, 22),
             "Restart the waveform on every note: same punch every hit (808s, log drums)");
     knob ("velSens", "VELOCITY", Palette::sub, at (voicePanel, 128, 110, 59, 68));
@@ -361,7 +365,10 @@ void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
     sectionLabel (g, "NOISE", juce::Rectangle<float> ((float) subPanel.getX() + 130, (float) subPanel.getY() + 10, 80, 24), Colours::textDim);
     g.setColour (Colours::line);
     g.drawVerticalLine (subPanel.getX() + 121, (float) subPanel.getY() + 14, (float) subPanel.getBottom() - 14);
-    titled (voicePanel, "PITCH + VOICE", Palette::sub);
+    titled (voicePanel, "PITCH", Palette::sub);
+    sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> ((float) voicePanel.getX() + 12, (float) voicePanel.getY() + 96, 240, 20), Palette::sub);
+    g.setColour (Colours::line);
+    g.drawHorizontalLine (voicePanel.getY() + 92, (float) voicePanel.getX() + 12, (float) voicePanel.getRight() - 12);
     titled (filterPanel, "FILTER", Palette::filter, 38);
     titled (envPanel, "AMP ENV", Palette::env);
     sectionLabel (g, "MOD ENV", juce::Rectangle<float> ((float) envPanel.getX() + 194, (float) envPanel.getY() + 10, 120, 24), Palette::lfo);
@@ -721,41 +728,46 @@ void HypernovaAudioProcessorEditor::layoutFxPage()
     auto* pg = &pages[1];
     constexpr int cell = 64, knobY = 36, gap = 22;
     int x = 12;
-    auto group = [&] (const juce::String& title, int cells) -> int
+    // Each effect's name is its bypass switch.
+    auto group = [&] (const juce::String& title, int cells, const char* onParam = nullptr) -> int
     {
         const int start = x;
-        pg->captions.push_back ({ { x, 4, cells * cell, 24 }, title, Colours::textDim, false });
+        if (onParam != nullptr)
+            toggle (std::make_unique<ab::ui::SectionToggle> (title, Palette::fx), onParam, { x, 4, juce::jmin (cells * cell, 92), 24 },
+                    "Click to switch " + title.toLowerCase() + " off and on", pg);
+        else
+            pg->captions.push_back ({ { x, 4, cells * cell, 24 }, title, Colours::textDim, false });
         x += cells * cell + gap;
         pg->captions.push_back ({ { x - gap / 2, 6, 1, 122 }, {}, {}, true });
         return start;
     };
     auto fxKnob = [&] (const char* id, const char* label, int gx, int i) { knob (id, label, Palette::fx, { gx + i * cell, knobY, cell, 72 }, 42, pg); };
 
-    int g = group ("DIST", 2);
-    combo ("distType", distNames(), { g + 42, 4, 2 * cell - 42, 24 }, pg);
+    int g = group ("DIST", 2, "distOn");
+    combo ("distType", distNames(), { g + 56, 4, 2 * cell - 56, 24 }, pg);
     fxKnob ("distDrive", "DRIVE", g, 0);
     fxKnob ("distMix", "MIX", g, 1);
 
-    g = group ("OTT", 1);
+    g = group ("OTT", 1, "ottOn");
     fxKnob ("ott", "SQUASH", g, 0);
 
-    g = group ("CHORUS", 2);
+    g = group ("CHORUS", 2, "chorusOn");
     fxKnob ("chorusRate", "RATE", g, 0);
     fxKnob ("chorusMix", "MIX", g, 1);
 
-    g = group ("DELAY", 3);
+    g = group ("DELAY", 3, "dlyOn");
     combo ("dlyTime", delayTimeNames(), { g + 52, 4, 78, 24 }, pg);
     toggle (std::make_unique<PillToggle> ("PING", Palette::fx), "dlyPing", { g + 134, 5, 3 * cell - 134, 22 }, "Ping-pong: repeats bounce left and right", pg);
     fxKnob ("dlyFb", "FEEDBACK", g, 0);
     fxKnob ("dlyTone", "TONE", g, 1);
     fxKnob ("dlyMix", "MIX", g, 2);
 
-    g = group ("SPACE", 3);
+    g = group ("SPACE", 3, "verbOn");
     fxKnob ("verbSize", "SIZE", g, 0);
     fxKnob ("verbShimmer", "SHIMMER", g, 1);
     fxKnob ("verbMix", "MIX", g, 2);
 
-    g = group ("EQ", 2);
+    g = group ("EQ", 2, "eqOn");
     fxKnob ("eqLow", "LOW", g, 0);
     fxKnob ("eqHigh", "HIGH", g, 1);
 
@@ -796,11 +808,19 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
     knob ("bWidth", "OSC B", Palette::oscB, { 774 + cell, knobY, cell, 72 }, 42, pg);
     pg->captions.push_back ({ { 924, 6, 1, 122 }, {}, {}, true });
 
-    pg->captions.push_back ({ { 938, 4, 280, 24 }, "TIPS", Colours::textDim, false });
-    pg->captions.push_back ({ { 938, 30, 282, 20 }, "Legato + GLIDE: overlap notes to slide.", Colours::textFaint, false });
-    pg->captions.push_back ({ { 938, 50, 282, 20 }, "Chords need Poly mode (Pitch + Voice panel).", Colours::textFaint, false });
-    pg->captions.push_back ({ { 938, 70, 282, 20 }, "Double-click any knob to reset it.", Colours::textFaint, false });
-    pg->captions.push_back ({ { 938, 90, 282, 20 }, "Drag the 3D views to fly around them.", Colours::textFaint, false });
+    // Audio-rate cross modulation between the two oscillators.
+    pg->captions.push_back ({ { 938, 4, 280, 24 }, "CROSS MOD", Palette::oscB, false });
+    const int xw = 56;
+    knob ("xFmAB", "FM A>B", Palette::oscB, { 938, knobY, xw, 72 }, 40, pg)
+        .slider.setTooltip ("Osc A bends osc B's pitch at audio rate: metallic, bell-like tones");
+    knob ("xFmBA", "FM B>A", Palette::oscA, { 938 + xw, knobY, xw, 72 }, 40, pg)
+        .slider.setTooltip ("Osc B bends osc A's pitch at audio rate");
+    knob ("xRing", "RING", Palette::oscB, { 938 + 2 * xw, knobY, xw, 72 }, 40, pg)
+        .slider.setTooltip ("Ring modulation: the two oscillators multiplied, for clangy inharmonic tones");
+    knob ("xAm", "AM", Palette::oscB, { 938 + 3 * xw, knobY, xw, 72 }, 40, pg)
+        .slider.setTooltip ("Osc B chops osc A's level: tremolo at low pitches, sidebands at high ones");
+    knob ("xFltFm", "FLT FM", Palette::filter, { 938 + 4 * xw, knobY, xw, 72 }, 40, pg)
+        .slider.setTooltip ("Osc A shakes the filter cutoff at audio rate: growl and buzz");
 }
 
 //==============================================================================
