@@ -7,20 +7,29 @@ using namespace ab::ui;
 namespace
 {
     // Base-canvas layout
-    const juce::Rectangle<int> oscAPanel   { 24, 90, 400, 350 };
-    const juce::Rectangle<int> oscBPanel   { 436, 90, 400, 350 };
-    const juce::Rectangle<int> spacePanel  { 848, 90, 408, 350 };
-    const juce::Rectangle<int> subPanel    { 24, 452, 240, 186 };
-    const juce::Rectangle<int> voicePanel  { 276, 452, 256, 186 };
-    const juce::Rectangle<int> filterPanel { 544, 452, 332, 186 };
-    const juce::Rectangle<int> envPanel    { 888, 452, 368, 186 };
-    const juce::Rectangle<int> deckPanel   { 24, 650, 1232, 176 };
-    const juce::Rectangle<int> deckContent { 24, 688, 1232, 136 };
-    const juce::Rectangle<int> keysArea    { 24, 840, 1232, 60 };
+    // Rows breathe: every panel is taller than the content it was designed around, and at() spreads a
+    // panel's contents over the extra height instead of leaving it all at the bottom.
+    constexpr int topRowH = 378, midRowH = 212, topRowDesign = 350, midRowDesign = 186;
+    const juce::Rectangle<int> oscAPanel   { 24, 96, 400, topRowH };
+    const juce::Rectangle<int> oscBPanel   { 436, 96, 400, topRowH };
+    const juce::Rectangle<int> spacePanel  { 848, 96, 408, topRowH };
+    const juce::Rectangle<int> subPanel    { 24, 488, 240, midRowH };
+    const juce::Rectangle<int> voicePanel  { 276, 488, 256, midRowH };
+    const juce::Rectangle<int> filterPanel { 544, 488, 332, midRowH };
+    const juce::Rectangle<int> envPanel    { 888, 488, 368, midRowH };
+    const juce::Rectangle<int> deckPanel   { 24, 714, 1232, 190 };
+    const juce::Rectangle<int> deckContent { 24, 760, 1232, 140 };
+    const juce::Rectangle<int> keysArea    { 24, 918, 1232, 56 };
 
-    const juce::Rectangle<int> messageArea { 334, 68, 496, 16 };
+    const juce::Rectangle<int> messageArea { 334, 72, 496, 16 };
 
-    juce::Rectangle<int> at (const juce::Rectangle<int>& panel, int x, int y, int w, int h) { return { panel.getX() + x, panel.getY() + y, w, h }; }
+    juce::Rectangle<int> at (const juce::Rectangle<int>& panel, int x, int y, int w, int h)
+    {
+        const float design = panel.getHeight() == topRowH ? (float) topRowDesign : panel.getHeight() == midRowH ? (float) midRowDesign
+                                                                                                           : (float) panel.getHeight();
+        const float k = (float) panel.getHeight() / design;
+        return { panel.getX() + x, panel.getY() + juce::roundToInt ((float) y * k), w, h };
+    }
 }
 
 //==============================================================================
@@ -314,7 +323,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         combo (p + "Table", WavetableBank::names(), at (P, 92, 11, 138, 24));
         combo (p + "Warp", warpNames(), at (P, 236, 11, 80, 24));
         toggle (std::make_unique<PillToggle> ("FILTER", c), p + "Filter", at (P, 322, 12, 66, 22), "Send this oscillator through the filter");
-        (o == 0 ? viewA : viewB).setBounds (at (P, 12, 44, 376, 160));
+        (o == 0 ? viewA : viewB).setBounds (at (P, 12, 44, 376, 168));
 
         const char* ids1[] = { "Pos", "WarpAmt", "Uni", "Detune", "Blend" };
         const char* names1[] = { "POSITION", "WARP", "UNISON", "DETUNE", "BLEND" };
@@ -329,7 +338,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
 
     // Sound space
     spaceMode.setBounds (at (spacePanel, 150, 11, 186, 24));
-    space.setBounds (at (spacePanel, 12, 44, 384, 294));
+    space.setBounds (at (spacePanel, 12, 44, 384, 318));
     expandButton.setTooltip ("Fill the window with the Sound Space");
     popOutButton.setTooltip ("Open the Sound Space in its own resizable window");
     expandButton.onClick = [this] { setSpaceExpanded (! spaceExpanded); };
@@ -415,7 +424,7 @@ void HypernovaAudioProcessorEditor::paintCanvas (juce::Graphics& g)
     if (! cosmosOnGpu())
     {
         if (! fallbackBackdrop.isValid())
-            fallbackBackdrop = renderCosmosFallback (baseWidth, baseHeight, 2.0f, logoHole, logoHoleRadius);
+            fallbackBackdrop = renderCosmosFallback (baseWidth, baseHeight, 2.0f, logoHole, 0.0f);
         g.drawImage (fallbackBackdrop, juce::Rectangle<float> (0, 0, (float) baseWidth, (float) baseHeight));
     }
 
@@ -432,14 +441,16 @@ void HypernovaAudioProcessorEditor::paintCanvas (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
 {
-    // Wordmark next to the black hole (the hole itself is drawn by the backdrop).
+    // Wordmark: an accent dot and "hypernova" in lowercase, the same as the website.
     {
-        g.setGradientFill (juce::ColourGradient (Colours::text, 84, 20, juce::Colour (0xffc7b4ff), 330, 48, false));
-        g.setFont (heavy (24.0f).withExtraKerningFactor (0.16f));
-        g.drawText ("HYPERNOVA", juce::Rectangle<float> (84, 19, 250, 30), juce::Justification::centredLeft, false);
+        g.setColour (Colours::accent);
+        g.fillEllipse (juce::Rectangle<float> (logoHoleRadius * 2.0f, logoHoleRadius * 2.0f).withCentre (logoHole));
+        g.setColour (Colours::text);
+        g.setFont (heavy (34.0f).withExtraKerningFactor (-0.04f));
+        g.drawText ("hypernova", juce::Rectangle<float> (70, 14, 260, 40), juce::Justification::centredLeft, false);
         g.setColour (Colours::textDim);
-        g.setFont (font (9.5f, true).withExtraKerningFactor (0.34f));
-        g.drawText ("WAVETABLE SPACE SYNTH", juce::Rectangle<float> (85, 48, 250, 16), juce::Justification::centredLeft, false);
+        g.setFont (mono (11.0f));
+        g.drawText ("wavetable synthesizer", juce::Rectangle<float> (72, 52, 250, 16), juce::Justification::centredLeft, false);
     }
 
     auto titled = [&] (const juce::Rectangle<int>& r, const juce::String& title, juce::Colour c, int titleX = 14)
@@ -456,7 +467,7 @@ void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
     g.setColour (Colours::line);
     g.drawVerticalLine (subPanel.getX() + 121, (float) subPanel.getY() + 14, (float) subPanel.getBottom() - 14);
     titled (voicePanel, "PITCH", Palette::sub);
-    sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> ((float) voicePanel.getX() + 12, (float) voicePanel.getY() + 98, 240, 18), Palette::sub);
+    sectionLabel (g, "MONO / GLIDE / LEGATO", juce::Rectangle<float> ((float) voicePanel.getX() + 12, (float) voicePanel.getY() + 108, 240, 18), Palette::sub);
     titled (filterPanel, "FILTER", Palette::filter, 38);
     titled (envPanel, "AMP ENV", Palette::env);
     sectionLabel (g, "MOD ENV", juce::Rectangle<float> ((float) envPanel.getX() + 194, (float) envPanel.getY() + 10, 120, 24), Palette::lfo);
@@ -538,7 +549,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
         cosmos.flare = logoFlare;
         cosmos.holeX = logoHole.x * k;
         cosmos.holeY = logoHole.y * k;
-        cosmos.holeR = logoHoleRadius * k;
+        cosmos.holeR = 0.0f; // the logo is the dot now; no black hole behind it
         const bool gpu = cosmosOnGpu();
         if (gpu != lastGpu) { lastGpu = gpu; canvas.repaint(); }
         // Backdrop frame rate: 30 fps while notes sound, 12 fps when idle, or per the Animation setting.
@@ -1187,6 +1198,7 @@ void HypernovaAudioProcessorEditor::addLookMenu (juce::PopupMenu& m)
     m.addSubMenu ("Knobs", knobsMenu);
     m.addSubMenu ("Panels", panels);
     m.addItem (580, "Show keyboard", true, ab::ui::LookSettings::flag ("keyboard", true));
+    m.addItem (581, "Always show knob values", true, t.alwaysShowValues);
 }
 
 bool HypernovaAudioProcessorEditor::handleLookMenu (int r)
@@ -1212,6 +1224,7 @@ bool HypernovaAudioProcessorEditor::handleLookMenu (int r)
     else if (r == 570) t.panelStyle = -1;
     else if (r >= 571 && r <= 573) t.panelStyle = r - 571;
     else if (r == 580) ab::ui::LookSettings::setFlag ("keyboard", ! ab::ui::LookSettings::flag ("keyboard", true));
+    else if (r == 581) t.alwaysShowValues = ! t.alwaysShowValues;
     else return false;
     ++t.version;
     ab::ui::LookSettings::save();
@@ -1259,7 +1272,7 @@ void HypernovaAudioProcessorEditor::setSpaceExpanded (bool expand)
         showMessage ("Sound Space expanded: click the arrows again to shrink it");
     }
     else
-        space.setBounds (spacePanel.getX() + 12, spacePanel.getY() + 44, 384, 294);
+        space.setBounds (at (spacePanel, 12, 44, 384, 318));
     canvas.repaint();
 }
 

@@ -29,7 +29,7 @@ public:
     void setSpaceExpanded (bool e);
     void applyTheme();
 
-    static constexpr int baseWidth = 1280, baseHeight = 914;
+    static constexpr int baseWidth = 1280, baseHeight = 986;
 
 private:
     void timerCallback() override;

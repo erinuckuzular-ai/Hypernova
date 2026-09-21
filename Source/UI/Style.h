@@ -47,6 +47,11 @@ inline std::vector<Theme> builtInThemes()
         return t;
     };
     return {
+        // Paper: the house look. Warm grey, white panels, black ink and one orange, like the website.
+        make ("Paper", { 0xfff2f1ee, 0xffe9e8e4, 0xffffffff, 0xffffffff, 0xffeeede9, 0x1f000000, 0x40000000,
+                         0xff111111, 0xff4a4a4a, 0xff8b8b88, 0xffff5a1f, 0xff2f5bff, 0xffff5a1f, 0xffe8363d,
+                         0xffff5a1f, 0xff2f5bff, 0xffe0a100, 0xffe8363d, 0xff16a37b, 0xff2f5bff, 0xff7a5cff, 0xff111111 },
+              BackdropFlat, 0.0f, KnobRing, PanelFlat, true),
         // Cosmic: deep space, but with panels that read as surfaces and a backdrop that sits back.
         make ("Cosmic", { 0xff03040a, 0xff070914, 0xc40d1022, 0xff181d35, 0xc206081a, 0x24ffffff, 0x45ffffff,
                           0xfff4f5ff, 0xffa3a8d0, 0xff676d96, 0xff46e8ff, 0xff8a5cff, 0xffffa94a, 0xffff4f9a,
@@ -77,6 +82,7 @@ struct ThemeState
     juce::Colour accentOverride; // transparent = use the theme's own
     int backdrop = -1, knobStyle = -1, panelStyle = -1;
     float backdropStrength = -1.0f;
+    bool alwaysShowValues = false; // otherwise knob values appear on hover, which keeps panels calm
     int version = 0; // bumped on every change so views can drop cached images
 
     static ThemeState& get()
@@ -124,6 +130,7 @@ struct LookSettings
         t.backdropStrength = (float) p.getDoubleValue ("strength", -1.0);
         t.knobStyle = p.getIntValue ("knobs", -1);
         t.panelStyle = p.getIntValue ("panels", -1);
+        t.alwaysShowValues = p.getBoolValue ("values", false);
         ++t.version;
     }
 
@@ -137,6 +144,7 @@ struct LookSettings
         p.setValue ("strength", (double) t.backdropStrength);
         p.setValue ("knobs", t.knobStyle);
         p.setValue ("panels", t.panelStyle);
+        p.setValue ("values", t.alwaysShowValues);
         p.saveIfNeeded();
     }
 
@@ -217,7 +225,7 @@ private:
                 code = load ("SpaceMonoRegular_ttf");
                 break;
             default:
-                display = load ("MichromaRegular_ttf");
+                display = load ("SpaceGroteskvar_ttf");
                 body = load ("SpaceGroteskvar_ttf");
                 bodyBold = load ("SpaceGroteskvar_ttf");
                 code = load ("SpaceMonoRegular_ttf");
@@ -242,7 +250,7 @@ inline juce::Font heavy (float height)
     const auto& f = Fonts::get();
     if (f.display == nullptr)
         return juce::Font (juce::FontOptions().withName ("Avenir Next").withHeight (height).withStyle ("Heavy"));
-    return juce::Font (juce::FontOptions (f.display).withHeight (height));
+    return juce::Font (juce::FontOptions (f.display).withHeight (height)).boldened();
 }
 
 // Wide display face, for the logo and section headings.
@@ -316,7 +324,7 @@ inline void panel (juce::Graphics& g, juce::Rectangle<float> r, float radius = 1
 inline void sectionLabel (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, juce::Colour c = Colours::textDim)
 {
     g.setColour (c);
-    g.setFont (font (10.5f, true).withExtraKerningFactor (0.16f));
+    g.setFont (mono (11.0f).boldened().withExtraKerningFactor (0.06f));
     g.drawFittedText (text, area.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
 }
 

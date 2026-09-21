@@ -718,7 +718,7 @@ public:
         g.setFont (font (9.5f, true).withExtraKerningFactor (0.12f));
         g.drawFittedText (active && param != nullptr ? param->getCurrentValueAsText() : name, r.removeFromTop (13).toNearestInt(),
                           juce::Justification::centred, 1, 0.7f);
-        if (showValue && ! active)
+        if (showValue && ! active && ThemeState::get().alwaysShowValues)
         {
             g.setColour (Colours::text.withAlpha (0.85f));
             g.setFont (mono (10.5f));
