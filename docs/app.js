@@ -275,10 +275,48 @@
         (r.assets || []).forEach(function (a) {
           if (!dmg && /\.dmg$/i.test(a.name)) dmg = { url: a.browser_download_url, size: a.size, name: a.name };
         });
-        return { version: r.tag_name, publishedAt: r.published_at, notes: r.body || "", prerelease: r.prerelease, dmg: dmg, page: r.html_url };
+        var zip = null;
+        (r.assets || []).forEach(function (a) {
+          if (!zip && /\.zip$/i.test(a.name)) zip = { url: a.browser_download_url, size: a.size, name: a.name, downloads: a.download_count };
+        });
+        return { version: r.tag_name, title: r.name || r.tag_name, publishedAt: r.published_at, notes: r.body || "",
+                 prerelease: r.prerelease, dmg: dmg, zip: zip, page: r.html_url, pack: /^pack-/.test(r.tag_name) };
       });
     });
     return releaseList;
+  }
+
+  function appReleases() { return loadReleases().then(function (l) { return l.filter(function (r) { return !r.pack; }); }); }
+  function packReleases() { return loadReleases().then(function (l) { return l.filter(function (r) { return r.pack && r.zip; }); }); }
+
+  /* ---------------- Sound packs (GitHub releases tagged pack-*) ---------------- */
+
+  function packs() {
+    var root = document.getElementById("packs-list");
+    if (!root) return;
+    packReleases().then(function (list) {
+      root.innerHTML = "";
+      if (!list.length) {
+        root.innerHTML = '<p class="muted">no extra packs yet. the founders pack comes with the installer.</p>';
+        return;
+      }
+      list.forEach(function (r) {
+        var card = el("article", "pack");
+        card.appendChild(el("h3", null, escapeHtml(r.title.replace(/\s*\(sound pack\)\s*$/i, ""))));
+        card.appendChild(el("div", "notes", renderMarkdown(r.notes)));
+        var foot = el("div", "pack-foot");
+        if (/^https:\/\/github\.com\//.test(r.zip.url)) {
+          var a = el("a", "pack-download", "Download " + escapeHtml(formatSize(r.zip.size)));
+          a.href = r.zip.url;
+          foot.appendChild(a);
+        }
+        if (r.publishedAt) foot.appendChild(el("span", "muted", escapeHtml(formatDate(r.publishedAt))));
+        card.appendChild(foot);
+        root.appendChild(card);
+      });
+    }).catch(function () {
+      root.innerHTML = '<p class="muted">packs didn't load. <a href="' + RELEASES_URL + '">See them on GitHub</a>.</p>';
+    });
   }
 
   /* ---------------- Latest release ---------------- */
@@ -286,7 +324,7 @@
   function latest() {
     var meta = document.getElementById("release-meta");
     if (!meta) return;
-    loadReleases().then(function (list) {
+    appReleases().then(function (list) {
       var r = list.filter(function (x) { return !x.prerelease; })[0];
       if (!r) throw new Error("none");
       // Point the big button straight at the newest DMG.
@@ -295,11 +333,11 @@
       return { version: r.version, size: r.dmg ? r.dmg.size : 0, publishedAt: r.publishedAt };
     }).then(function (d) {
       var parts = [];
-      if (d.version) parts.push('<span class="ver">Version ' + escapeHtml(versionLabel(d.version)) + "</span>");
+      if (d.version) parts.push('<span class="ver">version ' + escapeHtml(versionLabel(d.version)) + "</span>");
       var size = formatSize(d.size);
       if (size) parts.push(escapeHtml(size));
       var date = formatDate(d.publishedAt);
-      if (date) parts.push("Released " + escapeHtml(date));
+      if (date) parts.push("released " + escapeHtml(date));
       if (!parts.length) throw new Error("empty");
       parts = parts.map(function (p) { return '<span class="item">' + p + "</span>"; });
       meta.innerHTML = parts.join('<span class="sep" aria-hidden="true">&middot;</span>');
@@ -335,7 +373,7 @@
   function releases() {
     var root = document.getElementById("releases");
     if (!root) return;
-    loadReleases().then(function (list) {
+    appReleases().then(function (list) {
       if (!Array.isArray(list) || !list.length) throw new Error("empty");
       root.innerHTML = "";
       var latestTag = null;
@@ -363,7 +401,7 @@
         }
       });
     }).catch(function () {
-      root.innerHTML = '<p class="muted">Release notes could not be loaded right now. ' +
+      root.innerHTML = '<p class="muted">release notes didn't load. ' +
         '<a href="' + RELEASES_URL + '">Read them on GitHub</a>.</p>';
     });
   }
@@ -372,5 +410,6 @@
 
   starfield();
   latest();
+  packs();
   releases();
 })();

@@ -1260,6 +1260,25 @@ int HypernovaAudioProcessor::importPresets (const juce::Array<juce::File>& items
         }
         else if (isPresetFile (item))
             copyOne (item, userPresetFolder().getChildFile ("Imported"));
+        else if (item.hasFileExtension ("zip"))
+        {
+            // A sound pack straight from the website: unzip to a temp folder, import it as one pack
+            // named after the zip, and bring any wavetables inside along too.
+            const auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("HypernovaPack-" + juce::Uuid().toString());
+            juce::ZipFile zip (item);
+            if (zip.getNumEntries() > 0 && zip.uncompressTo (temp, true).wasOk())
+            {
+                const auto dest = userPresetFolder().getChildFile (juce::File::createLegalFileName (item.getFileNameWithoutExtension()));
+                for (const auto& f : temp.findChildFiles (juce::File::findFiles, true, juce::String ("*") + presetExtension + ";*.abpreset"))
+                    copyOne (f, dest);
+                for (const auto& wt : temp.findChildFiles (juce::File::findFiles, true, "*.hnwt"))
+                {
+                    wavetableFolder().createDirectory();
+                    wt.copyFileTo (wavetableFolder().getChildFile (wt.getFileName()));
+                }
+            }
+            temp.deleteRecursively();
+        }
     }
     return count;
 }
