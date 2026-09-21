@@ -1,19 +1,17 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Source/UI/Style.h"
 
-// Renders the installer/DMG artwork in Hypernova's cosmic look. The nebula and black hole are a CPU port of
-// the plug-in's backdrop shader (Source/UI/Cosmos.h), so the disk image, the installer and the plug-in match.
-//   packaging/art/dmg-background.png (+@2x)   disk image window
-//   packaging/art/AppIcon.png                 installer app + volume icon (1024)
-//   packaging/art/PackIcon.png, ExtrasIcon.png folder icons in the disk image
-//   packaging/art/nebula.png, disk.png         layers the installer app animates
-//   packaging/resources/background.png        art card in the macOS Installer
+// Renders the installer/DMG artwork.
+//   packaging/art/dmg-background.png (+@2x)   disk image window, in the Paper house style (docs/style.css)
+//   packaging/resources/background.png        art card in the macOS Installer, Paper style
+//   packaging/art/AppIcon.png                 installer app + volume icon (1024): white tile, orange dot
+//   packaging/art/PackIcon.png, ExtrasIcon.png folder icons in the disk image, paper white
 // MakeInstallerArt <repoRoot>
 using namespace ab::ui;
 
 namespace
 {
-    const juce::Colour ion { 0xff46e8ff }, violet { 0xff8a5cff }, gold { 0xffffa94a }, plasma { 0xffff4f9a };
+    const juce::Colour violet { 0xff8a5cff }, gold { 0xffffa94a };
 
     // ---- shader port ------------------------------------------------------------------------------------
     struct V3 { float r, g, b; };
@@ -110,81 +108,140 @@ namespace
         return img;
     }
 
-    // Glass plate like the plug-in's panels, with a starlight rim.
-    void glass (juce::Graphics& g, juce::Rectangle<float> r, float radius, juce::Colour rimColour, float strength)
+    // ---- Paper --------------------------------------------------------------------------------------------
+    namespace paper
     {
-        glowRect (g, r, radius, rimColour, strength);
-        g.setColour (juce::Colour (0x8c0b0d1a));
-        g.fillRoundedRectangle (r, radius);
-        juce::ColourGradient rim (rimColour.withAlpha (0.85f), r.getX(), r.getY(), rimColour.withAlpha (0.1f), r.getRight(), r.getBottom(), false);
-        g.setGradientFill (rim);
-        g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.3f);
+        const juce::Colour bg { 0xfff2f1ee }, card { 0xffffffff }, rule { 0xffd9d8d3 },
+                           ink { 0xff111111 }, ink2 { 0xff4a4a4a }, ink3 { 0xff8b8b88 }, accent { 0xffff5a1f };
+
+        // Space Grotesk (variable; its named instances resolve once registered with CoreText) and Space Mono.
+        void registerFonts (const juce::File& root) { juce::Typeface::scanFolderForFonts (root.getChildFile ("Resources/Fonts")); }
+        juce::Font grotesk (float h, bool bold = true) { return juce::Font (juce::FontOptions ("Space Grotesk", bold ? "Bold" : "Regular", h)); }
+        juce::Font mono (float h, bool bold = false) { return juce::Font (juce::FontOptions ("Space Mono", bold ? "Bold" : "Regular", h)); }
+
+        // The site's drawText, with a warning if the line would not fit (so a copy change can't clip silently).
+        void text (juce::Graphics& g, const juce::String& t, juce::Rectangle<float> r, juce::Justification j)
+        {
+            if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), t) > r.getWidth())
+                std::printf ("warning: \"%s\" is wider than %.0f px\n", t.toRawUTF8(), r.getWidth());
+            g.drawText (t, r, j, false);
+        }
+
+        // White card, 1px rule border, soft lift shadow.
+        void cardAt (juce::Graphics& g, juce::Rectangle<float> r, float radius, juce::Colour border = rule, float borderW = 1.0f)
+        {
+            juce::Path p;
+            p.addRoundedRectangle (r, radius);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.10f), 26, { 0, 12 }).drawForPath (g, p);
+            juce::DropShadow (juce::Colours::black.withAlpha (0.06f), 3, { 0, 1 }).drawForPath (g, p);
+            g.setColour (card);
+            g.fillPath (p);
+            g.setColour (border);
+            g.drawRoundedRectangle (r.reduced (borderW * 0.5f), radius, borderW);
+        }
+
+        void dot (juce::Graphics& g, juce::Point<float> c, float d)
+        {
+            g.setColour (accent);
+            g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (c));
+        }
     }
 
     juce::Image dmgBackground (float scale)
     {
+        using namespace paper;
         const int w = 660, h = 440;
-        auto img = cosmos (w, h, scale, { 590, 58 }, 20.0f, 0.3f);
+        juce::Image img (juce::Image::RGB, juce::roundToInt (w * scale), juce::roundToInt (h * scale), false);
         juce::Graphics g (img);
         g.addTransform (juce::AffineTransform::scale (scale));
+        g.fillAll (bg);
 
-        g.setGradientFill (juce::ColourGradient (Colours::text, 34, 26, juce::Colour (0xffd9c8ff), 360, 60, false));
-        g.setFont (heavy (30.0f).withExtraKerningFactor (0.18f));
-        g.drawText ("HYPERNOVA", juce::Rectangle<float> (34, 24, 460, 36), juce::Justification::centredLeft, false);
-        g.setColour (Colours::textDim);
-        g.setFont (font (10.0f, true).withExtraKerningFactor (0.34f));
-        g.drawText ("WAVETABLE SPACE SYNTH", juce::Rectangle<float> (36, 60, 400, 16), juce::Justification::centredLeft, false);
+        // Wordmark, top-left: the orange dot, then lowercase hypernova; the sub-line in mono.
+        dot (g, { 41, 41 }, 11);
+        g.setColour (ink);
+        g.setFont (grotesk (27).withExtraKerningFactor (-0.03f));
+        text (g, "hypernova", { 53, 24, 300, 34 }, juce::Justification::centredLeft);
+        g.setColour (ink3);
+        g.setFont (mono (10.5f));
+        text (g, "wavetable synthesizer", { 54, 55, 300, 16 }, juce::Justification::centredLeft);
+        g.setColour (ink2);
+        g.setFont (mono (10.0f));
+        text (g, "vst3 / au / standalone / free", { 326, 34, 300, 14 }, juce::Justification::centredRight);
 
-        // Finder draws each icon centred at (130|330|530, 200) with its name just below, on a pale band.
-        struct Plate { float x; juce::Colour c; const char* caption; };
-        const Plate plates[] = { { 130, ion, "1  DOUBLE-CLICK TO INSTALL" }, { 330, gold, "FREE EXCLUSIVE SOUNDS" }, { 530, violet, "PKG, UNINSTALL, READ ME" } };
+        // Finder draws each icon (104 px) centred at (130|330|530, 200) with its name just below; the cards sit
+        // behind them. Positions come from scripts/make-dmg.sh.
+        struct Plate { float x; const char* caption; bool first; };
+        const Plate plates[] = { { 130, "double-click to install", true }, { 330, "free exclusive sounds", false }, { 530, "pkg, uninstall, read me", false } };
         for (const auto& p : plates)
         {
-            auto card = juce::Rectangle<float> (170, 212).withCentre ({ p.x, 226 });
-            glass (g, card, 20.0f, p.c, p.x == 130 ? 1.2f : 0.5f);
-            g.setColour (juce::Colour (0xffeef0ff));
-            g.fillRoundedRectangle (juce::Rectangle<float> (150, 24).withCentre ({ p.x, 272 }), 12.0f);
-            g.setColour (p.c);
-            g.setFont (font (8.5f, true).withExtraKerningFactor (0.2f));
-            g.drawText (p.caption, juce::Rectangle<float> (170, 16).withCentre ({ p.x, 306 }), juce::Justification::centred, false);
+            auto c = juce::Rectangle<float> (170, 212).withCentre ({ p.x, 226 });
+            cardAt (g, c, 16.0f, p.first ? accent : rule, p.first ? 1.5f : 1.0f);
+            g.setColour (rule);
+            g.fillRect (juce::Rectangle<float> (c.getX() + 16, 288, c.getWidth() - 32, 1));
+            g.setFont (mono (10.5f, p.first));
+            const float tw = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), p.caption);
+            if (p.first)
+                dot (g, { p.x - tw * 0.5f - 5.0f, 306 }, 6);
+            g.setColour (p.first ? ink : ink2);
+            if (p.first)
+            {
+                text (g, p.caption, juce::Rectangle<float> (tw + 2, 16).withCentre ({ p.x + 6.0f, 306 }), juce::Justification::centred);
+            }
+            else
+                text (g, p.caption, juce::Rectangle<float> (c.getWidth() - 16, 16).withCentre ({ p.x, 306 }), juce::Justification::centred);
         }
-        g.setColour (juce::Colours::black.withAlpha (0.45f)); // keeps the notes readable over the bright nebula
-        g.fillRoundedRectangle (juce::Rectangle<float> (40, 362, 580, 50), 12.0f);
-        g.setColour (Colours::text.withAlpha (0.85f));
-        g.setFont (font (11.0f));
-        g.drawText ("Installs the VST3 + AU for Ableton Live, the standalone app and the FOUNDERS PACK. Updates replace the old version.",
-                    juce::Rectangle<float> (24, 368, 612, 18), juce::Justification::centred, false);
-        g.setColour (Colours::text.withAlpha (0.85f));
-        g.drawText ("Older Mac (macOS 10.13 to 11)? Open Everything else and double-click Install Hypernova.pkg.",
-                    juce::Rectangle<float> (24, 388, 612, 18), juce::Justification::centred, false);
+
+        // Footer: what it installs, and the older-Mac hint.
+        g.setColour (rule);
+        g.fillRect (juce::Rectangle<float> (34, 358, 592, 1));
+        g.setColour (ink);
+        g.setFont (grotesk (12.0f, false));
+        text (g, "installs the vst3 + au for ableton live, the standalone app and the founders pack. updates replace the old version.",
+              { 34, 370, 592, 18 }, juce::Justification::centredLeft);
+        g.setColour (ink2);
+        g.setFont (mono (10.0f));
+        text (g, "older mac (macOS 10.13 to 11)? open everything else and double-click install hypernova.pkg.",
+              { 34, 392, 592, 16 }, juce::Justification::centredLeft);
         return img;
     }
 
+    // App icon: a white machined tile with the orange dot, raised off a soft shadow, like the plug-in's knobs.
     juce::Image appIcon()
     {
+        using namespace paper;
         const int s = 1024;
         juce::Image img (juce::Image::ARGB, s, s, true);
         juce::Graphics g (img);
-        auto body = juce::Rectangle<float> (824, 824).withCentre ({ 512, 512 });
-        juce::Path clip;
-        clip.addRoundedRectangle (body, 186.0f);
-        g.setColour (juce::Colours::black.withAlpha (0.4f));
-        g.fillPath (clip, juce::AffineTransform::translation (0, 14));
+        auto body = juce::Rectangle<float> (824, 824).withCentre ({ 512, 500 });
+        for (int i = 6; i >= 1; --i)
         {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.reduceClipRegion (clip);
-            const auto space = cosmos (412, 412, 2.0f, { 206, 206 }, 62.0f, 1.7f);
-            g.setOpacity (1.0f);
-            g.drawImage (space, body);
+            g.setColour (juce::Colours::black.withAlpha (0.025f * (float) (7 - i)));
+            g.fillRoundedRectangle (body.translated (0, 6.0f * (float) i).expanded (2.0f * (float) i), 186.0f + (float) i * 2.0f);
         }
-        g.setGradientFill (juce::ColourGradient (gold, body.getX(), body.getY(), violet, body.getRight(), body.getBottom(), false));
-        g.strokePath (clip, juce::PathStrokeType (10.0f));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffffffff), 512, body.getY(), juce::Colour (0xffeceae5), 512, body.getBottom(), false));
+        g.fillRoundedRectangle (body, 186.0f);
+        g.setColour (rule);
+        g.drawRoundedRectangle (body.reduced (2.0f), 184.0f, 4.0f);
+        // the dot: a solid orange cylinder with a lit cap
+        const juce::Point<float> c (512, 480);
+        const float r = 250.0f, depth = 40.0f;
+        g.setColour (juce::Colours::black.withAlpha (0.12f));
+        g.fillEllipse (juce::Rectangle<float> (r * 2, r * 2).withCentre (c.translated (0, depth + 18)));
+        g.setColour (accent.darker (0.45f));
+        g.fillEllipse (juce::Rectangle<float> (r * 2, r * 2).withCentre (c.translated (0, depth)));
+        g.fillRect (juce::Rectangle<float> (c.x - r, c.y, r * 2, depth));
+        g.setGradientFill (juce::ColourGradient (accent.brighter (0.25f), c.x - r * 0.5f, c.y - r * 0.6f, accent.darker (0.1f), c.x + r, c.y + r, true));
+        g.fillEllipse (juce::Rectangle<float> (r * 2, r * 2).withCentre (c));
+        g.setColour (juce::Colours::white.withAlpha (0.32f));
+        g.fillEllipse (juce::Rectangle<float> (r * 0.9f, r * 0.45f).withCentre (c.translated (-r * 0.3f, -r * 0.48f)));
         return img;
     }
 
-    // Folder shape filled with space, rimmed in colour; the pack gets a star, the extras folder lines.
-    juce::Image folderIcon (juce::Colour c, bool star, float seed)
+    // Folder icons: a white folder with a thin rule and a lifted shadow; the pack gets an orange star,
+    // the extras folder three ink lines.
+    juce::Image folderIcon (juce::Colour c, bool star, float)
     {
+        using namespace paper;
         const int s = 1024;
         juce::Image img (juce::Image::ARGB, s, s, true);
         juce::Graphics g (img);
@@ -202,59 +259,29 @@ namespace
         folder.lineTo (body.getX() + 60, body.getBottom());
         folder.quadraticTo (body.getX(), body.getBottom(), body.getX(), body.getBottom() - 60);
         folder.closeSubPath();
-        g.setColour (juce::Colours::black.withAlpha (0.4f));
-        g.fillPath (folder, juce::AffineTransform::translation (0, 16));
+        for (int i = 5; i >= 1; --i)
         {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.reduceClipRegion (folder);
-            g.setOpacity (1.0f);
-            g.drawImage (cosmos (430, 400, 2.0f, {}, 0.0f, seed), body.expanded (0, 80));
-            g.setGradientFill (juce::ColourGradient (c.withAlpha (0.3f), 512, 600, c.withAlpha (0.0f), 512, 180, true));
-            g.fillRect (body.expanded (0, 80));
+            g.setColour (juce::Colours::black.withAlpha (0.03f * (float) (6 - i)));
+            g.fillPath (folder, juce::AffineTransform::translation (0, 6.0f * (float) i));
         }
-        g.setGradientFill (juce::ColourGradient (c, body.getX(), body.getY(), c.interpolatedWith (juce::Colours::white, 0.35f), body.getRight(), body.getBottom(), false));
-        g.strokePath (folder, juce::PathStrokeType (16.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xffffffff), 512, body.getY(), juce::Colour (0xffeeede9), 512, body.getBottom(), false));
+        g.fillPath (folder);
+        g.setColour (rule.darker (0.1f));
+        g.strokePath (folder, juce::PathStrokeType (8.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         const juce::Point<float> ctr (512, 600);
         if (star)
         {
             juce::Path st;
-            st.addStar (ctr, 4, 30.0f, 210.0f, 0.0f);
-            g.setColour (c.withAlpha (0.25f));
+            st.addStar (ctr, 4, 34.0f, 200.0f, 0.0f);
+            g.setColour (c);
             g.fillPath (st);
-            glowStroke (g, st, c.interpolatedWith (juce::Colours::white, 0.2f), 14.0f, 1.3f);
-            g.setGradientFill (juce::ColourGradient (juce::Colours::white, ctr.x, ctr.y, c.withAlpha (0.0f), ctr.x + 80, ctr.y, true));
-            g.fillEllipse (juce::Rectangle<float> (160, 160).withCentre (ctr));
         }
         else
-            for (int i = 0; i < 4; ++i)
+            for (int i = 0; i < 3; ++i)
             {
-                juce::Path line;
-                const float y = 470.0f + i * 80.0f, lw = i == 3 ? 260.0f : 420.0f;
-                line.startNewSubPath (ctr.x - 210, y);
-                line.lineTo (ctr.x - 210 + lw, y);
-                glowStroke (g, line, c, 20.0f, 1.0f);
-            }
-        return img;
-    }
-
-    // Face-on accretion disk (transparent): the installer spins it and squashes it into perspective.
-    juce::Image diskImage()
-    {
-        const int s = 1024;
-        juce::Image img (juce::Image::ARGB, s, s, true);
-        juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
-        for (int y = 0; y < s; ++y)
-            for (int x = 0; x < s; ++x)
-            {
-                const float dx = (float) x - 512.0f, dy = (float) y - 512.0f;
-                const float rd = std::sqrt (dx * dx + dy * dy) / 190.0f;
-                const float ang = std::atan2 (dy, dx);
-                const float disk = smooth (2.7f, 1.35f, rd) * smooth (0.95f, 1.3f, rd);
-                const float streak = 0.5f + 0.5f * std::sin (ang * 5.0f + rd * 7.0f) * (0.6f + 0.4f * noise (ang * 3.0f + 9.0f, rd * 4.0f));
-                const float t = juce::jlimit (0.0f, 1.0f, rd - 1.3f);
-                const float a = juce::jlimit (0.0f, 1.0f, disk * streak * 1.3f);
-                const juce::Colour col = gold.interpolatedWith (plasma, t);
-                bd.setPixelColour (x, y, col.withAlpha (a));
+                const float y = 500.0f + i * 90.0f, lw = i == 2 ? 260.0f : 420.0f;
+                g.setColour (ink);
+                g.fillRoundedRectangle (juce::Rectangle<float> (ctr.x - 210, y - 12, lw, 24), 12.0f);
             }
         return img;
     }
@@ -262,27 +289,23 @@ namespace
     juce::Image installerArt()
     {
         // The macOS Installer draws this behind its window, bottom-left: a small card, the rest transparent.
+        using namespace paper;
         const int w = 620, h = 418;
         juce::Image img (juce::Image::ARGB, w * 2, h * 2, true);
         juce::Graphics g (img);
         g.addTransform (juce::AffineTransform::scale (2.0f));
-        auto card = juce::Rectangle<float> (12, 262, 136, 144);
-        juce::Path clip;
-        clip.addRoundedRectangle (card, 16.0f);
-        {
-            juce::Graphics::ScopedSaveState ss (g);
-            g.reduceClipRegion (clip);
-            g.setOpacity (1.0f);
-            g.drawImage (cosmos (136, 144, 2.0f, { 68, 50 }, 16.0f, 2.4f), card);
-        }
-        g.setGradientFill (juce::ColourGradient (gold.withAlpha (0.8f), card.getX(), card.getY(), violet.withAlpha (0.4f), card.getRight(), card.getBottom(), false));
-        g.strokePath (clip, juce::PathStrokeType (1.0f));
-        g.setColour (Colours::text);
-        g.setFont (heavy (15.0f).withExtraKerningFactor (0.12f));
-        g.drawText ("HYPERNOVA", juce::Rectangle<float> (card.getX(), card.getY() + 90, card.getWidth(), 22), juce::Justification::centred, false);
-        g.setColour (Colours::textDim);
-        g.setFont (font (6.5f, true).withExtraKerningFactor (0.3f));
-        g.drawText ("WAVETABLE SPACE SYNTH", juce::Rectangle<float> (card.getX(), card.getY() + 112, card.getWidth(), 12), juce::Justification::centred, false);
+        auto c = juce::Rectangle<float> (12, 262, 136, 144);
+        cardAt (g, c, 14.0f);
+        const float cx = c.getCentreX();
+        g.setColour (accent.withAlpha (0.14f));
+        g.fillEllipse (juce::Rectangle<float> (40, 40).withCentre ({ cx, c.getY() + 50 }));
+        dot (g, { cx, c.getY() + 50 }, 22);
+        g.setColour (ink);
+        g.setFont (grotesk (19.0f).withExtraKerningFactor (-0.03f));
+        text (g, "hypernova", { c.getX(), c.getY() + 84, c.getWidth(), 24 }, juce::Justification::centred);
+        g.setColour (ink2);
+        g.setFont (mono (8.5f));
+        text (g, "wavetable synthesizer", { c.getX() + 6, c.getY() + 110, c.getWidth() - 12, 12 }, juce::Justification::centred);
         return img;
     }
 
@@ -300,13 +323,12 @@ int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
     const juce::File root (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File::getCurrentWorkingDirectory());
+    paper::registerFonts (root);
     save (dmgBackground (1.0f), root.getChildFile ("packaging/art/dmg-background.png"));
     save (dmgBackground (2.0f), root.getChildFile ("packaging/art/dmg-background@2x.png"));
     save (appIcon(), root.getChildFile ("packaging/art/AppIcon.png"));
-    save (folderIcon (gold, true, 4.1f), root.getChildFile ("packaging/art/PackIcon.png"));
-    save (folderIcon (violet, false, 6.3f), root.getChildFile ("packaging/art/ExtrasIcon.png"));
-    save (cosmos (680, 460, 2.0f, {}, 0.0f, 0.9f, false), root.getChildFile ("packaging/art/nebula.png"));
-    save (diskImage(), root.getChildFile ("packaging/art/disk.png"));
+    save (folderIcon (paper::accent, true, 0.0f), root.getChildFile ("packaging/art/PackIcon.png"));
+    save (folderIcon (paper::ink, false, 0.0f), root.getChildFile ("packaging/art/ExtrasIcon.png"));
     save (installerArt(), root.getChildFile ("packaging/resources/background.png"));
     return 0;
 }
