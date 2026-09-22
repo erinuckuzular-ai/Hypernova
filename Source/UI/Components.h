@@ -1236,16 +1236,35 @@ public:
         g.setColour (on ? colour.withAlpha (0.75f) : (over ? Colours::lineHi : Colours::line));
         g.drawRoundedRectangle (face, face.getHeight() * 0.5f, 1.0f);
         r = face;
-        auto dot = r.removeFromLeft (r.getHeight()).withSizeKeepingCentre (6, 6);
-        // Off still reads as a live switch (a ring waiting to light), not as greyed out.
-        if (on) { g.setColour (colour); g.fillEllipse (dot); }
-        else { g.setColour (colour.withAlpha (over ? 0.8f : 0.55f)); g.drawEllipse (dot.reduced (0.5f), 1.2f); }
+        // The light goes when there isn't room for it, so a narrow switch still shows its whole name.
+        const bool roomy = fits (r.getWidth() - r.getHeight() - 6.0f);
+        if (roomy)
+        {
+            auto dot = r.removeFromLeft (r.getHeight()).withSizeKeepingCentre (6, 6);
+            // Off still reads as a live switch (a ring waiting to light), not as greyed out.
+            if (on) { g.setColour (colour); g.fillEllipse (dot); }
+            else { g.setColour (colour.withAlpha (over ? 0.8f : 0.55f)); g.drawEllipse (dot.reduced (0.5f), 1.2f); }
+        }
+        else if (on)
+        {
+            g.setColour (colour.withAlpha (0.18f));
+            g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        }
         g.setColour (on ? Colours::text.get() : Colours::text.withAlpha (over ? 0.9f : 0.72f));
-        g.setFont (font (9.5f, true).withExtraKerningFactor (0.12f));
-        g.drawText (getButtonText(), r.withTrimmedRight (6), juce::Justification::centredLeft, false);
+        g.setFont (labelFont());
+        g.drawText (getButtonText(), roomy ? r.withTrimmedRight (6) : r, roomy ? juce::Justification::centredLeft : juce::Justification::centred, false);
     }
+
+    // For the layout checks: how much wider the name is than the room it has (1 or less means it fits).
+    float textOverflow() const
+    {
+        return juce::GlyphArrangement::getStringWidth (labelFont(), getButtonText()) / juce::jmax (1.0f, (float) getWidth() - 12.0f);
+    }
+
 private:
     ThemeColour colour;
+    static juce::Font labelFont() { return font (9.5f, true).withExtraKerningFactor (0.12f); }
+    bool fits (float room) const { return juce::GlyphArrangement::getStringWidth (labelFont(), getButtonText()) <= room; }
 };
 
 //==============================================================================

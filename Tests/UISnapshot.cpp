@@ -533,6 +533,10 @@ int main (int argc, char** argv)
                 if (auto* w = dynamic_cast<ab::ui::Widget*> (c))
                     if (w->editing && ! w->collapsed && w->chromeCollides())
                         issues.add (state + ": " + pathOf (c) + " layout-mode title runs into its buttons (" + juce::String (w->getWidth()) + " px wide)");
+                if (auto* pill = dynamic_cast<ab::ui::PillToggle*> (c))
+                    if (pill->textOverflow() > 1.0f)
+                        issues.add (state + ": " + pathOf (c) + " switch name doesn't fit ('" + pill->getButtonText() + "' needs "
+                                    + juce::String (juce::roundToInt (pill->textOverflow() * 100.0f)) + "% of the room)");
                 if (auto* k = dynamic_cast<ab::ui::Knob*> (c))
                     if (k->labelOverflow() > 1.15f)
                         issues.add (state + ": " + pathOf (c) + " label squashed to fit (" + juce::String (k->labelOverflow(), 2) + "x)");
