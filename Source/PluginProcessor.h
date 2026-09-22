@@ -180,6 +180,9 @@ public:
     // The effects rack as shown: which effects are in it (in chain order). Effects that are doing something
     // are always in it; the rest only when added. Removing one switches it off.
     static const char* fxOnParam (int fxId);
+    static juce::String fxParamPrefix (int fxId);  // "dist", "dly", ... : the id every one of its controls starts with
+    void resetFx (int fxId);                       // that effect's controls back to their defaults (undoable)
+    void moveFxBy (int fxId, int places);          // earlier or later in the chain (undoable)
     bool fxAudible (int fxId) const;
     std::vector<int> rackEffects() const;          // in chain order
     void addToRack (int fxId);                     // switches it on (with a sensible amount if it was silent)

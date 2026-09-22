@@ -565,6 +565,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         chainButton.onClick = [this] { showChainMenu (&chainButton, {}); };
         W->addAndMakeVisible (rack);
         rack.onAdd = [this] (juce::Point<int> pos) { showAddEffectMenu (nullptr, pos); };
+        rack.onModuleMenu = [this] (int fx, juce::Point<int> pos) { showRackModuleMenu (fx, pos); };
         buildRackModules();
         // The rack keeps its height and gets as wide as its place; the modules scroll when there isn't room.
         w.fitHeight = true;
@@ -1554,12 +1555,12 @@ void HypernovaAudioProcessorEditor::showSampleMenu()
 // Each effect module's own controls, laid out on its faceplate under the display.
 void HypernovaAudioProcessorEditor::buildRackModules()
 {
-    const auto c = Palette::fx;
     constexpr int ky = 90, by = 162;
-    auto kn = [&] (int fx, const char* id, const char* label, int x) { knob (id, label, c, { x, ky, 58, 68 }, 38, fx < 0 ? &rack.output() : &rack.module (fx)); };
+    // Each unit wears its own colour: its light, its knobs and its display.
+    auto kn = [&] (int fx, const char* id, const char* label, int x) { knob (id, label, ab::ui::fxColour (fx), { x, ky, 58, 68 }, 38, fx < 0 ? &rack.output() : &rack.module (fx)); };
     auto cb = [&] (int fx, const char* id, const juce::StringArray& items, juce::Rectangle<int> r) { combo (id, items, r, &rack.module (fx)); };
     for (int fx = 0; fx < ab::NumFx; ++fx)
-        toggle (std::make_unique<PowerLed> (c), HypernovaAudioProcessor::fxOnParam (fx), { 8, 6, 22, 22 },
+        toggle (std::make_unique<PowerLed> (ab::ui::fxColour (fx)), HypernovaAudioProcessor::fxOnParam (fx), { 8, 6, 22, 22 },
                 "Switch " + ab::fxRackNames()[fx].toLowerCase() + " off and on", &rack.module (fx));
 
     kn (ab::FxDist, "distDrive", "DRIVE", 30);   kn (ab::FxDist, "distMix", "MIX", 112);
@@ -1581,14 +1582,56 @@ void HypernovaAudioProcessorEditor::buildRackModules()
     kn (ab::FxDelay, "dlyFb", "FEEDBACK", 20);   kn (ab::FxDelay, "dlyTone", "TONE", 96);     kn (ab::FxDelay, "dlyMix", "MIX", 172);
     cb (ab::FxDelay, "dlyTime", delayTimeNames(), { 10, by, 72, 24 });
     cb (ab::FxDelay, "dlyStyle", juce::StringArray { "Digital", "Reverse", "Granular" }, { 86, by, 96, 24 });
-    toggle (std::make_unique<PillToggle> ("PING", c), "dlyPing", { 186, by + 1, 54, 22 }, "Ping-pong: repeats bounce left and right", &rack.module (ab::FxDelay));
+    toggle (std::make_unique<PillToggle> ("PING", ab::ui::fxColour (ab::FxDelay)), "dlyPing", { 186, by + 1, 54, 22 }, "Ping-pong: repeats bounce left and right", &rack.module (ab::FxDelay));
     kn (ab::FxReverb, "verbSize", "SIZE", 12);   kn (ab::FxReverb, "verbShimmer", "SHIMMER", 76); kn (ab::FxReverb, "verbMix", "MIX", 140);
     cb (ab::FxReverb, "verbMode", juce::StringArray { "Space", "Plate", "Spring", "Room" }, { 10, by, 190, 24 });
     kn (ab::FxEq, "eqLow", "LOW", 10);           kn (ab::FxEq, "eqMidGain", "MID", 68);      kn (ab::FxEq, "eqMidFreq", "FREQ", 126);
     kn (ab::FxEq, "eqMidQ", "WIDTH", 184);       kn (ab::FxEq, "eqHigh", "HIGH", 242);
     kn (-1, "width", "WIDTH", 46);
-    toggle (std::make_unique<PillToggle> ("MONO BASS", c), "monoBass", { 10, by + 1, 130, 22 },
+    toggle (std::make_unique<PillToggle> ("MONO BASS", ab::ui::fxColour (-1)), "monoBass", { 10, by + 1, 130, 22 },
             "Keeps everything under 120 Hz in mono so the bass hits hard on club systems", &rack.output());
+}
+
+// Right-click a unit in the rack: everything you can do to it without leaving the rack.
+void HypernovaAudioProcessorEditor::showRackModuleMenu (int fxId, juce::Point<int> screenPos)
+{
+    const auto rackNow = processor.rackEffects();
+    const auto at = std::find (rackNow.begin(), rackNow.end(), fxId);
+    const int place = at == rackNow.end() ? -1 : (int) (at - rackNow.begin());
+    juce::PopupMenu m, replace;
+    m.setLookAndFeel (&lookAndFeel);
+    m.addSectionHeader (ab::fxRackNames()[fxId]);
+    const bool on = processor.apvts.getRawParameterValue (HypernovaAudioProcessor::fxOnParam (fxId))->load() > 0.5f;
+    m.addItem (1, on ? "Switch it off" : "Switch it on");
+    m.addItem (2, "Move it earlier in the chain", place > 0);
+    m.addItem (3, "Move it later in the chain", place >= 0 && place < (int) rackNow.size() - 1);
+    m.addItem (4, "Reset its controls");
+    for (int fx = 0; fx < ab::NumFx; ++fx)
+        if (std::find (rackNow.begin(), rackNow.end(), fx) == rackNow.end())
+            replace.addItem (100 + fx, ab::fxRackNames()[fx]);
+    m.addSubMenu ("Replace it with", replace, replace.containsAnyActiveItems());
+    m.addSeparator();
+    m.addItem (5, "Take it out of the rack");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }), [this, fxId, place] (int r)
+    {
+        if (r == 0) return;
+        if (r == 1) processor.setParam (HypernovaAudioProcessor::fxOnParam (fxId),
+                                        processor.apvts.getRawParameterValue (HypernovaAudioProcessor::fxOnParam (fxId))->load() > 0.5f ? 0.0f : 1.0f);
+        else if (r == 2 || r == 3) processor.moveFxBy (fxId, r == 2 ? -1 : 1);
+        else if (r == 4) { processor.resetFx (fxId); showMessage (ab::fxRackNames()[fxId] + " back to its defaults"); }
+        else if (r == 5) { processor.removeFromRack (fxId); showMessage (ab::fxRackNames()[fxId] + " taken out (and switched off)"); }
+        else if (r >= 100 && r < 100 + ab::NumFx)
+        {
+            // Replace: the new effect takes this one's place in the chain.
+            const int fx = r - 100;
+            processor.undoManager.beginNewTransaction ("Replace effect");
+            processor.removeFromRack (fxId);
+            processor.addToRack (fx);
+            processor.moveFxBy (fx, place - (int) processor.rackEffects().size() + 1);
+            showMessage (ab::fxRackNames()[fx] + " took " + ab::fxRackNames()[fxId] + "'s place");
+        }
+        rack.refresh (true);
+    });
 }
 
 void HypernovaAudioProcessorEditor::showAddEffectMenu (juce::Component* target, juce::Point<int> screenPos)

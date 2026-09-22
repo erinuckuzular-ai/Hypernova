@@ -1396,6 +1396,45 @@ void HypernovaAudioProcessor::removeFromRack (int id)
     setParam (fxOnParam (id), 0.0f);
 }
 
+juce::String HypernovaAudioProcessor::fxParamPrefix (int fxId)
+{
+    const juce::String on (fxOnParam (fxId));
+    return on.dropLastCharacters (2); // "distOn" -> "dist"
+}
+
+void HypernovaAudioProcessor::resetFx (int fxId)
+{
+    const auto prefix = fxParamPrefix (fxId);
+    undoManager.beginNewTransaction ("Reset " + fxRackNames()[fxId]);
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+            if (rp->getParameterID().startsWith (prefix) && rp->getParameterID() != juce::String (fxOnParam (fxId)))
+                rp->setValueNotifyingHost (rp->getDefaultValue());
+}
+
+void HypernovaAudioProcessor::moveFxBy (int fxId, int places)
+{
+    auto order = getFxOrder();
+    const auto here = std::find (order.begin(), order.end(), (juce::uint8) fxId);
+    if (here == order.end()) return;
+    // Only the effects in the rack count as steps, so moving skips the ones that aren't shown.
+    const auto rack = rackEffects();
+    const auto at = std::find (rack.begin(), rack.end(), fxId);
+    if (at == rack.end()) return;
+    const int to = juce::jlimit (0, (int) rack.size() - 1, (int) (at - rack.begin()) + places);
+    if (to == (int) (at - rack.begin())) return;
+    auto shown = rack;
+    shown.erase (shown.begin() + (at - rack.begin()));
+    shown.insert (shown.begin() + to, fxId);
+    // Write the new order back into the full chain, keeping effects that aren't in the rack where they are.
+    std::vector<int> slots;
+    for (int i = 0; i < NumFx; ++i)
+        if (std::find (rack.begin(), rack.end(), (int) order[(size_t) i]) != rack.end()) slots.push_back (i);
+    for (size_t k = 0; k < slots.size() && k < shown.size(); ++k) order[(size_t) slots[k]] = (juce::uint8) shown[k];
+    undoManager.beginNewTransaction ("Move " + fxRackNames()[fxId]);
+    setFxOrder (order);
+}
+
 bool HypernovaAudioProcessor::isFxParam (const juce::String& id)
 {
     static const char* prefixes[] = { "dist", "ott", "chorus", "dly", "verb", "eq", "flang", "tape", "gate", "pan", "fxFlt", "shift" };

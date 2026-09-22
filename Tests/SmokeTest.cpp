@@ -800,6 +800,29 @@ int main (int argc, char** argv)
                "loading it brings back the order and the settings");
         check (std::abs (e.apvts.getRawParameterValue ("cutoff")->load() - 500.0f) < 1.0f, "and leaves the synth alone");
         file.deleteFile();
+
+        // Right-click menu on a unit: move it along the chain, reset its controls, replace it.
+        {
+            HypernovaAudioProcessor p;
+            for (int fx : { ab::FxDist, ab::FxDelay, ab::FxReverb }) p.addToRack (fx);
+            auto place = [&] (int fx)
+            {
+                const auto r = p.rackEffects();
+                const auto at = std::find (r.begin(), r.end(), fx);
+                return at == r.end() ? -1 : (int) (at - r.begin());
+            };
+            const int was = place (ab::FxDist);
+            p.moveFxBy (ab::FxDist, 1);
+            check (place (ab::FxDist) == was + 1, "moving a unit later puts it one place along (" + juce::String (was) + " -> " + juce::String (place (ab::FxDist)) + ")");
+            p.moveFxBy (ab::FxDist, -5);
+            check (place (ab::FxDist) == 0, "and moving it earlier stops at the front");
+            p.setParam ("dlyFb", 0.8f);
+            p.resetFx (ab::FxDelay);
+            check (std::abs (p.apvts.getRawParameterValue ("dlyFb")->load() - 0.8f) > 0.05f
+                   && p.apvts.getRawParameterValue ("dlyOn")->load() > 0.5f, "resetting a unit puts its controls back but leaves it switched on");
+            check (juce::String (HypernovaAudioProcessor::fxOnParam (ab::FxDelay)).startsWith (HypernovaAudioProcessor::fxParamPrefix (ab::FxDelay)),
+                   "every control of an effect shares one prefix");
+        }
         std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
         return failures == 0 ? 0 : 1;
     }

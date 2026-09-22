@@ -197,6 +197,7 @@ private:
     juce::TextButton rackAddButton { "+ ADD" };
     void buildRackModules();
     void showAddEffectMenu (juce::Component* target, juce::Point<int> screenPos);
+    void showRackModuleMenu (int fxId, juce::Point<int> screenPos);   // right-click a unit in the rack
     ab::ui::LowEndView lowEndView;
     juce::TextButton phoneButton { "PHONE CHECK" };
     juce::TextButton chainButton { "CHAINS" };

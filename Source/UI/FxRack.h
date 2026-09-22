@@ -26,10 +26,31 @@ struct RackLive
     static float bandHz (int b) { return 30.0f * std::pow (16000.0f / 30.0f, (float) b / (float) (bands - 1)); }
 };
 
+// Each effect has its own colour, so a rack of them reads like a rack of different boxes rather than
+// one long panel. They come from the theme, so they change with it.
+inline ThemeColour fxColour (int fxId)
+{
+    switch (fxId)
+    {
+        case FxDist:    return Palette::sub;
+        case FxTape:    return Palette::fx;
+        case FxOtt:     return Palette::env;
+        case FxPitch:   return Palette::oscB;
+        case FxChorus:  return Palette::oscA;
+        case FxFlanger: return Palette::lfo;
+        case FxFilter:  return Palette::filter;
+        case FxGate:    return Palette::fx;
+        case FxDelay:   return Palette::oscA;
+        case FxReverb:  return Palette::mod;
+        case FxEq:      return Palette::env;
+        default:        return ThemeColour { SlotText };
+    }
+}
+
 class FxModule : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    FxModule (HypernovaAudioProcessor& p, int effect, int width) : proc (p), fxId (effect), designWidth (width)
+    FxModule (HypernovaAudioProcessor& p, int effect, int width) : proc (p), fxId (effect), designWidth (width), colour (fxColour (effect))
     {
         setTooltip (fxId >= 0 ? "Drag the name to move this effect along the chain" : "The output stage: always last");
     }
@@ -37,9 +58,12 @@ public:
     const int fxId;        // -1: the output module
     const int designWidth;
     bool lifted = false;
+    int chainIndex = 0;    // where it sits in the chain, shown on its face
+    ThemeColour colour { SlotText };
 
     std::function<void (FxModule&, const juce::MouseEvent&)> onHeaderDown, onHeaderDrag, onHeaderUp;
     std::function<void (FxModule&)> onRemove;
+    std::function<void (FxModule&, juce::Point<int> screenPos)> onMenuRequest;
 
     static juce::String nameOf (int id) { return id < 0 ? juce::String ("OUTPUT") : fxRackNames()[id]; }
     // Taller than designed: the display takes the extra room, the controls stay along the bottom.
@@ -70,14 +94,35 @@ public:
         g.fillRoundedRectangle (r, 11.0f);
         g.setColour (lifted ? Colours::accent.get() : Colours::lineHi.get());
         g.drawRoundedRectangle (r, 11.0f, lifted ? 1.6f : 1.0f);
-        const auto accent = fxId < 0 ? Colours::text.get() : Palette::fx.get();
+        const auto accent = colour.get();
         g.setColour (accent.withAlpha (on() ? 0.9f : 0.3f));
         g.fillRoundedRectangle (juce::Rectangle<float> (r.getX() + 12.0f, r.getY() + 1.5f, r.getWidth() - 24.0f, 2.0f), 1.0f);
+        // The unit's own tint: a wash of its colour behind the face, stronger at the top.
+        g.setGradientFill (juce::ColourGradient (accent.withAlpha (on() ? 0.1f : 0.03f), 0, r.getY(), accent.withAlpha (0.0f), 0, r.getY() + r.getHeight() * 0.7f, false));
+        g.fillRoundedRectangle (r, 11.0f);
 
-        // Name (the drag handle) and the remove button.
+        // Name (the drag handle, with a grip), its place in the chain, and the remove button.
+        int textX = fxId < 0 ? 12 : 34;
+        if (fxId >= 0)
+        {
+            g.setColour (accent.withAlpha (on() ? 0.8f : 0.4f));
+            for (int i = 0; i < 6; ++i)
+                g.fillEllipse ((float) textX + (float) (i % 2) * 3.4f, 10.0f + (float) (i / 2) * 3.4f, 1.7f, 1.7f);
+            textX += 12;
+        }
         g.setColour (on() ? Colours::text.get() : Colours::textDim.get());
         g.setFont (mono (11.0f).boldened().withExtraKerningFactor (0.12f));
-        g.drawText (nameOf (fxId), juce::Rectangle<int> (fxId < 0 ? 12 : 34, 6, getWidth() - 70, 20), juce::Justification::centredLeft, true);
+        const int nameW = juce::jmax (40, getWidth() - textX - 56);
+        g.drawText (nameOf (fxId), juce::Rectangle<int> (textX, 6, nameW, 20), juce::Justification::centredLeft, true);
+        if (fxId >= 0 && chainIndex > 0)
+        {
+            auto badge = juce::Rectangle<float> (18.0f, 14.0f).withCentre ({ (float) (getWidth() - 40), 16.0f });
+            g.setColour (accent.withAlpha (0.16f));
+            g.fillRoundedRectangle (badge, 7.0f);
+            g.setColour (accent.withAlpha (0.9f));
+            g.setFont (mono (9.0f).boldened());
+            g.drawText (juce::String (chainIndex), badge, juce::Justification::centred, false);
+        }
         if (fxId >= 0)
         {
             const auto b = removeButton().toFloat();
@@ -115,6 +160,7 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (fxId < 0) return;
+        if (e.mods.isPopupMenu()) { if (onMenuRequest) onMenuRequest (*this, e.getScreenPosition()); return; }
         if (eqMouseDown (e)) return;
         if (removeButton().contains (e.getPosition())) { pressedRemove = true; return; }
         pressedRemove = false;
@@ -373,7 +419,7 @@ private:
         }
         sp.lineTo (r.getRight(), r.getBottom());
         sp.closeSubPath();
-        g.setColour (Palette::fx.withAlpha (0.12f));
+        g.setColour (colour.withAlpha (0.12f));
         g.fillPath (sp);
         g.setColour (Colours::line);
         for (float hz : { 100.0f, 1000.0f, 10000.0f }) g.drawVerticalLine ((int) eqX (hz, r), r.getY(), r.getBottom());
@@ -385,7 +431,7 @@ private:
             const float y = juce::jlimit (r.getY(), r.getBottom(), eqY (eqResponseDb (eqHz (x, r)), r));
             if (i == 0) curve.startNewSubPath (x, y); else curve.lineTo (x, y);
         }
-        glowStroke (g, curve, Palette::fx, 1.8f, 0.8f);
+        glowStroke (g, curve, colour, 1.8f, 0.8f);
         // Band points: drag them; scroll on the middle one for its width.
         for (int n = 0; n < 5; ++n)
         {
@@ -474,7 +520,7 @@ private:
     // What each effect is doing, live.
     void paintDisplay (juce::Graphics& g, juce::Rectangle<float> r) const
     {
-        const auto c = (fxId < 0 ? Colours::text : Palette::fx).get().withMultipliedAlpha (on() ? 1.0f : 0.5f);
+        const auto c = colour.get().withMultipliedAlpha (on() ? 1.0f : 0.5f);
         switch (fxId)
         {
             case FxEq: paintEq (g, r); return;
@@ -585,7 +631,7 @@ private:
                     g.strokePath (p, juce::PathStrokeType (1.0f));
                 }
                 const float w = rad * juce::jlimit (0.08f, 1.0f, v ("width") * 0.5f);
-                g.setColour (Palette::fx.withAlpha (0.5f));
+                g.setColour (colour.withAlpha (0.5f));
                 g.drawEllipse (juce::Rectangle<float> (w * 2.0f, rad * 1.8f).withCentre (centre), 1.0f);
                 if (v ("monoBass") > 0.5f)
                 {
@@ -643,6 +689,7 @@ public:
             m.onHeaderDrag = [this] (FxModule& mod, const juce::MouseEvent& e) { dragTo (mod, e); };
             m.onHeaderUp = [this] (FxModule& mod, const juce::MouseEvent&) { endDrag (mod); };
             m.onRemove = [this] (FxModule& mod) { proc.removeFromRack (mod.fxId); refresh (true); };
+            m.onMenuRequest = [this] (FxModule& mod, juce::Point<int> p) { if (onModuleMenu) onModuleMenu (mod.fxId, p); };
             m.setLive (&live);
         }
         outputModule = std::make_unique<FxModule> (p, -1, widthOf (-1));
@@ -652,7 +699,7 @@ public:
         addAndMakeVisible (strip);
         strip.setInterceptsMouseClicks (false, true);
         strip.onPaint = [this] (juce::Graphics& g) { paintStrip (g); };
-        setTooltip ("Effects, in the order the sound goes through them. Drag an effect by its name to move it.");
+        setTooltip ("Effects, in the order the sound goes through them. Drag an effect by its name to move it, right-click it for more.");
     }
 
     FxModule& module (int id) { return *modules[(size_t) id]; }
@@ -714,6 +761,7 @@ public:
     }
     FxModule& output() { return *outputModule; }
     std::function<void (juce::Point<int> screenPos)> onAdd;
+    std::function<void (int fxId, juce::Point<int> screenPos)> onModuleMenu; // right-click a unit
 
     // Picks up changes from elsewhere (presets, undo, automation switching effects in or out).
     void refresh (bool force = false)
@@ -742,13 +790,33 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // The signal path: a line through the modules into the output.
+        // The last patch lead, into the output.
         g.setColour (Colours::line);
-        g.drawHorizontalLine (getHeight() / 2, 0.0f, (float) outputModule->getX());
+        const float y = (float) getHeight() * 0.5f;
+        g.drawHorizontalLine ((int) y, (float) scrollRight(), (float) outputModule->getX());
     }
 
     void paintStrip (juce::Graphics& g)
     {
+        // Patch leads between the units, in the colour of the effect the sound is coming from.
+        const float y = (float) getHeight() * 0.5f;
+        float from = 0.0f;
+        for (size_t i = 0; i <= shown.size(); ++i)
+        {
+            const float to = i < shown.size() ? module (shown[i]).getX() : slotX ((int) shown.size());
+            if (to - from > 6.0f)
+            {
+                const auto c = i == 0 ? Colours::line.get() : fxColour (shown[i - 1]).get().withAlpha (0.55f);
+                g.setColour (c);
+                g.drawLine (from, y, to - 5.0f, y, 1.4f);
+                juce::Path head;
+                head.addTriangle (to - 5.0f, y - 3.5f, to - 5.0f, y + 3.5f, to, y);
+                g.fillPath (head);
+            }
+            if (i < shown.size()) from = (float) module (shown[i]).getRight();
+        }
+
+
         // "+" slot at the end of the chain.
         const auto add = addSlot().toFloat();
         juce::Path outline;
@@ -946,6 +1014,7 @@ private:
             const auto it = std::find (shown.begin(), shown.end(), m->fxId);
             if (it == shown.end()) { m->setVisible (false); shownX.erase (m->fxId); shownY.erase (m->fxId); continue; }
             const float target = slotX ((int) (it - shown.begin()));
+            m->chainIndex = (int) (it - shown.begin()) + 1;
             if (m->fxId == dragId) continue;
             auto& x = shownX[m->fxId];
             auto& y = shownY[m->fxId];
