@@ -790,6 +790,14 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        // The case the units sit in: a shallow trough with a lit top edge, so the rack reads as a rack.
+        const auto trough = juce::Rectangle<float> (0.0f, 0.0f, (float) scrollRight() + gap * 0.5f, (float) getHeight());
+        g.setColour (Colours::bg0.withAlpha (0.35f));
+        g.fillRoundedRectangle (trough, 10.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.18f));
+        g.drawRoundedRectangle (trough.reduced (0.5f), 10.0f, 1.0f);
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.16f), 0, trough.getY(), juce::Colours::transparentBlack, 0, trough.getY() + 8.0f, false));
+        g.fillRoundedRectangle (trough, 10.0f);
         // The last patch lead, into the output.
         g.setColour (Colours::line);
         const float y = (float) getHeight() * 0.5f;
