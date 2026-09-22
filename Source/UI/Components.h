@@ -33,6 +33,28 @@ struct Camera3D
         const float p = distance / (distance + z2);
         return { centre.x + x1 * p * scale, centre.y - y2 * p * scale };
     }
+
+    // Sets scale and centre so a box of the scene lands inside `box` with a little margin: the view then
+    // fills its panel at any shape without ever running off the edges.
+    void fitInto (juce::Rectangle<float> box, juce::Range<float> xs, juce::Range<float> ys, juce::Range<float> zs,
+                  float margin = 0.98f, juce::Point<float> nudge = {})
+    {
+        scale = 1.0f;
+        centre = {};
+        float minX = 1.0e9f, maxX = -1.0e9f, minY = 1.0e9f, maxY = -1.0e9f;
+        for (float x : { xs.getStart(), xs.getEnd() })
+            for (float y : { ys.getStart(), ys.getEnd() })
+                for (float z : { zs.getStart(), zs.getEnd() })
+                {
+                    const auto pt = project (x, y, z);
+                    minX = juce::jmin (minX, pt.x); maxX = juce::jmax (maxX, pt.x);
+                    minY = juce::jmin (minY, pt.y); maxY = juce::jmax (maxY, pt.y);
+                }
+        const float w = juce::jmax (0.001f, maxX - minX), h = juce::jmax (0.001f, maxY - minY);
+        scale = juce::jmin (box.getWidth() / w, box.getHeight() / h) * margin;
+        centre = box.getCentre() - juce::Point<float> ((minX + maxX) * 0.5f, (minY + maxY) * 0.5f) * scale
+                 + juce::Point<float> (nudge.x * box.getWidth(), nudge.y * box.getHeight());
+    }
 };
 
 // Drag to orbit, double-click to reset, and a slow idle sway so the scene always feels alive.
@@ -206,8 +228,8 @@ public:
         const float pos = proc.shownPos[osc].load();
         const auto* user = proc.currentUserTable (osc);
         const auto& wt = user != nullptr ? *user : WavetableBank::get().table (tableIndex);
-        cam.centre = { r.getCentreX(), r.getCentreY() + r.getHeight() * 0.06f };
-        cam.scale = juce::jmin (r.getWidth() * 0.33f, r.getHeight() * 0.74f) * zoom();
+        // The stack of frames, fitted to the panel (the reflection below is allowed to fade off the bottom).
+        cam.fitInto (r, { -1.0f, 1.0f }, { -0.42f, 0.42f }, { -1.0f, 1.0f }, 0.94f * zoom(), { 0.0f, 0.02f });
 
         // The stack of frames and the floor only change with the table or camera: draw once, reuse.
         const auto k = currentKey();
@@ -453,8 +475,12 @@ public:
 
         juce::Graphics::ScopedSaveState save (g);
         g.reduceClipRegion (r.reduced (1).toNearestInt());
-        cam.centre = { r.getCentreX(), r.getCentreY() + r.getHeight() * (mode == Spectrum ? 0.08f : 0.0f) };
-        cam.scale = juce::jmin (r.getWidth() * 0.36f, r.getHeight() * 0.5f) * zoom();
+        if (mode == Spectrum) cam.fitInto (r, { -1.0f, 1.0f }, { -0.1f, 1.0f }, { -1.15f, 1.0f }, 0.96f * zoom(), { 0.0f, 0.02f });
+        else
+        {
+            cam.centre = { r.getCentreX(), r.getCentreY() };
+            cam.scale = juce::jmin (r.getWidth() * 0.36f, r.getHeight() * 0.5f) * zoom();
+        }
 
         if (mode == Spectrum) paintSpectrum (g);
         else if (mode == Orbit) paintOrbit (g);
