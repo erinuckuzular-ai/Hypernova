@@ -305,7 +305,9 @@ void HypernovaAudioProcessorEditor::resized()
 void HypernovaAudioProcessorEditor::paint (juce::Graphics& g)
 {
     everPainted = true;
-    if (canvasShot.isValid())
+    // While the window is being resized the canvas is hidden and this picture stands in for it. It's drawn
+    // over everything, so even if something made the canvas visible again there's no mix of old and new.
+    if (canvasShot.isValid() && ! canvas.isVisible())
     {
         g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
         g.drawImage (canvasShot, getLocalBounds().toFloat());
@@ -764,6 +766,15 @@ void HypernovaAudioProcessorEditor::refreshPresetInfo()
 void HypernovaAudioProcessorEditor::timerCallback()
 {
     compare.setState (processor.compareSlot(), processor.compareHasOther());
+    // Safety net: a panel (or the whole window) should never be left showing a stretched picture.
+    for (auto& w : widgets) w->thawIfStale();
+    if (canvasShot.isValid() && juce::Time::getMillisecondCounter() - lastCanvasResize > 300u)
+    {
+        canvasShot = {};
+        canvas.setVisible (true);
+        repaint();
+    }
+
     // A panel whose source is switched off fades back, so what's playing stands out.
     for (auto& w : widgets)
     {
@@ -1060,6 +1071,9 @@ void HypernovaAudioProcessorEditor::filesDropped (const juce::StringArray& files
 
 void HypernovaAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 {
+    // The stretched picture is only for while the window is being resized: if the canvas is showing, the
+    // picture is stale and goes now.
+    if (canvasShot.isValid() && canvas.isVisible()) { canvasShot = {}; repaint(); }
     if (! dragHover) return;
     auto r = getLocalBounds().toFloat().reduced (10.0f);
     g.setColour (Colours::bg0.withAlpha (0.72f));

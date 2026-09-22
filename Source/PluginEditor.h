@@ -148,6 +148,7 @@ private:
     juce::Rectangle<int> dockArea() const override { return layoutArea(); }
     ab::ui::Widget* widgetById (const juce::String& id) const override { return findWidget (id); }
     ab::ui::dock::MinSize dockMinSize() const override;
+    ab::ui::dock::MinSize dockRoomySize() const;
     void dockRelayout (bool animate) override { relayoutWidgets (animate); }
     void dockCommit (const juce::String& what) override;
     void dockDrop (const juce::String& widgetOrType, bool isNewType, const ab::ui::dock::Drop&, juce::Rectangle<int> landingFrom) override;

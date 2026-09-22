@@ -318,14 +318,28 @@ private:
         }
     }
 
+    // The camera is fitted to the display: the scene's corners are projected, then scaled and centred so
+    // the whole thing lands inside the box. (Fixed scales cropped the waterfall at the edges.)
     Camera3D camera (juce::Rectangle<float> r) const
     {
         Camera3D cam;
         cam.yaw = -0.28f + (live != nullptr ? 0.05f * std::sin (live->time * 0.3f) : 0.0f);
         cam.pitch = 0.55f;
         cam.distance = 3.6f;
-        cam.scale = r.getWidth() * 0.4f;
-        cam.centre = r.getCentre().translated (0.0f, r.getHeight() * 0.1f);
+        cam.scale = 1.0f;
+        cam.centre = {};
+        float minX = 1.0e9f, maxX = -1.0e9f, minY = 1.0e9f, maxY = -1.0e9f;
+        for (float x : { -1.0f, 1.0f })
+            for (float y : { -0.45f, 0.56f })          // the floor and the tallest a curve reaches
+                for (float z : { -0.72f, 0.72f })      // front row to back row
+                {
+                    const auto p = cam.project (x, y, z);
+                    minX = juce::jmin (minX, p.x); maxX = juce::jmax (maxX, p.x);
+                    minY = juce::jmin (minY, p.y); maxY = juce::jmax (maxY, p.y);
+                }
+        const float w = juce::jmax (0.001f, maxX - minX), h = juce::jmax (0.001f, maxY - minY);
+        cam.scale = juce::jmin (r.getWidth() / w, r.getHeight() / h) * 0.98f;
+        cam.centre = r.getCentre() - juce::Point<float> ((minX + maxX) * 0.5f, (minY + maxY) * 0.5f) * cam.scale;
         return cam;
     }
 

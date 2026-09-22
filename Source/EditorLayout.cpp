@@ -292,7 +292,7 @@ void HypernovaAudioProcessorEditor::relayoutWidgets (bool animate)
 {
     const auto area = layoutArea();
     if (maximisedId.isNotEmpty() && ! tree.contains (maximisedId)) maximisedId.clear();
-    tree.layout (area, dockMinSize());
+    tree.layout (area, dockMinSize(), dockRoomySize());
     for (auto& w : widgets)
     {
         auto* leaf = tree.findLeaf (w->id);
@@ -348,6 +348,16 @@ void HypernovaAudioProcessorEditor::relayoutWidgets (bool animate)
     overlay->repaint();
 }
 
+// What a panel would like to be: enough that its controls stay readable.
+dock::MinSize HypernovaAudioProcessorEditor::dockRoomySize() const
+{
+    return [this] (const juce::String& id)
+    {
+        auto* w = findWidget (id);
+        return w != nullptr ? w->comfortableSize() : juce::Point<int> (200, 120);
+    };
+}
+
 dock::MinSize HypernovaAudioProcessorEditor::dockMinSize() const
 {
     return [this] (const juce::String& id)
@@ -378,7 +388,7 @@ juce::String HypernovaAudioProcessorEditor::addWidgetType (const juce::String& t
         return id;
     }
     maximisedId.clear();
-    tree.layout (layoutArea(), dockMinSize());
+    tree.layout (layoutArea(), dockMinSize(), dockRoomySize());
     // A new oscillator sits as a tab next to the last oscillator on screen, where you'd look for it.
     juce::String besideOsc;
     if (id.startsWith ("osc") && id.length() == 4)

@@ -242,6 +242,24 @@ int main (int argc, char** argv)
         check (scope2 != scopeId && ed->findWidget (scope2) != nullptr, "and a second one (" + scope2 + ")");
         tidy ("after adding two scopes");
 
+        // Room: with the four top-row panels a new oscillator brings, none of them is squeezed below the size
+        // its controls need (the row shares out what it has).
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+            ed->addWidgetType ("oscC");
+            ed->moveWidget ("oscC", "space", dock::Zone::Left);
+            settle();
+            float smallest = 1.0f;
+            juce::String worst;
+            for (auto& id : { "oscA", "oscB", "oscC", "space" })
+                if (auto* w = ed->findWidget (id); w != nullptr && w->isVisible() && w->scale() < smallest) { smallest = w->scale(); worst = id; }
+            check (smallest > 0.71f, "four panels in a row all stay readable (smallest " + worst + " at " + juce::String (smallest, 2) + ")");
+            ed->hideWidget ("oscC");
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+        }
+
         // Moves: stack onto a place, split beside one, dock along the whole bottom.
         ed->moveWidget ("filter", "oscA", dock::Zone::Stack); settle();
         check (ed->layoutTree().findLeaf ("filter") == ed->layoutTree().findLeaf ("oscA") && ed->findWidget ("filter")->isVisible(),
@@ -682,7 +700,38 @@ int main (int argc, char** argv)
         return 0;
     }
 
-    // --stalls: how long each everyday action blocks the interface (the work plus the frame it forces).
+    // --repro <what>: little scenes for chasing a reported bug.
+    if (argc > 2 && juce::String (argv[2]) == "--repro")
+    {
+        using namespace ab::ui;
+        for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Hypernova") proc.setCurrentProgram (i);
+        std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
+        ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        ed->loadWorkspace ("Sound Design", false);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+        ed->finishMotion();
+        // A wider window, like a plug-in window dragged bigger, then an oscillator added.
+        ed->setSize (2000, juce::roundToInt (2000.0 * HypernovaAudioProcessorEditor::baseHeight / HypernovaAudioProcessorEditor::baseWidth));
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
+        ed->addOscillator();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (900);
+        ed->finishMotion();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+        auto image = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+        auto f = outDir.getChildFile ("repro_add_osc.png");
+        f.deleteFile();
+        juce::FileOutputStream out (f);
+        juce::PNGImageFormat().writeImageToStream (image, out);
+        std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
+        // What the layout looks like afterwards.
+        for (auto& id : ed->layoutTree().allWidgets())
+            if (auto* w = ed->findWidget (id); w != nullptr && w->isVisible())
+                std::printf ("  %-10s %-22s content %s scale %.2f\n", id.toRawUTF8(), w->getBounds().toString().toRawUTF8(),
+                             w->content.getBounds().toString().toRawUTF8(), w->scale());
+        return 0;
+    }
+
+    // --stalls:    // --stalls: how long each everyday action blocks the interface (the work plus the frame it forces).
     // Anything much over 30 ms is felt as a stutter, and over ~100 ms as a freeze.
     if (argc > 2 && juce::String (argv[2]) == "--stalls")
     {

@@ -167,7 +167,9 @@ public:
     //==========================================================================
     // Layout: fills `area` exactly. Collapsed leaves take a fixed strip along their parent's axis;
     // everything else shares the rest by weight, never going under its minimum size.
-    void layout (juce::Rectangle<int> area, const MinSize& minSize) { layoutNode (*root, area, minSize); }
+    // roomy: the size a panel would like (its controls readable). Where a row has the space, panels get at
+    // least that; where it doesn't, they shrink to minSize as before.
+    void layout (juce::Rectangle<int> area, const MinSize& minSize, const MinSize& roomy = {}) { layoutNode (*root, area, minSize, roomy); }
 
     juce::Point<int> minimumSize (const MinSize& minSize) const { return minimumOf (*root, minSize); }
 
@@ -418,7 +420,7 @@ private:
         return m;
     }
 
-    void layoutNode (Node& n, juce::Rectangle<int> area, const MinSize& minSize)
+    void layoutNode (Node& n, juce::Rectangle<int> area, const MinSize& minSize, const MinSize& roomy = {})
     {
         n.bounds = area;
         if (n.isLeaf) return;
@@ -434,6 +436,19 @@ private:
                 fixed[(size_t) i] = true;
                 left -= sizes[(size_t) i];
             }
+        // Prefer the roomy size when the whole row can have it.
+        const MinSize* floorSize = &minSize;
+        if (roomy)
+        {
+            int wanted = 0;
+            for (int i = 0; i < count; ++i)
+                if (! fixed[(size_t) i])
+                {
+                    const auto m = minimumOf (*n.children[(size_t) i], roomy);
+                    wanted += n.horizontal ? m.x : m.y;
+                }
+            if (wanted <= left) floorSize = &roomy;
+        }
         // Share by weight; anything that would go under its minimum is pinned at the minimum and the rest re-shared.
         for (int pass = 0; pass < count; ++pass)
         {
@@ -444,7 +459,7 @@ private:
             for (int i = 0; i < count; ++i)
             {
                 if (fixed[(size_t) i]) continue;
-                const auto m = minimumOf (*n.children[(size_t) i], minSize);
+                const auto m = minimumOf (*n.children[(size_t) i], *floorSize);
                 const int mn = n.horizontal ? m.x : m.y;
                 const int want = juce::roundToInt ((float) room * n.weights[(size_t) i] / juce::jmax (0.0001f, wsum));
                 if (want < mn) { sizes[(size_t) i] = mn; fixed[(size_t) i] = true; left -= mn; pinned = true; }
@@ -468,7 +483,7 @@ private:
             const int s = sizes[(size_t) i];
             const auto r = n.horizontal ? juce::Rectangle<int> (pos, area.getY(), s, area.getHeight())
                                         : juce::Rectangle<int> (area.getX(), pos, area.getWidth(), s);
-            layoutNode (*n.children[(size_t) i], r, minSize);
+            layoutNode (*n.children[(size_t) i], r, minSize, roomy);
             pos += s + gutter;
         }
     }

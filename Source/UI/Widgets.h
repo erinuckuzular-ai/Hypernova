@@ -274,6 +274,12 @@ public:
     // Called once the contents are built: remembers every control's design position.
     void finishBuilding (std::initializer_list<juce::Component*> skip = {}) { spread.capture (content, designW, designH, headerH, skip); }
 
+    // The size a panel needs before its controls stop being readable: splitting to anything smaller makes
+    // a tab instead. (The hard minimum above is what the tree may shrink to when a window is small.)
+    juce::Point<int> comfortableSize() const
+    {
+        return { juce::roundToInt ((float) designW * 0.72f), juce::roundToInt ((float) (designH + tabStripHeight()) * 0.72f) };
+    }
     juce::Point<int> minimumSize() const
     {
         if (fitHeight) return { 300, juce::roundToInt ((float) (designH + tabStripHeight()) * minScale) };
@@ -341,6 +347,13 @@ public:
             return;
         }
         layoutContent();
+    }
+
+    // A picture is only ever meant to be shown for a moment. If anything goes wrong with the timer that
+    // puts the real contents back, this catches it on the next UI tick.
+    void thawIfStale()
+    {
+        if (frozen.isValid() && juce::Time::getMillisecondCounter() - lastResize > 300u) thaw();
     }
 
     // Lays the contents out at the current size now (tests call this through the editor to skip the wait).
