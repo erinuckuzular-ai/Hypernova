@@ -23,6 +23,7 @@ public:
     ~HypernovaAudioProcessorEditor() override;
 
     void resized() override;
+    void paint (juce::Graphics&) override;   // only used while the window is being resized (see canvasShot)
     void paintOverChildren (juce::Graphics&) override;
 
     // Drop .hnpreset files or pack folders anywhere on the window to import them.
@@ -223,6 +224,13 @@ private:
     juce::Rectangle<int> landingFrom;
     juce::Point<float> landingVelocity;
     bool dragOverLayout = false;
+    // While the window is being dragged bigger or smaller, a picture of the editor is stretched instead of
+    // laying out and redrawing everything at every size; the real thing comes back once it settles.
+    juce::Image canvasShot;
+    float lastCanvasScale = 0.0f;
+    juce::uint32 lastCanvasResize = 0;
+    bool canvasThawPending = false, everPainted = false;
+    void scheduleCanvasThaw();
     ab::ui::motion::BoundsSprings springs; // every panel move: interruptible, velocity-aware, no fixed durations
     bool layoutEditing = false;
     juce::String workspaceName;

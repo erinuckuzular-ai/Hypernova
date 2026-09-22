@@ -22,7 +22,7 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - **init** is in the new-sound menu (the dice), with roll, nudge and mutate.
 
 ## feel
-- **editing the layout no longer lags.** dragging a panel or a gap between panels only redraws what moves, so it keeps up with the mouse.
+- **editing the layout no longer lags.** dragging a panel or a gap between panels only redraws what moves, so it keeps up with the mouse. resizing the window is smooth too.
 - panels, dragged widgets and rack modules move on springs: they start from where they are, keep the speed you let go at, and can be grabbed mid-move. *reduce motion* in macos settings turns this off.
 - buttons and switches show they're pressed the moment you press.
 - panels for switched-off sources fade back, so what's playing stands out.

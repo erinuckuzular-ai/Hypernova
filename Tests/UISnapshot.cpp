@@ -656,6 +656,26 @@ int main (int argc, char** argv)
                 for (size_t i = 0; i < std::min<size_t> (8, costs.size()); ++i) std::printf ("  %6.2f ms  %s\n", costs[i].first, costs[i].second.toRawUTF8());
             }
         }
+        // Resizing the plug-in window: the whole editor is scaled and every panel is laid out again.
+        {
+            ed->setLayoutEditing (false);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            ed->finishMotion();
+            double worst = 0, total = 0;
+            const int steps = 24;
+            for (int i = 0; i < steps; ++i)
+            {
+                const int w = HypernovaAudioProcessorEditor::baseWidth + (i % 12) * 24;
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                ed->setSize (w, juce::roundToInt ((double) w * HypernovaAudioProcessorEditor::baseHeight / HypernovaAudioProcessorEditor::baseWidth));
+                juce::Image frame2 (juce::Image::ARGB, ed->getWidth() * 2, ed->getHeight() * 2, true);
+                { juce::Graphics g (frame2); g.addTransform (juce::AffineTransform::scale (2.0f)); ed->paintEntireComponent (g, true); }
+                const double ms = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0;
+                worst = juce::jmax (worst, ms); total += ms;
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (17);
+            }
+            std::printf ("resizing the window: %.1f ms a frame on average, %.1f ms at worst\n", total / steps, worst);
+        }
         return 0;
     }
 

@@ -288,7 +288,43 @@ HypernovaAudioProcessorEditor::~HypernovaAudioProcessorEditor()
 void HypernovaAudioProcessorEditor::resized()
 {
     canvas.setBounds (0, 0, baseWidth, baseHeight);
-    canvas.setTransform (juce::AffineTransform::scale ((float) getWidth() / (float) baseWidth));
+    const float k = (float) getWidth() / (float) baseWidth;
+    // Dragging the window bigger or smaller changes the scale of everything: every knob, 3D view and cached
+    // layer would be redrawn at a new size on every frame of the drag. Stretch the last picture instead.
+    if (everPainted && lastCanvasScale > 0.0f && std::abs (k - lastCanvasScale) > 0.002f)
+    {
+        if (! canvasShot.isValid()) canvasShot = canvas.createComponentSnapshot (canvas.getLocalBounds(), true, 1.0f);
+        canvas.setVisible (false);
+        lastCanvasResize = juce::Time::getMillisecondCounter();
+        scheduleCanvasThaw();
+    }
+    canvas.setTransform (juce::AffineTransform::scale (k));
+    lastCanvasScale = k;
+}
+
+void HypernovaAudioProcessorEditor::paint (juce::Graphics& g)
+{
+    everPainted = true;
+    if (canvasShot.isValid())
+    {
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+        g.drawImage (canvasShot, getLocalBounds().toFloat());
+    }
+}
+
+void HypernovaAudioProcessorEditor::scheduleCanvasThaw()
+{
+    if (canvasThawPending) return;
+    canvasThawPending = true;
+    juce::Timer::callAfterDelay (140, [safe = juce::Component::SafePointer<HypernovaAudioProcessorEditor> (this)]
+    {
+        if (safe == nullptr) return;
+        safe->canvasThawPending = false;
+        if (juce::Time::getMillisecondCounter() - safe->lastCanvasResize < 120u) { safe->scheduleCanvasThaw(); return; }
+        safe->canvasShot = {};
+        safe->canvas.setVisible (true);
+        safe->repaint();
+    });
 }
 
 //==============================================================================
