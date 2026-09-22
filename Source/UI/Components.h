@@ -263,6 +263,12 @@ public:
         g.setColour (Colours::text.withAlpha (on ? 0.9f : 0.4f));
         g.setFont (font (11.0f, true));
         g.drawText (wt.name.toUpperCase(), r.reduced (10, 7).removeFromTop (14), juce::Justification::topLeft, false);
+        // The reflection fades into the floor instead of being cut off at the edge, and the caption sits on that fade.
+        {
+            const auto fadeArea = r.withTop (r.getBottom() - juce::jmin (34.0f, r.getHeight() * 0.2f));
+            g.setGradientFill (juce::ColourGradient (Colours::inset.withAlpha (0.0f), 0, fadeArea.getY(), Colours::inset.withAlpha (0.92f), 0, fadeArea.getBottom() - 4.0f, false));
+            g.fillRect (fadeArea);
+        }
         g.setColour (Colours::textDim);
         g.setFont (font (10.0f));
         g.drawText (wt.blurb, r.reduced (10, 7).removeFromBottom (13), juce::Justification::bottomLeft, false);
@@ -617,15 +623,21 @@ private:
             g.drawLine (juce::Line<float> (cam.project (-1.0f, 0, z), cam.project (1.0f, 0, z)), 0.6f);
         }
         g.setFont (mono (9.0f));
+        // Frequency labels along the front edge, kept inside the view (the camera can swing the edge off
+        // the bottom) and dropped where they'd collide.
+        const auto inside = getLocalBounds().toFloat().reduced (4.0f);
+        juce::Rectangle<float> lastLabel;
         for (float f : { 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f })
         {
             const float x = -1.0f + 2.0f * (float) (std::log (f / 25.0) / std::log (16000.0 / 25.0));
             g.setColour (Colours::line);
             g.drawLine (juce::Line<float> (cam.project (x, 0, -1.0f), cam.project (x, 0, 1.0f)), 0.6f);
-            g.setColour (Colours::textFaint);
             const auto p = cam.project (x, 0, -1.1f);
-            g.drawText (f >= 1000.0f ? juce::String ((int) (f / 1000)) + "k" : juce::String ((int) f), juce::Rectangle<float> (40, 12).withCentre (p.translated (0, 8)),
-                        juce::Justification::centred, false);
+            auto label = juce::Rectangle<float> (28, 12).withCentre (p.translated (0, 8)).constrainedWithin (inside);
+            if (! inside.contains (p.translated (0, -40)) || (! lastLabel.isEmpty() && label.expanded (3.0f, 0).intersects (lastLabel))) continue;
+            lastLabel = label;
+            g.setColour (Colours::textFaint);
+            g.drawText (f >= 1000.0f ? juce::String ((int) (f / 1000)) + "k" : juce::String ((int) f), label, juce::Justification::centred, false);
         }
 
         // Oldest (back) to newest (front).
@@ -1106,12 +1118,24 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (0.5f);
-        g.setColour (colour.withAlpha (isMouseOver() ? 0.3f : 0.16f));
+        const bool over = isMouseOver();
+        g.setColour (colour.withAlpha (over ? 0.34f : 0.22f));
         g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-        g.setColour (colour.withAlpha (isMouseOver() ? 0.95f : 0.6f));
+        g.setColour (colour.withAlpha (over ? 1.0f : 0.75f));
         g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
-        g.setFont (font (9.0f, true).withExtraKerningFactor (0.08f));
-        g.drawFittedText (label, r.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.7f);
+        // A grip on the left says "pick me up".
+        auto body = r.reduced (r.getHeight() * 0.4f, 0);
+        if (body.getWidth() > 44.0f)
+        {
+            auto grip = body.removeFromLeft (7.0f).withSizeKeepingCentre (5.0f, 8.0f);
+            g.setColour (colour.withAlpha (over ? 1.0f : 0.85f));
+            for (int i = 0; i < 6; ++i)
+                g.fillEllipse (grip.getX() + (float) (i % 2) * 3.4f, grip.getY() + (float) (i / 2) * 3.2f, 1.6f, 1.6f);
+            body.removeFromLeft (3.0f);
+        }
+        g.setColour (Colours::text.withAlpha (over ? 1.0f : 0.9f));
+        g.setFont (font (9.5f, true).withExtraKerningFactor (0.08f));
+        g.drawFittedText (label, body.toNearestInt(), juce::Justification::centred, 1, 0.8f);
     }
 
     std::function<void (int source)> onHover; // -1 when the mouse leaves

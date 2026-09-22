@@ -42,21 +42,23 @@ public:
         auto r = getLocalBounds().toFloat();
         g.setColour (Colours::inset);
         g.fillRoundedRectangle (r, 8.0f);
-        const auto plot = r.reduced (8.0f, 6.0f);
+        const auto plot = plotArea();
         const bool on = value ("lowOn") > 0.5f;
         const float xover = value ("lowXover");
         const float xx = xOf (xover, plot);
+        const auto subColour = on ? Palette::sub.get() : Colours::textDim.get();
 
         // The two bands.
-        g.setColour ((on ? Palette::sub : Colours::textFaint).withAlpha (on ? 0.14f : 0.05f));
+        g.setColour ((on ? Palette::sub : Colours::textFaint).withAlpha (on ? 0.12f : 0.05f));
         g.fillRect (juce::Rectangle<float> (plot.getX(), plot.getY(), xx - plot.getX(), plot.getHeight()));
-        g.setColour (Colours::line);
+        g.setColour (Colours::line.withAlpha (0.5f));
         for (float hz : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f })
             g.drawVerticalLine ((int) xOf (hz, plot), plot.getY(), plot.getBottom());
+        // Frequency axis under the plot, clear of the curve.
         g.setColour (Colours::textFaint);
-        g.setFont (mono (8.5f));
-        for (auto [hz, label] : { std::pair<float, const char*> { 50.0f, "50" }, { 100.0f, "100" }, { 200.0f, "200" }, { 500.0f, "500" }, { 1000.0f, "1k" }, { 5000.0f, "5k" } })
-            g.drawText (label, juce::Rectangle<float> (xOf (hz, plot) + 2.0f, plot.getBottom() - 12.0f, 30.0f, 12.0f), juce::Justification::centredLeft, false);
+        g.setFont (mono (9.0f));
+        for (auto [hz, label] : { std::pair<float, const char*> { 50.0f, "50" }, { 100.0f, "100" }, { 200.0f, "200" }, { 500.0f, "500" }, { 1000.0f, "1k" }, { 2000.0f, "2k" }, { 5000.0f, "5k" } })
+            g.drawText (label, juce::Rectangle<float> (28.0f, 12.0f).withCentre ({ xOf (hz, plot), plot.getBottom() + 8.0f }), juce::Justification::centred, false);
 
         // Spectrum, coloured by band.
         const double sr = juce::jmax (8000.0, proc.getCurrentSampleRate());
@@ -67,42 +69,52 @@ public:
             const float hz = (float) (k * sr / fftSize);
             if (hz < 20.0f || hz > 12000.0f) continue;
             const float x = xOf (hz, plot);
-            const float y = plot.getBottom() - plot.getHeight() * juce::jlimit (0.0f, 1.0f, (smoothed[(size_t) k] + 72.0f) / 72.0f);
+            const float y = plot.getBottom() - plot.getHeight() * 0.86f * juce::jlimit (0.0f, 1.0f, (smoothed[(size_t) k] + 72.0f) / 72.0f);
             auto& path = hz <= xover ? lowPath : highPath;
             auto& started = hz <= xover ? lowStarted : highStarted;
             if (! started) { path.startNewSubPath (x, y); started = true; } else path.lineTo (x, y);
         }
-        glowStroke (g, lowPath, on ? Palette::sub.get() : Colours::textDim.get(), 1.6f, 0.7f);
-        glowStroke (g, highPath, Palette::fx, 1.4f, 0.5f);
+        glowStroke (g, lowPath, subColour, 1.6f, 0.7f);
+        glowStroke (g, highPath, Palette::oscA, 1.4f, 0.5f); // a different colour from the sub, so the split reads at a glance
 
-        // Crossover line and labels.
-        g.setColour (on ? Palette::sub.get() : Colours::textDim.get());
+        // Crossover line with its handle and reading.
+        g.setColour (subColour);
         g.fillRect (xx - 1.0f, plot.getY(), 2.0f, plot.getHeight());
-        g.fillEllipse (juce::Rectangle<float> (10, 10).withCentre ({ xx, plot.getY() + 8.0f }));
-        g.setFont (mono (10.0f).boldened());
-        g.drawText (juce::String (juce::roundToInt (xover)) + " Hz", juce::Rectangle<float> (xx + 8.0f, plot.getY() + 2.0f, 70.0f, 14.0f),
-                    juce::Justification::centredLeft, false);
-        g.setFont (mono (9.5f).boldened().withExtraKerningFactor (0.1f));
-        g.setColour (on ? Palette::sub.get() : Colours::textFaint.get());
-        g.drawText (on ? "CLEAN SUB" : "LOW END OFF", juce::Rectangle<float> (plot.getX() + 4.0f, plot.getY() + 18.0f, xx - plot.getX() - 8.0f, 14.0f),
-                    juce::Justification::centredLeft, true);
-        g.setColour (Palette::fx);
-        g.drawText ("TO THE EFFECTS", juce::Rectangle<float> (xx + 8.0f, plot.getY() + 18.0f, 140.0f, 14.0f), juce::Justification::centredLeft, false);
+        g.fillEllipse (juce::Rectangle<float> (10, 10).withCentre ({ xx, plot.getY() + 6.0f }));
+        // Band names sit in small plates along the top, so the curve never runs through the text.
+        auto tag = [&] (const juce::String& text, float x, bool leftOfLine, juce::Colour c)
+        {
+            const auto f = mono (9.5f).boldened().withExtraKerningFactor (0.1f);
+            const float w = juce::GlyphArrangement::getStringWidth (f, text) + 14.0f;
+            auto b = juce::Rectangle<float> (leftOfLine ? x - w - 8.0f : x + 8.0f, plot.getY() + 2.0f, w, 17.0f);
+            if (b.getX() < plot.getX() + 2.0f) b.setX (plot.getX() + 2.0f);
+            g.setColour (Colours::inset.withAlpha (0.88f));
+            g.fillRoundedRectangle (b, 8.5f);
+            g.setColour (c.withAlpha (0.5f));
+            g.drawRoundedRectangle (b.reduced (0.5f), 8.5f, 1.0f);
+            g.setColour (c);
+            g.setFont (f);
+            g.drawText (text, b, juce::Justification::centred, false);
+            return b;
+        };
+        const auto hzTag = tag (juce::String (juce::roundToInt (xover)) + " Hz", xx, false, subColour);
+        if (xx - plot.getX() > 90.0f) tag (on ? "CLEAN SUB" : "LOW END OFF", xx, true, subColour);
+        tag ("TO THE EFFECTS", hzTag.getRight() - 2.0f, false, Palette::oscA);
 
         // Band balance: how much of the output sits below the line.
         if (on)
         {
             const float lo = proc.shownLowRms.load(), hi = proc.shownHighRms.load();
             const float share = lo + hi > 1.0e-5f ? lo / (lo + hi) : 0.0f;
-            auto bar = juce::Rectangle<float> (plot.getRight() - 110.0f, plot.getY() + 4.0f, 100.0f, 6.0f);
-            g.setColour (Colours::bg0.withAlpha (0.5f));
+            auto meter = juce::Rectangle<float> (plot.getRight() - 128.0f, plot.getY() + 4.0f, 124.0f, 14.0f);
+            g.setColour (Colours::textDim);
+            g.setFont (mono (8.5f).boldened());
+            g.drawText ("SUB " + juce::String (juce::roundToInt (share * 100.0f)) + "%", meter.removeFromLeft (52.0f), juce::Justification::centredLeft, false);
+            auto bar = meter.withSizeKeepingCentre (meter.getWidth(), 6.0f);
+            g.setColour (Colours::bg0.withAlpha (0.6f));
             g.fillRoundedRectangle (bar, 3.0f);
             g.setColour (Palette::sub);
             g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * share), 3.0f);
-            g.setColour (Colours::textDim);
-            g.setFont (mono (8.5f));
-            g.drawText ("SUB " + juce::String (juce::roundToInt (share * 100.0f)) + "%", bar.translated (0, 8.0f).withHeight (12.0f),
-                        juce::Justification::centredRight, false);
         }
     }
 
@@ -115,8 +127,7 @@ public:
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (! dragging) return;
-        const auto plot = getLocalBounds().toFloat().reduced (8.0f, 6.0f);
-        const float hz = hzOf (e.position.x, plot);
+        const float hz = hzOf (e.position.x, plotArea());
         if (auto* p = proc.apvts.getParameter ("lowXover")) p->setValueNotifyingHost (p->convertTo0to1 (juce::jlimit (40.0f, 300.0f, hz)));
         repaint();
     }
@@ -136,6 +147,7 @@ private:
     bool dragging = false;
 
     float value (const char* id) const { return proc.apvts.getRawParameterValue (id)->load(); }
+    juce::Rectangle<float> plotArea() const { return getLocalBounds().toFloat().reduced (10.0f, 6.0f).withTrimmedBottom (14.0f); }
     static float xOf (float hz, juce::Rectangle<float> plot)
     {
         return plot.getX() + plot.getWidth() * std::log (hz / 20.0f) / std::log (12000.0f / 20.0f);

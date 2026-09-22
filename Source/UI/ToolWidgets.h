@@ -93,9 +93,12 @@ public:
         auto area = getLocalBounds().toFloat();
         inset (g, area);
         auto plot = area.reduced (10, 10);
-        g.setColour (Colours::line.withAlpha (0.6f));
-        for (int i = 1; i < 4; ++i) g.drawHorizontalLine ((int) (plot.getY() + plot.getHeight() * (float) i / 4.0f), plot.getX(), plot.getRight());
+        // A quiet grid: the trace is the point. The zero line is a touch stronger.
+        g.setColour (Colours::line.withAlpha (0.28f));
+        for (int i = 1; i < 4; ++i) if (i != 2) g.drawHorizontalLine ((int) (plot.getY() + plot.getHeight() * (float) i / 4.0f), plot.getX(), plot.getRight());
         for (int i = 1; i < 8; ++i) g.drawVerticalLine ((int) (plot.getX() + plot.getWidth() * (float) i / 8.0f), plot.getY(), plot.getBottom());
+        g.setColour (Colours::line.withAlpha (0.55f));
+        g.drawHorizontalLine ((int) plot.getCentreY(), plot.getX(), plot.getRight());
 
         const double sr = juce::jmax (8000.0, proc.getCurrentSampleRate());
         const int note = proc.shownNote.load();
@@ -224,67 +227,112 @@ public:
     {
         auto area = getLocalBounds().toFloat();
         inset (g, area);
-        auto r = area.reduced (10);
-        auto bars = r.removeFromLeft (46);
-        r.removeFromLeft (10);
+        auto r = area.reduced (12);
+        auto meters = r.removeFromLeft (58);
+        r.removeFromLeft (14);
 
-        // Peak bars, -48..+3 dBFS
+        // Peak bars, -48..+3 dBFS, with their scale beside them.
+        auto bars = meters.removeFromLeft (34).withTrimmedTop (10);
         auto toY = [&] (float db) { return bars.getBottom() - bars.getHeight() * juce::jlimit (0.0f, 1.0f, (db + 48.0f) / 51.0f); };
         for (int c = 0; c < 2; ++c)
         {
-            auto b = juce::Rectangle<float> (bars.getX() + (float) c * 24.0f, bars.getY(), 18.0f, bars.getHeight());
-            g.setColour (Colours::bg0.withAlpha (0.5f));
+            auto b = juce::Rectangle<float> (bars.getX() + (float) c * 18.0f, bars.getY(), 14.0f, bars.getHeight());
+            g.setColour (Colours::bg0.withAlpha (0.55f));
             g.fillRoundedRectangle (b, 3.0f);
             const float y = toY (peakDb[c]);
-            juce::ColourGradient grad (Palette::sub, 0, b.getY(), Palette::env, 0, b.getBottom(), false);
-            grad.addColour (0.3, Palette::oscA);
+            juce::ColourGradient grad (juce::Colour (0xffff5a5a), 0, toY (0.0f), Palette::env, 0, b.getBottom(), false);
+            grad.addColour (juce::jlimit (0.0, 1.0, (double) ((toY (-6.0f) - toY (0.0f)) / b.getHeight())), Palette::sub);
+            grad.addColour (juce::jlimit (0.0, 1.0, (double) ((toY (-18.0f) - toY (0.0f)) / b.getHeight())), Palette::oscA);
             g.setGradientFill (grad);
             g.fillRoundedRectangle (b.withTop (y), 3.0f);
-            g.setColour (Colours::text);
-            g.fillRect (b.getX(), toY (holdDb[c]) - 1.0f, b.getWidth(), 2.0f);
+            g.setColour (Colours::text.withAlpha (0.9f));
+            g.fillRoundedRectangle (b.getX(), toY (holdDb[c]) - 1.0f, b.getWidth(), 2.0f, 1.0f);
         }
-        g.setColour (Colours::textFaint);
         g.setFont (mono (8.5f));
-        for (int db : { 0, -6, -12, -24, -36 })
-            g.drawHorizontalLine ((int) toY ((float) db), bars.getX() - 2.0f, bars.getX());
-        if (clipTicks > 0)
+        for (int db : { 0, -6, -12, -24, -36, -48 })
         {
-            g.setColour (juce::Colour (0xffff4a4a));
-            g.fillRoundedRectangle (bars.withHeight (6.0f).translated (0, -8.0f), 2.0f);
+            const float y = toY ((float) db);
+            g.setColour (Colours::line);
+            g.drawHorizontalLine ((int) y, meters.getX(), meters.getX() + 3.0f);
+            g.setColour (Colours::textFaint.withAlpha (0.9f));
+            g.drawText (juce::String (db), juce::Rectangle<float> (meters.getX() + 5.0f, y - 6.0f, 20.0f, 12.0f), juce::Justification::centredLeft, false);
         }
+        g.setColour (clipTicks > 0 ? juce::Colour (0xffff4a4a) : Colours::bg0.withAlpha (0.55f));
+        g.fillRoundedRectangle (bars.getX(), bars.getY() - 9.0f, 32.0f, 5.0f, 2.0f);
 
-        // Numbers
-        auto top = r.removeFromTop (juce::jmin (r.getHeight() * 0.55f, 96.0f));
+        // The reading: short-term big, with momentary, integrated and peak as labelled figures under it.
+        auto top = r.removeFromTop (juce::jmin (r.getHeight() * 0.5f, 104.0f));
+        g.setColour (Colours::textDim);
+        g.setFont (mono (9.5f).boldened().withExtraKerningFactor (0.1f));
+        g.drawText ("SHORT-TERM", top.removeFromTop (14), juce::Justification::topLeft, false);
+        auto big = top.removeFromTop (top.getHeight() * 0.58f);
+        const auto bigFont = heavy (juce::jmin (40.0f, big.getHeight() * 0.9f));
+        g.setColour (Colours::text);
+        g.setFont (bigFont);
+        const auto reading = lufs (shortTerm);
+        g.drawText (reading, big, juce::Justification::centredLeft, false);
+        const float unitX = big.getX() + juce::GlyphArrangement::getStringWidth (bigFont, reading) + 6.0f;
         g.setColour (Colours::textDim);
         g.setFont (mono (10.0f).boldened());
-        g.drawText ("SHORT-TERM", top.removeFromTop (14), juce::Justification::topLeft, false);
-        g.setColour (Colours::text);
-        g.setFont (heavy (juce::jmin (38.0f, top.getHeight() * 0.62f)));
-        g.drawText (lufs (shortTerm), top.removeFromTop (top.getHeight() * 0.7f), juce::Justification::centredLeft, false);
-        g.setFont (mono (10.0f));
-        g.setColour (Colours::textDim);
-        g.drawText ("M " + lufs (momentary) + "   I " + lufs (integrated) + "   PK " + juce::String (juce::jmax (holdDb[0], holdDb[1]), 1),
-                    top, juce::Justification::centredLeft, true);
+        g.drawText ("LUFS", juce::Rectangle<float> (unitX, big.getY(), 40.0f, big.getHeight() * 0.9f), juce::Justification::bottomLeft, false);
+        auto stats = top.reduced (0, 2);
+        const juce::String names[] = { "MOMENTARY", "INTEGRATED", "PEAK" };
+        const juce::String values[] = { lufs (momentary), lufs (integrated), juce::String (juce::jmax (holdDb[0], holdDb[1]), 1) + " dB" };
+        const float colW = stats.getWidth() / 3.0f;
+        for (int i = 0; i < 3; ++i)
+        {
+            auto c = stats.withWidth (colW).translated (colW * (float) i, 0);
+            g.setColour (Colours::textFaint);
+            g.setFont (mono (8.0f).withExtraKerningFactor (0.08f));
+            g.drawText (names[i], c.removeFromTop (11), juce::Justification::topLeft, false);
+            g.setColour (Colours::text.withAlpha (0.9f));
+            g.setFont (mono (11.5f).boldened());
+            g.drawText (values[i], c, juce::Justification::topLeft, false);
+        }
 
-        // Short-term history, the last 20 s, with a line at -14 LUFS (where streaming services normalise).
-        auto plot = r.reduced (0, 4);
-        g.setColour (Colours::line);
-        const float y14 = plot.getBottom() - plot.getHeight() * (float) juce::jlimit (0.0, 1.0, (-14.0 + 40.0) / 40.0);
-        g.drawHorizontalLine ((int) y14, plot.getX(), plot.getRight());
+        // Short-term history, the last 20 s, -40..0 LUFS, with -14 marked (where streaming services normalise).
+        auto plot = r.withTrimmedTop (8);
+        g.setColour (Colours::bg0.withAlpha (0.35f));
+        g.fillRoundedRectangle (plot, 6.0f);
+        plot = plot.reduced (6.0f, 6.0f).withTrimmedLeft (18.0f);
+        auto yOf = [&] (double l) { return plot.getBottom() - plot.getHeight() * (float) juce::jlimit (0.0, 1.0, (l + 40.0) / 40.0); };
+        g.setFont (mono (8.0f));
+        for (int l : { -6, -14, -23, -32 })
+        {
+            const float y = yOf (l);
+            const bool target = l == -14;
+            if (target)
+            {
+                const float dashes[] = { 4.0f, 3.0f };
+                g.setColour (Colours::accent.withAlpha (0.7f));
+                g.drawDashedLine (juce::Line<float> (plot.getX(), y, plot.getRight(), y), dashes, 2, 1.0f);
+            }
+            else
+            {
+                g.setColour (Colours::line.withAlpha (0.6f));
+                g.drawHorizontalLine ((int) y, plot.getX(), plot.getRight());
+            }
+            g.setColour (target ? Colours::accent.withAlpha (0.9f) : Colours::textFaint);
+            g.drawText (juce::String (l), juce::Rectangle<float> (plot.getX() - 20.0f, y - 6.0f, 17.0f, 12.0f), juce::Justification::centredRight, false);
+        }
         g.setColour (Colours::textFaint);
-        g.drawText ("-14", plot.withHeight (12).withY (y14 - 12), juce::Justification::topRight, false);
+        g.drawText ("LAST 20 S", plot.removeFromTop (12).reduced (4, 0), juce::Justification::topRight, false);
+        plot = plot.withTop (plot.getY() - 12.0f);
         if (history.size() > 1)
         {
-            juce::Path p;
+            juce::Path line, fill;
             const int n = (int) history.size();
             for (int i = 0; i < n; ++i)
             {
-                const float v = (float) juce::jlimit (0.0, 1.0, (history[(size_t) i] + 40.0) / 40.0);
-                const juce::Point<float> pt (plot.getRight() - plot.getWidth() * (float) (n - 1 - i) / (float) (historyLen - 1),
-                                             plot.getBottom() - plot.getHeight() * v);
-                if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+                const juce::Point<float> pt (plot.getRight() - plot.getWidth() * (float) (n - 1 - i) / (float) (historyLen - 1), yOf (history[(size_t) i]));
+                if (i == 0) { line.startNewSubPath (pt); fill.startNewSubPath (pt.x, plot.getBottom()); fill.lineTo (pt); }
+                else { line.lineTo (pt); fill.lineTo (pt); }
             }
-            glowStroke (g, p, Palette::oscA, 1.4f, 0.6f);
+            fill.lineTo (plot.getRight(), plot.getBottom());
+            fill.closeSubPath();
+            g.setGradientFill (juce::ColourGradient (Palette::oscA.withAlpha (0.28f), 0, plot.getY(), Palette::oscA.withAlpha (0.0f), 0, plot.getBottom(), false));
+            g.fillPath (fill);
+            glowStroke (g, line, Palette::oscA, 1.5f, 0.6f);
         }
     }
 
@@ -497,7 +545,7 @@ private:
     juce::Point<float> last { -1, -1 };
     bool dragging = false;
 
-    juce::Rectangle<float> padArea() const { return getLocalBounds().toFloat().reduced (14.0f, 26.0f); }
+    juce::Rectangle<float> padArea() const { return getLocalBounds().toFloat().reduced (18.0f, 33.0f); } // the puck never covers the axis labels
     int axis (bool isX) const { return juce::jlimit (0, 3, (int) config.getProperty (isX ? "x" : "y", isX ? 0 : 1)); }
     juce::RangedAudioParameter* param (bool isX) const { return proc.apvts.getParameter ("macro" + juce::String (axis (isX) + 1)); }
     float value (int macro) const { return proc.apvts.getRawParameterValue ("macro" + juce::String (macro + 1))->load(); }
@@ -546,15 +594,21 @@ public:
                               getLocalBounds().reduced (24), juce::Justification::centred, 3);
             return;
         }
-        const float laneH = area.getHeight() / (float) shown.size();
         for (size_t i = 0; i < shown.size(); ++i)
         {
             const int src = shown[i];
-            auto lane = juce::Rectangle<float> (area.getX(), area.getY() + laneH * (float) i, area.getWidth(), laneH).reduced (8.0f, 4.0f);
-            auto info = lane.removeFromLeft (juce::jmin (220.0f, lane.getWidth() * 0.42f));
-            g.setColour (Colours::textDim);
-            g.setFont (font (10.0f));
-            g.drawFittedText (destinationsOf (src), info.withTrimmedTop (26).toNearestInt(), juce::Justification::topLeft, 2, 0.8f);
+            auto lane = laneArea (i);
+            // Source chip, then what it moves, side by side so any number of lanes fits.
+            auto info = lane.removeFromLeft (infoWidth (lane.getWidth())).withTrimmedLeft ((float) chipW + 8.0f);
+            lane.removeFromLeft (8.0f);
+            g.setColour (Colours::text.withAlpha (0.72f));
+            g.setFont (font (10.5f));
+            g.drawFittedText (destinationsOf (src), info.toNearestInt(), juce::Justification::centredLeft, lane.getHeight() > 30.0f ? 2 : 1, 0.85f);
+            if (i > 0)
+            {
+                g.setColour (Colours::line.withAlpha (0.5f));
+                g.drawHorizontalLine ((int) (lane.getY() - 4.0f), area.getX() + 10.0f, area.getRight() - 10.0f);
+            }
             g.setColour (Colours::line);
             g.drawHorizontalLine ((int) lane.getCentreY(), lane.getX(), lane.getRight());
             juce::Path p;
@@ -606,19 +660,30 @@ private:
         chips.clear();
         for (int s : shown)
         {
-            chips.push_back (services.makeChip (s, "DRAG " + modSrcNames()[s].toUpperCase()));
+            chips.push_back (services.makeChip (s, modSrcNames()[s].toUpperCase()));
             addAndMakeVisible (*chips.back());
         }
         placeChips();
         repaint();
     }
 
+    static constexpr int chipW = 104;
+    juce::Rectangle<float> laneArea (size_t i) const
+    {
+        const auto area = getLocalBounds().toFloat().reduced (0, 4.0f);
+        const float laneH = area.getHeight() / (float) juce::jmax ((size_t) 1, shown.size());
+        return juce::Rectangle<float> (area.getX(), area.getY() + laneH * (float) i, area.getWidth(), laneH).reduced (10.0f, 4.0f);
+    }
+    static float infoWidth (float laneWidth) { return juce::jmin (270.0f, laneWidth * 0.46f); }
+
     void placeChips()
     {
         if (shown.empty()) return;
-        const float laneH = (float) getHeight() / (float) shown.size();
         for (size_t i = 0; i < chips.size(); ++i)
-            chips[i]->setBounds (12, juce::roundToInt (laneH * (float) i) + 8, 124, 20);
+        {
+            const auto lane = laneArea (i);
+            chips[i]->setBounds (juce::Rectangle<float> (lane.getX(), lane.getCentreY() - 10.0f, (float) chipW, 20.0f).toNearestInt());
+        }
     }
 };
 
