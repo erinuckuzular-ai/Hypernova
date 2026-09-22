@@ -508,8 +508,13 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
             if (layoutTree().contains (page)) activateWidget (page); else addWidgetType (page);
             showMessage (ab::fxRackNames()[id] + " is on the " + (first ? juce::String ("Effects") : juce::String ("More FX")) + " panel");
         };
-        w.finishBuilding();
-        w.spread.setFlags (fxChain, Spread::Stretch);
+        // The strip keeps its height and gets as wide as its place; the chips scroll when there isn't room.
+        w.fitHeight = true;
+        w.onLayout = [this] (int width, int height)
+        {
+            chainButton.setBounds (width - 124, 11, 110, 24);
+            fxChain.setBounds (12, 44, width - 24, height - 52);
+        };
     }
 
     // Envelopes
@@ -777,7 +782,7 @@ void HypernovaAudioProcessorEditor::showPresetMenu()
         if (cat == "Init") { menu.addItem (1, "Init", true, processor.getPresetName() == "Init"); continue; }
         juce::PopupMenu sub;
         for (int i = 0; i < (int) presets.size(); ++i)
-            if (cat == presets[(size_t) i].category)
+            if (cat == presets[(size_t) i].category && ! isRetiredPreset (presets[(size_t) i].name))
                 sub.addItem (1 + i, presets[(size_t) i].name, true, i == processor.getCurrentProgram() && processor.getPresetCategory() == cat);
         menu.addSubMenu (cat, sub);
     }

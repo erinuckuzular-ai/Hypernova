@@ -269,6 +269,16 @@ int main (int argc, char** argv)
             check (order[3] == ab::FxDist && order[0] == ab::FxTape, "dragging a chip reorders the effects (" + ab::fxOrderText (order) + ")");
             proc.undoManager.undo();
             check (proc.getFxOrder() == ab::defaultFxOrder(), "and undo puts it back");
+
+            // Squeezed beside another panel, the chain keeps its chips a usable size and scrolls instead.
+            ed->moveWidget ("chain", "lowend", dock::Zone::Right);
+            settle();
+            check (chain->isScrollable() && chain->chipWidth() >= 95.0f, "a narrow chain scrolls instead of shrinking its chips (chip "
+                   + juce::String (chain->chipWidth(), 0) + ", widget " + juce::String (ed->findWidget ("chain")->getWidth()) + " wide)");
+            chain->mouseWheelMove (ev ({ 200.0f, 30.0f }), juce::MouseWheelDetails { -0.5f, 0.0f, false, false, false });
+            check (chain->scrollPosition() > 50.0f, "a sideways swipe scrolls it (" + juce::String (chain->scrollPosition(), 0) + ")");
+            ed->undoLayout();
+            settle();
         }
         ed->loadWorkspace ("Sound Design", false);
         check (ed->captureLayout().toXmlString() == now, "Sound Design remembers its edits");

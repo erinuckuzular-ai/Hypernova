@@ -116,6 +116,29 @@ inline std::vector<Preset> morePresets()
         { "verbMix", 0.3f }, { "verbSize", 0.8f }, { "dlyStyle", 2 }, { "dlyMix", 0.1f }
     });
 
+    // Donk: the hard house / bounce / scouse bass. A two-operator FM "bonk": sine carrier (Osc A, FM warp),
+    // a silent sine modulator (Osc B) at 1:1 whose depth jumps up and dies away in under 0.1 s, a quick
+    // sharp-to-flat pitch blip, then short decay. Index peaks around 2.5-4 and settles near 0.7: bright enough
+    // to knock, round enough to stay a bass. Macro 1 BONK (FM depth), 2 TONE (cutoff), 3 DIRT, 4 SPACE.
+    static const PresetValues donk
+    {
+        { "mode", 1 }, { "retrig", 1 }, { "velSens", 0.35f },
+        { "aTable", 0 }, { "aPos", 0.0f }, { "aWarp", 6 }, { "aWarpAmt", 0.07f }, { "aLevel", 0.9f },
+        { "bOn", 1 }, { "bTable", 0 }, { "bPos", 0.0f }, { "bLevel", 0.001f }, { "bFilter", 0 },
+        { "ampA", 0.001f }, { "ampD", 0.24f }, { "ampS", 0.0f }, { "ampR", 0.07f },
+        { "modA", 0.001f }, { "modD", 0.075f }, { "modS", 0.0f }, { "modR", 0.05f },
+        { "mod1Src", 3 }, { "mod1Dest", 3 }, { "mod1Amt", 0.38f },
+        { "mod2Src", 7 }, { "mod2Dest", 3 }, { "mod2Amt", 0.18f },
+        { "mod3Src", 8 }, { "mod3Dest", 8 }, { "mod3Amt", 0.4f },
+        { "mod4Src", 9 }, { "mod4Dest", 19 }, { "mod4Amt", 0.5f },
+        { "mod5Src", 10 }, { "mod5Dest", 23 }, { "mod5Amt", 0.4f },
+        { "dropAmt", 6 }, { "dropTime", 0.016f },
+        { "fltOn", 1 }, { "fltType", 1 }, { "cutoff", 4200 }, { "res", 0.1f },
+        { "distType", 0 }, { "distDrive", 0.25f }, { "distMix", 0.2f },
+        { "verbMode", 3 }, { "verbSize", 0.35f }, { "verbMix", 0.07f },
+    };
+    static const Macros mDonk { "BONK", "TONE", "DIRT", "SPACE" };
+
     return {
         //================================================================ Keys
         P ("FM Rhodes", "Keys", with (fm, { { "chorusMix", 0.25f }, { "lfo1Rate", 4.5f }, { "lfo1Retrig", 0 },
@@ -569,6 +592,29 @@ inline std::vector<Preset> morePresets()
         P ("Ghost Carrier", "Club Experimental", with (clubAir, { { "aTable", 12.0f }, { "aPos", 0.08f }, { "bOn", 1.0f }, { "bTable", 14.0f }, { "bLevel", 0.08f }, { "bOct", 1.0f }, { "xFmBA", 0.09f }, { "fltType", 2.0f }, { "cutoff", 420.0f }, { "chorusMode", 2.0f }, { "chorusMix", 0.35f }, { "verbShimmer", 0.15f } }), mClub),
         P ("Folded Rubber", "Club Experimental", with (clubBass, { { "aTable", 8.0f }, { "aPos", 0.24f }, { "aWarp", 2.0f }, { "aWarpAmt", 0.16f }, { "fltType", 4.0f }, { "cutoff", 900.0f }, { "dropAmt", -7.0f }, { "dropTime", 0.055f }, { "ampD", 0.32f }, { "ampS", 0.2f }, { "distType", 2.0f }, { "distMix", 0.3f }, { "subLevel", 0.4f } }), mClub),
         P ("Afterimage Dust", "Club Experimental", with (clubAir, { { "aTable", 14.0f }, { "aPos", 0.6f }, { "noiseLevel", 0.035f }, { "noiseType", 4.0f }, { "fltType", 2.0f }, { "cutoff", 650.0f }, { "tapeWow", 0.2f }, { "tapeSat", 0.2f }, { "dlyStyle", 1.0f }, { "dlyFb", 0.4f }, { "dlyMix", 0.22f }, { "ampA", 0.6f }, { "ampR", 2.2f } }), mClub),
+        // Donk & Bounce (appended: earlier program numbers stay put).
+        P ("Scouse Donk", "Donk & Bounce", donk, mDonk),
+        P ("Bamboo Donk", "Donk & Bounce", with (donk, { { "bPos", 0.33f }, { "bOct", 1.0f }, { "bSemi", 7.0f }, { "aWarpAmt", 0.04f },
+            { "mod1Amt", 0.3f }, { "modD", 0.05f }, { "ampD", 0.2f }, { "dropAmt", 5.0f }, { "cutoff", 3600.0f } }), mDonk),
+        P ("Hard House Donk", "Donk & Bounce", with (donk, { { "mod1Amt", 0.48f }, { "aWarpAmt", 0.09f }, { "ampD", 0.18f }, { "dropAmt", 7.0f },
+            { "dropTime", 0.012f }, { "cutoff", 6000.0f }, { "distType", 1.0f }, { "distDrive", 0.35f }, { "distMix", 0.35f }, { "ott", 0.3f } }), mDonk),
+        P ("Bounce Donk", "Donk & Bounce", with (donk, { { "ampD", 0.3f }, { "ampS", 0.08f }, { "modD", 0.1f }, { "mod1Amt", 0.36f },
+            { "chorusMix", 0.18f }, { "chorusMode", 2.0f }, { "dlyTime", 5.0f }, { "dlyFb", 0.25f }, { "dlyMix", 0.12f }, { "dlyTone", 0.45f } }), mDonk),
+        P ("Rubber Donk", "Donk & Bounce", with (donk, { { "aWarp", 0.0f }, { "aPos", 0.33f }, { "bLevel", 0.55f }, { "bFine", 9.0f }, { "bFilter", 1.0f },
+            { "mod1Src", 3.0f }, { "mod1Dest", 8.0f }, { "mod1Amt", 0.45f }, { "mod2Dest", 8.0f }, { "mod2Amt", 0.3f },
+            { "cutoff", 380.0f }, { "res", 0.72f }, { "modD", 0.11f }, { "ampD", 0.26f }, { "dropAmt", 4.0f } }), mDonk),
+        P ("Gont", "Donk & Bounce", with (donk, { { "bLevel", 0.12f }, { "bFine", 6.0f }, { "bFilter", 1.0f }, { "mod1Amt", 0.4f },
+            { "modD", 0.07f }, { "ampD", 0.22f }, { "cutoff", 3000.0f }, { "distMix", 0.3f } }), mDonk),
+        P ("Donk Sub", "Donk & Bounce", with (donk, { { "subOn", 1.0f }, { "subOct", -1.0f }, { "subLevel", 0.38f }, { "subFilter", 0.0f },
+            { "ampD", 0.28f }, { "mod1Amt", 0.34f }, { "cutoff", 3200.0f }, { "monoBass", 1.0f } }), mDonk),
+        P ("Hardbass Donk", "Donk & Bounce", with (donk, { { "mod1Amt", 0.44f }, { "ampD", 0.26f }, { "ampS", 0.1f }, { "dropAmt", 10.0f },
+            { "dropTime", 0.01f }, { "cutoff", 5000.0f }, { "distType", 3.0f }, { "distDrive", 0.5f }, { "distMix", 0.5f }, { "ott", 0.35f },
+            { "subOn", 1.0f }, { "subOct", -1.0f }, { "subLevel", 0.25f } }), mDonk),
+        P ("Pipe Donk", "Donk & Bounce", with (donk, { { "bOct", 1.0f }, { "aWarpAmt", 0.05f }, { "mod1Amt", 0.32f }, { "modD", 0.06f },
+            { "fltType", 3.0f }, { "cutoff", 950.0f }, { "res", 0.35f }, { "fltMix", 0.6f }, { "ampD", 0.2f } }), mDonk),
+        P ("Deep House Donk", "Donk & Bounce", with (donk, { { "mode", 0.0f }, { "mod1Amt", 0.22f }, { "aWarpAmt", 0.05f }, { "modD", 0.14f },
+            { "ampD", 0.36f }, { "ampS", 0.12f }, { "ampR", 0.12f }, { "dropAmt", 3.0f }, { "dropTime", 0.02f }, { "cutoff", 1900.0f },
+            { "distMix", 0.0f }, { "chorusMix", 0.15f }, { "verbMode", 1.0f }, { "verbMix", 0.12f } }), mDonk),
     };
 }
 

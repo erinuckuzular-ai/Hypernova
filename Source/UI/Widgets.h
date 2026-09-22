@@ -265,6 +265,7 @@ public:
     std::function<void (Widget&, juce::Point<int> screenPos)> onMenu;
     std::function<void (Widget&)> onMaximise, onExpand;
     int headerFreeWidth = 0;  // room in the title row for tabs, from titleX (0: tabs get their own strip)
+    bool fitHeight = false;   // scale by height only and lay out to any width (onLayout): for strips that scroll
     bool collapsed = false, sideways = false;           // sideways: collapsed into a vertical spine
     bool editing = false, lifted = false, maximised = false;
 
@@ -273,6 +274,7 @@ public:
 
     juce::Point<int> minimumSize() const
     {
+        if (fitHeight) return { 300, juce::roundToInt ((float) (designH + tabStripHeight()) * minScale) };
         return { juce::roundToInt ((float) designW * minScale), juce::roundToInt ((float) (designH + tabStripHeight()) * minScale) };
     }
     float scale() const { return scaleNow; }
@@ -309,14 +311,19 @@ public:
         }
         content.setVisible (true);
         const int strip = tabStripHeight();
-        const float fit = juce::jmin ((float) r.getWidth() / (float) designW, (float) (r.getHeight() - strip) / (float) designH);
-        scaleNow = juce::jlimit (0.3f, maxScale, fit);
+        const float fit = fitHeight ? (float) (r.getHeight() - strip) / (float) designH
+                                    : juce::jmin ((float) r.getWidth() / (float) designW, (float) (r.getHeight() - strip) / (float) designH);
+        scaleNow = juce::jlimit (fitHeight ? 0.6f : 0.3f, maxScale, fit);
         const int w = (int) std::ceil ((float) r.getWidth() / scaleNow);
         const int h = (int) std::ceil ((float) (r.getHeight() - strip) / scaleNow);
         content.setBounds (0, 0, w, h);
         content.setTransform (juce::AffineTransform::scale (scaleNow).translated (0.0f, (float) strip));
-        spread.apply (w, h);
-        if (onLayout) onLayout (spread.width(), spread.height());
+        if (fitHeight) { if (onLayout) onLayout (w, h); }
+        else
+        {
+            spread.apply (w, h);
+            if (onLayout) onLayout (spread.width(), spread.height());
+        }
         tabs.setVisible (stacked());
         if (stacked())
         {

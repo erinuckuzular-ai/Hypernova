@@ -63,7 +63,8 @@ public:
         entries.clear();
         const auto& f = factoryPresets();
         for (int i = 1; i < (int) f.size(); ++i)
-            entries.push_back ({ f[(size_t) i].name, f[(size_t) i].category, "Factory", i, {} });
+            if (! isRetiredPreset (f[(size_t) i].name))
+                entries.push_back ({ f[(size_t) i].name, f[(size_t) i].category, "Factory", i, {} });
         for (const auto& file : HypernovaAudioProcessor::presetFilesIn (HypernovaAudioProcessor::packFolder()))
             entries.push_back ({ file.getFileNameWithoutExtension(), file.getParentDirectory().getFileName(), "Pack", -1, file });
         for (const auto& file : HypernovaAudioProcessor::presetFilesIn (HypernovaAudioProcessor::userPresetFolder()))

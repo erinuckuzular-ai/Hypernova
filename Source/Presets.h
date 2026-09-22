@@ -53,6 +53,13 @@ inline PresetValues with (const PresetValues& base, std::initializer_list<std::p
 namespace ab
 {
 
+// Sounds taken out of the browser, the preset menu and next/previous. They keep their program numbers so
+// sessions and host automation that point at later sounds don't shift.
+inline bool isRetiredPreset (const char* name)
+{
+    return juce::String (name) == "Donk Bass"; // replaced by the Donk & Bounce set
+}
+
 inline const std::vector<Preset>& factoryPresets()
 {
     //==========================================================================

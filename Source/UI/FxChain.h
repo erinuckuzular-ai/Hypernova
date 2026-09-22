@@ -18,6 +18,10 @@ public:
         for (int i = 0; i < NumFx; ++i) shownX[(size_t) i] = -1.0f;
     }
 
+    bool isScrollable() const { return scrollable(); }
+    float scrollPosition() const { return scroll; }
+    float chipWidth() const { return slotWidth(); }
+
     std::function<void (int fxId)> onShowEffect;
     std::function<void (juce::Point<int> screenPos)> onMenu;
 
@@ -72,20 +76,53 @@ public:
         g.setColour (Colours::line);
         g.drawHorizontalLine ((int) row.getCentreY(), 50.0f, (float) getWidth() - 44.0f);
 
-        for (int slot = 0; slot < NumFx; ++slot)
         {
-            const int id = order[(size_t) slot];
-            if (dragIndex >= 0 && id == dragId) continue;
-            drawChip (g, id, chipRect (shownX[(size_t) id] >= 0 ? shownX[(size_t) id] : slotX (slot), w, row), names[id], false, slot);
+            juce::Graphics::ScopedSaveState clip (g);
+            g.reduceClipRegion (row.expanded (2.0f, 10.0f).toNearestInt());
+            for (int slot = 0; slot < NumFx; ++slot)
+            {
+                const int id = order[(size_t) slot];
+                if (dragIndex >= 0 && id == dragId) continue;
+                drawChip (g, id, chipRect (shownX[(size_t) id] >= 0 ? shownX[(size_t) id] : slotX (slot), w, row), names[id], false, slot);
+            }
+        }
+        if (scrollable())
+        {
+            // Soft edges where chips run off, and a thin bar showing where you are.
+            auto fade = [&] (juce::Rectangle<float> r, bool left)
+            {
+                juce::ColourGradient grad (Colours::panel.withAlpha (left ? 1.0f : 0.0f), r.getX(), 0, Colours::panel.withAlpha (left ? 0.0f : 1.0f), r.getRight(), 0, false);
+                g.setGradientFill (grad);
+                g.fillRect (r);
+            };
+            if (scroll > 0.5f) fade (row.withWidth (28.0f), true);
+            if (scroll < maxScroll() - 0.5f) fade (row.withLeft (row.getRight() - 28.0f), false);
+            const float frac = row.getWidth() / contentWidth();
+            auto track = juce::Rectangle<float> (row.getX(), row.getBottom() + 5.0f, row.getWidth(), 3.0f);
+            g.setColour (Colours::line);
+            g.fillRoundedRectangle (track, 1.5f);
+            g.setColour (Colours::textDim);
+            g.fillRoundedRectangle (track.withWidth (track.getWidth() * frac).withX (track.getX() + track.getWidth() * (1.0f - frac) * (scroll / maxScroll())), 1.5f);
         }
         if (dragIndex >= 0)
             drawChip (g, dragId, chipRect (dragX, w, row).translated (0, -4.0f), names[dragId], true, dragIndex);
 
         g.setColour (Colours::textDim);
         g.setFont (font (10.0f));
-        g.drawText ("then WIDTH and MONO BASS (the output stage). dimmed effects are on but doing nothing.",
+        g.drawText (scrollable() ? "scroll or swipe sideways for more. then WIDTH and MONO BASS (the output stage)."
+                                 : "then WIDTH and MONO BASS (the output stage). dimmed effects are on but doing nothing.",
                     getLocalBounds().toFloat().removeFromBottom (18.0f), juce::Justification::centredLeft, true);
     }
+
+    void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
+    {
+        if (! scrollable()) { juce::Component::mouseWheelMove (e, w); return; }
+        // Trackpads scroll sideways directly; a mouse wheel's up/down moves the row too.
+        const float delta = std::abs (w.deltaX) > std::abs (w.deltaY) ? w.deltaX : w.deltaY;
+        setScroll (scroll - delta * (w.isReversed ? -1.0f : 1.0f) * 240.0f);
+    }
+
+    void resized() override { setScroll (scroll); }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -105,9 +142,17 @@ public:
             dragId = order[(size_t) pressedSlot];
             grabOffset = pressX - slotX (pressedSlot);
         }
+        lastMouseX = e.position.x;
         dragX = juce::jlimit (chipRow().getX(), chipRow().getRight() - slotWidth(), e.position.x - grabOffset);
-        // Where it would go: the others shuffle to make room.
-        const int target = juce::jlimit (0, NumFx - 1, (int) std::round ((dragX - chipRow().getX()) / slotWidth()));
+        updateDragTarget();
+        startTimerHz (60);
+        repaint();
+    }
+
+    // Where the dragged chip would go: the others shuffle to make room.
+    void updateDragTarget()
+    {
+        const int target = juce::jlimit (0, NumFx - 1, (int) std::round ((dragX + scroll - chipRow().getX()) / slotWidth()));
         if (target != dragIndex)
         {
             auto o = order;
@@ -118,8 +163,6 @@ public:
             std::copy (v.begin(), v.end(), order.begin());
             dragIndex = target;
         }
-        startTimerHz (60);
-        repaint();
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -142,6 +185,9 @@ public:
                 p->setValueNotifyingHost (p->getValue() > 0.5f ? 0.0f : 1.0f);
         }
         else if (onShowEffect) onShowEffect (id);
+        // A chip that's partly off the edge scrolls into view.
+        if (slotX (pressedSlot) < chipRow().getX()) setScroll (scroll - (chipRow().getX() - slotX (pressedSlot)));
+        else if (slotX (pressedSlot) + slotWidth() > chipRow().getRight()) setScroll (scroll + (slotX (pressedSlot) + slotWidth() - chipRow().getRight()));
         pressedSlot = -1;
     }
 
@@ -150,15 +196,30 @@ private:
     FxOrder order;
     std::array<float, NumFx> shownX {};
     int lastChanges = -1, pressedSlot = -1, dragIndex = -1, dragId = 0;
-    float pressX = 0, dragX = 0, grabOffset = 0;
+    float pressX = 0, dragX = 0, grabOffset = 0, scroll = 0, lastMouseX = 0;
 
-    juce::Rectangle<float> chipRow() const { return getLocalBounds().toFloat().withTrimmedBottom (24.0f).reduced (54.0f, 4.0f).withTrimmedRight (0); }
-    float slotWidth() const { return chipRow().getWidth() / (float) NumFx; }
-    float slotX (int slot) const { return chipRow().getX() + slotWidth() * (float) slot; }
+    // The visible strip; when it's narrower than the chips need, the row scrolls sideways.
+    static constexpr float minSlot = 96.0f;
+    juce::Rectangle<float> chipRow() const { return getLocalBounds().toFloat().withTrimmedBottom (24.0f).reduced (54.0f, 4.0f); }
+    float contentWidth() const { return juce::jmax (chipRow().getWidth(), minSlot * (float) NumFx); }
+    float maxScroll() const { return contentWidth() - chipRow().getWidth(); }
+    bool scrollable() const { return maxScroll() > 0.5f; }
+    float slotWidth() const { return contentWidth() / (float) NumFx; }
+    float slotX (int slot) const { return chipRow().getX() + slotWidth() * (float) slot - scroll; }
     int slotAt (float x) const
     {
-        const int s = (int) std::floor ((x - chipRow().getX()) / slotWidth());
+        if (x < chipRow().getX() || x > chipRow().getRight()) return -1;
+        const int s = (int) std::floor ((x + scroll - chipRow().getX()) / slotWidth());
         return juce::isPositiveAndBelow (s, NumFx) ? s : -1;
+    }
+    void setScroll (float v)
+    {
+        const float clamped = juce::jlimit (0.0f, juce::jmax (0.0f, maxScroll()), v);
+        if (std::abs (clamped - scroll) < 0.01f) return;
+        const float shift = scroll - clamped;
+        scroll = clamped;
+        for (auto& x : shownX) if (x >= 0.0f) x += shift; // chips move with the row, not glide
+        repaint();
     }
     static juce::Rectangle<float> chipRect (float x, float w, juce::Rectangle<float> row)
     {
@@ -171,6 +232,22 @@ private:
 
     void timerCallback() override
     {
+        // Dragging near either end of a scrolling row scrolls it.
+        if (dragIndex >= 0 && scrollable())
+        {
+            const auto row = chipRow();
+            const float edge = 36.0f;
+            float step = 0.0f;
+            if (lastMouseX < row.getX() + edge) step = -(row.getX() + edge - lastMouseX) * 0.35f;
+            else if (lastMouseX > row.getRight() - edge) step = (lastMouseX - (row.getRight() - edge)) * 0.35f;
+            if (step != 0.0f)
+            {
+                const float before = scroll;
+                setScroll (scroll + step);
+                // The dragged chip stays under the mouse while the row slides.
+                if (std::abs (scroll - before) > 0.01f) updateDragTarget();
+            }
+        }
         // Chips glide to their slots.
         bool moving = false;
         for (int slot = 0; slot < NumFx; ++slot)

@@ -1457,8 +1457,15 @@ int HypernovaAudioProcessor::importPresets (const juce::Array<juce::File>& items
 
 void HypernovaAudioProcessor::stepPreset (int delta)
 {
-    const int n = (int) factoryPresets().size();
-    loadFactoryPreset ((currentProgram + delta + n) % n);
+    const auto& presets = factoryPresets();
+    const int n = (int) presets.size();
+    int next = currentProgram;
+    for (int tries = 0; tries < n; ++tries)
+    {
+        next = (next + delta + n) % n;
+        if (! isRetiredPreset (presets[(size_t) next].name)) break; // retired sounds are skipped
+    }
+    loadFactoryPreset (next);
 }
 
 void HypernovaAudioProcessor::setMacroName (int i, const juce::String& n)

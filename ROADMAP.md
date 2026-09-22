@@ -21,7 +21,7 @@ The widget interface comes first because every later feature (sampler, extra sou
 | 3 | Sound DNA: patch breeding | not started | Must stay separate from the dice button (the randomize strip is removed). |
 | 6 | Matter: creative audio transformation | not started | Wavetable import exists, but it converts to a wavetable, which isn't what this item asks for. |
 | 7 | Constellation: sound discovery | not started | The conventional searchable browser exists and must be kept. There's no similarity search yet. |
-| 9 | Low-End Architect | partial | Done: the Low End widget. A phase-coherent Linkwitz-Riley split (40–300 Hz, draggable on a live split spectrum). The upper band goes through the effects rack while the sub stays clean: under full distortion the sub's error drops from 0.95 to 0.10 (tested). The sub has its own level, warmth and mono, and a tempo-synced duck (a sidechain-style pump without a sidechain). There's a band-balance readout and a phone-speaker check that's monitoring-only and never saved. It adds no latency (IIR crossover), and switching it on mid-note doesn't click. Missing: real kick sidechain input (the host has to support a sidechain on instruments). |
+| 9 | Low-End Architect | partial | Done (0.9.0): the Low End widget. A phase-coherent Linkwitz-Riley split (40–300 Hz, draggable on a live split spectrum). The upper band goes through the effects rack while the sub stays clean: under full distortion the sub's error drops from 0.95 to 0.10 (tested). The sub has its own level, warmth and mono, and a tempo-synced duck (a sidechain-style pump without a sidechain). There's a band-balance readout and a phone-speaker check that's monitoring-only and never saved. It adds no latency (IIR crossover), and switching it on mid-note doesn't click. Missing: real kick sidechain input (the host has to support a sidechain on instruments). |
 | 10 | Living patches: expressive response | partial | Existing: velocity routing and the DRAG VEL chip. Missing: per-note expression (MPE), pressure and note-position responses. |
 | 11 | Modular sound sources | not started | |
 | 12 | Flexible audio routing | not started | |
@@ -41,7 +41,7 @@ The widget interface comes first because every later feature (sampler, extra sou
 | 30 | Patch exploration and learning | not started | |
 | 31 | Resample into a new module | not started | |
 | 32 | Character modules | partial | Existing: TAPE (wobble, noise, saturate) and distortion styles as fixed effects. Missing: placing them per layer or bus, early-digital sampling and companding, speaker/mic colouration. |
-| — | New sound catalogue | partial | 48 Club Studies presets were added, relevelled and measured (UK dub, UK garage, house bass and stabs, baile funk, club percussion, club experimental). They have been checked by measurement only, not by ear. More dusty keys, organs and hybrid instruments are still needed. |
+| — | New sound catalogue | partial | Donk & Bounce (0.9.0): 10 FM donks designed from the two-operator donk recipe and checked by measurement only (attack brightness 320–1,260 Hz, settled 160–430 Hz, in tune). The old "Donk Bass" is retired: hidden, but its program number is kept. 48 Club Studies presets were added, relevelled and measured (UK dub, UK garage, house bass and stabs, baile funk, club percussion, club experimental). They have been checked by measurement only, not by ear. More dusty keys, organs and hybrid instruments are still needed. |
 
 ## Interface removals (done)
 
