@@ -44,7 +44,7 @@ code { font-family: var(--mono); font-size: 0.9em; }
   border-bottom: 1px solid var(--rule);
 }
 .brand { font: 700 18px/1 var(--sans); letter-spacing: -0.02em; text-decoration: none; }
-.brand::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 1px; }
+.brand::before { content: ""; display: inline-block; width: 26px; height: 16px; background: url("assets/mark.svg") center / contain no-repeat; margin-right: 6px; vertical-align: -2px; }
 .nav { display: flex; gap: 18px; font: 400 13px/1 var(--mono); overflow-x: auto; }
 .nav a { text-decoration: none; color: var(--ink-2); white-space: nowrap; }
 .nav a:hover { color: var(--accent); }

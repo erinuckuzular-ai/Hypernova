@@ -4,7 +4,7 @@
 // Renders the installer/DMG artwork.
 //   packaging/art/dmg-background.png (+@2x)   disk image window, in the Paper house style (docs/style.css)
 //   packaging/resources/background.png        art card in the macOS Installer, Paper style
-//   packaging/art/AppIcon.png                 installer app + volume icon (1024): white tile, orange dot
+//   packaging/art/AppIcon.png                 installer app + volume icon (1024): white tile, the orange nova mark
 //   packaging/art/PackIcon.png, ExtrasIcon.png folder icons in the disk image, paper white
 // MakeInstallerArt <repoRoot>
 using namespace ab::ui;
@@ -156,8 +156,8 @@ namespace
         g.addTransform (juce::AffineTransform::scale (scale));
         g.fillAll (bg);
 
-        // Wordmark, top-left: the orange dot, then lowercase hypernova; the sub-line in mono.
-        dot (g, { 41, 41 }, 11);
+        // Wordmark, top-left: the nova mark, then lowercase hypernova; the sub-line in mono.
+        drawNovaMark (g, { 38, 41 }, 5.0f, accent);
         g.setColour (ink);
         g.setFont (grotesk (27).withExtraKerningFactor (-0.03f));
         text (g, "hypernova", { 53, 24, 300, 34 }, juce::Justification::centredLeft);
@@ -222,18 +222,15 @@ namespace
         g.fillRoundedRectangle (body, 186.0f);
         g.setColour (rule);
         g.drawRoundedRectangle (body.reduced (2.0f), 184.0f, 4.0f);
-        // the dot: a solid orange cylinder with a lit cap
-        const juce::Point<float> c (512, 480);
-        const float r = 250.0f, depth = 40.0f;
-        g.setColour (juce::Colours::black.withAlpha (0.12f));
-        g.fillEllipse (juce::Rectangle<float> (r * 2, r * 2).withCentre (c.translated (0, depth + 18)));
-        g.setColour (accent.darker (0.45f));
-        g.fillEllipse (juce::Rectangle<float> (r * 2, r * 2).withCentre (c.translated (0, depth)));
-        g.fillRect (juce::Rectangle<float> (c.x - r, c.y, r * 2, depth));
-        g.setGradientFill (juce::ColourGradient (accent.brighter (0.25f), c.x - r * 0.5f, c.y - r * 0.6f, accent.darker (0.1f), c.x + r, c.y + r, true));
-        g.fillEllipse (juce::Rectangle<float> (r * 2, r * 2).withCentre (c));
-        g.setColour (juce::Colours::white.withAlpha (0.32f));
-        g.fillEllipse (juce::Rectangle<float> (r * 0.9f, r * 0.45f).withCentre (c.translated (-r * 0.3f, -r * 0.48f)));
+        // The nova mark, big, with a soft shadow under it.
+        const juce::Point<float> c (512, 492);
+        {
+            juce::Image shade (juce::Image::ARGB, s, s, true);
+            juce::Graphics sg (shade);
+            drawNovaMark (sg, c.translated (0, 22), 170.0f, juce::Colours::black.withAlpha (0.16f), false);
+            g.drawImageAt (shade.rescaled (s / 8, s / 8).rescaled (s, s), 0, 0);
+        }
+        drawNovaMark (g, c, 170.0f, accent);
         return img;
     }
 
@@ -297,9 +294,7 @@ namespace
         auto c = juce::Rectangle<float> (12, 262, 136, 144);
         cardAt (g, c, 14.0f);
         const float cx = c.getCentreX();
-        g.setColour (accent.withAlpha (0.14f));
-        g.fillEllipse (juce::Rectangle<float> (40, 40).withCentre ({ cx, c.getY() + 50 }));
-        dot (g, { cx, c.getY() + 50 }, 22);
+        drawNovaMark (g, { cx, c.getY() + 50 }, 12.0f, accent);
         g.setColour (ink);
         g.setFont (grotesk (19.0f).withExtraKerningFactor (-0.03f));
         text (g, "hypernova", { c.getX(), c.getY() + 84, c.getWidth(), 24 }, juce::Justification::centred);

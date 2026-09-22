@@ -351,7 +351,8 @@ public:
             panelCache = juce::Image (juce::Image::ARGB, juce::jmax (1, getWidth() * 2), juce::jmax (1, getHeight() * 2), true);
             juce::Graphics cg (panelCache);
             cg.addTransform (juce::AffineTransform::scale (2.0f));
-            panel (cg, r, 14.0f * juce::jmin (1.0f, scaleNow));
+            panel (cg, panelRect(), panelRadius());
+            grain (cg, panelRect(), panelRadius());
             cachedTheme = themeVersion;
         }
         g.drawImage (panelCache, r);
@@ -369,31 +370,32 @@ public:
         {
             // Being dragged: a quiet placeholder stays where it came from.
             g.setColour (Colours::bg0.withAlpha (0.6f));
-            g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
+            g.fillRoundedRectangle (panelRect(), panelRadius());
         }
         if (dimmed && ! editing && ! collapsed)
         {
             const float top = (float) tabStripHeight() + 40.0f * scaleNow;
             juce::Path body;
-            const auto b = getLocalBounds().toFloat().reduced (1.0f).withTop (top);
-            body.addRoundedRectangle (b.getX(), b.getY(), b.getWidth(), b.getHeight(), 14.0f, 14.0f, false, false, true, true);
+            const auto b = panelRect().withTop (top);
+            body.addRoundedRectangle (b.getX(), b.getY(), b.getWidth(), b.getHeight(), panelRadius(), panelRadius(), false, false, true, true);
             g.setColour (Colours::panel.withAlpha (0.55f));
             g.fillPath (body);
         }
         if (! editing) return;
-        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        auto r = panelRect();
+        const float rad = panelRadius();
         // Layout mode: the controls rest under a light veil and the title row becomes a calm bar with a handle
         // in the middle and round buttons at the ends (remove, fold, more). The whole panel can be picked up.
         g.setColour (Colours::bg0.withAlpha (collapsed ? 0.1f : 0.25f));
-        g.fillRoundedRectangle (r, 14.0f);
+        g.fillRoundedRectangle (r, rad);
         g.setColour (Colours::accent.withAlpha (0.65f));
-        g.drawRoundedRectangle (r, 14.0f, 1.5f);
+        g.drawRoundedRectangle (r, rad, 1.5f);
         if (collapsed) return;
         {
             // The bar is as tall as the panel's own title row, so it covers the title and nothing else.
             const float h = (float) barHeight();
             juce::Path bar;
-            bar.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), h, 14.0f, 14.0f, true, true, false, false);
+            bar.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), h, rad, rad, true, true, false, false);
             g.setColour (Colours::bg0.withAlpha (1.0f));
             g.fillPath (bar);
             g.setColour (Colours::panel.withAlpha (0.5f));
@@ -414,6 +416,10 @@ public:
 
     // Header chrome, in widget coordinates, for the overlay's hit-testing.
     enum Button { Close, Collapse, Menu, NumButtons };
+    // The panel's face inside the widget: a little room at the bottom for its shadow, so it's never cut off.
+    juce::Rectangle<float> panelRect() const { return getLocalBounds().toFloat().reduced (1.0f, 0.0f).withTrimmedBottom (3.0f); }
+    float panelRadius() const { return 14.0f * juce::jlimit (0.72f, 1.0f, scaleNow); }
+
     // Layout-mode bar: the height of the title row as it's drawn now (scaled), never less than fits the buttons.
     int barHeight() const
     {
@@ -494,6 +500,24 @@ private:
 
     bool tabsInHeader() const { return stacked() && headerFreeWidth >= 90 * stackTitles.size(); }
     int tabStripHeight() const { return stacked() && ! tabsInHeader() ? 36 : 0; }
+
+    // A whisper of grain on the face, so large panels read as a material rather than flat fill.
+    static void grain (juce::Graphics& g, juce::Rectangle<float> r, float radius)
+    {
+        juce::Graphics::ScopedSaveState keep (g);
+        juce::Path clip;
+        clip.addRoundedRectangle (r, radius);
+        g.reduceClipRegion (clip);
+        juce::Random rnd (1234);
+        const bool light = ThemeState::get().base.light;
+        const int n = (int) (r.getWidth() * r.getHeight() / 90.0f);
+        for (int i = 0; i < n; ++i)
+        {
+            const bool bright = rnd.nextBool();
+            g.setColour ((bright ? juce::Colours::white : juce::Colours::black).withAlpha (light ? 0.018f : (bright ? 0.022f : 0.035f)));
+            g.fillRect (r.getX() + rnd.nextFloat() * r.getWidth(), r.getY() + rnd.nextFloat() * r.getHeight(), 0.5f, 0.5f);
+        }
+    }
 
     void paintFolded (juce::Graphics& g, juce::Rectangle<float> r)
     {

@@ -327,18 +327,89 @@ inline void panel (juce::Graphics& g, juce::Rectangle<float> r, float radius = 1
         g.drawRoundedRectangle (r.reduced (0.75f), radius, 1.5f);
         return;
     }
-    g.setColour (juce::Colours::black.withAlpha (0.25f));
-    g.fillRoundedRectangle (r.translated (0, 3.0f), radius);
-    g.setGradientFill (juce::ColourGradient (base.brighter (0.08f), r.getX(), r.getY(), base.darker (0.3f), r.getX(), r.getBottom(), false));
+    // Layered, neutral shadow that stays within 3 px below the face (a single hard offset looked cut off).
+    for (int i = 3; i >= 1; --i)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.07f * (float) (4 - i)));
+        g.fillRoundedRectangle (r.translated (0, (float) i).expanded (0.4f * (float) i, 0), radius + 0.5f * (float) i);
+    }
+    // Face: lit from above, a touch darker towards the bottom.
+    g.setGradientFill (juce::ColourGradient (base.brighter (0.07f), r.getX(), r.getY(), base.darker (0.28f), r.getX(), r.getBottom(), false));
     g.fillRoundedRectangle (r, radius);
-    juce::ColourGradient rim (Colours::accent2.withAlpha (0.45f), r.getX(), r.getY(),
-                              Colours::accent.withAlpha (0.02f), r.getX() + r.getWidth() * 0.7f, r.getBottom(), false);
-    rim.addColour (0.35, Colours::accent.withAlpha (0.14f));
+    // Edge: catches light along the top, the accent glints off the top-left, and it falls into shadow below.
+    juce::ColourGradient edge (juce::Colours::white.withAlpha (0.16f), r.getX(), r.getY(), juce::Colours::black.withAlpha (0.35f), r.getX(), r.getBottom(), false);
+    edge.addColour (0.18, juce::Colours::white.withAlpha (0.05f));
+    g.setGradientFill (edge);
+    g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
+    juce::ColourGradient rim (Colours::accent2.withAlpha (0.38f), r.getX(), r.getY(),
+                              Colours::accent.withAlpha (0.0f), r.getX() + r.getWidth() * 0.55f, r.getY() + r.getHeight() * 0.6f, false);
+    rim.addColour (0.3, Colours::accent.withAlpha (0.1f));
     g.setGradientFill (rim);
     g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.10f), r.getX() + radius, r.getY(),
-                                             juce::Colours::white.withAlpha (0.0f), r.getCentreX(), r.getY(), false));
-    g.fillRect (r.reduced (radius, 0).withHeight (1.0f).translated (0, 1.0f));
+    // A fine specular line just inside the top edge, brightest left of centre.
+    {
+        juce::ColourGradient spec (juce::Colours::white.withAlpha (0.0f), r.getX() + radius, 0, juce::Colours::white.withAlpha (0.0f), r.getRight() - radius, 0, false);
+        spec.addColour (0.35, juce::Colours::white.withAlpha (0.13f));
+        g.setGradientFill (spec);
+        g.fillRect (r.reduced (radius, 0).withHeight (1.0f).translated (0, 1.0f));
+    }
+}
+
+// The Hypernova mark: a lit core with a tilted orbit ring passing in front of it (the same idea as the
+// orbit and 3D views). R is the core's radius; the ring reaches about 2R either side. One colour, so it
+// works at favicon size. Mirrored in docs/favicon.svg and the site's .brand mark.
+inline void drawNovaMark (juce::Graphics& g, juce::Point<float> c, float R, juce::Colour col, bool shaded = true)
+{
+    constexpr float pi = juce::MathConstants<float>::pi;
+    const auto place = juce::AffineTransform::rotation (-0.36f).translated (c);
+    auto half = [&] (bool front)
+    {
+        juce::Path p;
+        const float rx = 2.1f * R, ry = 0.55f * R;
+        for (int i = 0; i <= 48; ++i)
+        {
+            const float a = (front ? 0.0f : pi) + pi * (float) i / 48.0f;
+            const juce::Point<float> pt (rx * std::cos (a), ry * std::sin (a));
+            if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+        }
+        p.applyTransform (place);
+        return p;
+    };
+    const juce::PathStrokeType ring (0.2f * R, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    const auto back = half (false), front = half (true);
+    g.setColour (col.withMultipliedAlpha (0.8f));
+    g.strokePath (back, ring);
+    {
+        // The core, with a gap cut where the front of the ring crosses it.
+        // The gap is the band between two ellipses around the ring's front half (a simple shape, unlike a
+        // stroke outline, whose tight ends fold over themselves and confuse the even-odd cut).
+        juce::Path gap, clip;
+        const float w = 0.2f * R, rx = 2.1f * R, ry = 0.55f * R;
+        for (int i = 0; i <= 48; ++i)
+        {
+            const float a = pi * (float) i / 48.0f;
+            const juce::Point<float> pt ((rx + w) * std::cos (a), (ry + w) * std::sin (a));
+            if (i == 0) gap.startNewSubPath (pt); else gap.lineTo (pt);
+        }
+        for (int i = 48; i >= 0; --i)
+        {
+            const float a = pi * (float) i / 48.0f;
+            gap.lineTo ((rx - w) * std::cos (a), (ry - w) * std::sin (a));
+        }
+        gap.closeSubPath();
+        gap.applyTransform (place);
+        clip.addRectangle (juce::Rectangle<float> (6.0f * R, 6.0f * R).withCentre (c));
+        clip.addPath (gap);
+        clip.setUsingNonZeroWinding (false);
+        juce::Graphics::ScopedSaveState keep (g);
+        g.reduceClipRegion (clip);
+        const auto core = juce::Rectangle<float> (2.0f * R, 2.0f * R).withCentre (c);
+        if (shaded) g.setGradientFill (juce::ColourGradient (col.brighter (0.35f), c.x - R * 0.5f, c.y - R * 0.6f, col.darker (0.12f), c.x + R, c.y + R, true));
+        else g.setColour (col);
+        g.fillEllipse (core);
+    }
+    g.setColour (col);
+    g.strokePath (front, ring);
 }
 
 inline void sectionLabel (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, juce::Colour c = Colours::textDim)

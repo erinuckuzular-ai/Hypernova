@@ -640,10 +640,9 @@ void HypernovaAudioProcessorEditor::paintCanvas (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::paintStatic (juce::Graphics& g)
 {
-    // Wordmark: an accent dot and "hypernova" in lowercase, the same as the website.
+    // Wordmark: the nova mark and "hypernova" in lowercase, the same as the website.
     {
-        g.setColour (Colours::accent);
-        g.fillEllipse (juce::Rectangle<float> (logoHoleRadius * 2.0f, logoHoleRadius * 2.0f).withCentre (logoHole));
+        drawNovaMark (g, logoHole, 8.5f, Colours::accent);
         g.setColour (Colours::text);
         g.setFont (heavy (34.0f).withExtraKerningFactor (-0.04f));
         g.drawText ("hypernova", juce::Rectangle<float> (70, 14, 260, 40), juce::Justification::centredLeft, false);
