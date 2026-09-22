@@ -129,7 +129,26 @@ struct LfoSettings
     const float* table = nullptr;   // the drawn shape
 };
 
-struct ModSlot { int src = SrcNone, dest = DNone; float amount = 0; };
+// How a modulation is shaped on its way to the knob, and how quickly it's allowed to move.
+enum ModShape { ShapeLinear, ShapeExp, ShapeLog, ShapeS, ShapeSteps4, ShapeSteps8, ShapeSteps16, NumModShapes };
+inline juce::StringArray modShapeNames() { return { "Linear", "Exponential", "Logarithmic", "S-Curve", "4 Steps", "8 Steps", "16 Steps" }; }
+
+inline float shapeMod (int shape, float v)
+{
+    const float sign = v < 0.0f ? -1.0f : 1.0f, a = std::abs (juce::jlimit (-1.0f, 1.0f, v));
+    switch (shape)
+    {
+        case ShapeExp:  return sign * a * a;
+        case ShapeLog:  return sign * std::sqrt (a);
+        case ShapeS:    return sign * a * a * (3.0f - 2.0f * a);
+        case ShapeSteps4:  return sign * std::round (a * 4.0f) / 4.0f;
+        case ShapeSteps8:  return sign * std::round (a * 8.0f) / 8.0f;
+        case ShapeSteps16: return sign * std::round (a * 16.0f) / 16.0f;
+        default: return v;
+    }
+}
+
+struct ModSlot { int src = SrcNone, dest = DNone; float amount = 0; int shape = ShapeLinear; float smooth = 0; };
 
 struct SynthSettings
 {
@@ -473,6 +492,7 @@ public:
     float shownSample = -1; // sampler playhead, 0..1 of the sample (-1 when it isn't playing)
     double shownLfoPhase[NumLfo] {};
     float lastSrc[NumSrc] {}; // per-voice mod sources of the last sub-block (drives global FX destinations)
+    float slotValue[NumModSlots] {}; // each slot's source after its shape and slew (the effects use these too)
 
     void prepare (double sampleRate)
     {
@@ -623,9 +643,22 @@ public:
             std::copy (std::begin (src), std::end (src), std::begin (lastSrc));
 
             float dst[NumDest] {};
-            for (const auto& slot : s.mod)
-                if (slot.src != SrcNone && slot.dest > DNone && slot.dest < NumDest)
-                    dst[slot.dest] += src[slot.src] * slot.amount;
+            for (size_t m = 0; m < s.mod.size(); ++m)
+            {
+                const auto& slot = s.mod[m];
+                if (slot.src == SrcNone || slot.dest <= DNone || slot.dest >= NumDest) { slotValue[m] = 0.0f; continue; }
+                // Shape first (exponential, stepped, ...), then slew: a slot can move as gently as you like.
+                float v = shapeMod (slot.shape, src[slot.src]);
+                if (slot.smooth > 0.001f)
+                {
+                    const float secs = 0.005f + slot.smooth * slot.smooth * 1.5f;
+                    const float c = std::exp (-(float) n / ((float) sr * secs));
+                    v = slotSmoothed[m] = v + (slotSmoothed[m] - v) * c;
+                }
+                else slotSmoothed[m] = v;
+                slotValue[m] = v;
+                dst[slot.dest] += v * slot.amount;
+            }
             lfoRateMod[0] = dst[DLfo1Rate];
             lfoRateMod[1] = dst[DLfo2Rate];
             lfoRateMod[2] = dst[DLfo3Rate];
@@ -996,6 +1029,7 @@ private:
     float comb[2][combSize] {};
     float combDamp[2] {};
     int combPos = 0;
+    float slotSmoothed[NumModSlots] {};
     double lfoPhase[NumLfo] {};
     float lfoHeld[NumLfo] {}, lfoPrevHeld[NumLfo] {};
     dsp::Env ampEnv, modEnv, smpEnv;

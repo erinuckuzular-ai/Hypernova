@@ -268,6 +268,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     add<Choice> (l, pid ("lowDuckRate"), "Low End Duck Rate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, 0);
     addFloat (l, "lowDuckRelease", "Low End Duck Release", skewed (0.02f, 0.6f, 0.15f), 0.15f, timeText);
 
+    // How each modulation slot is shaped and how fast it's allowed to move (appended).
+    for (int i = 1; i <= NumModSlots; ++i)
+    {
+        const juce::String p = "mod" + juce::String (i);
+        add<Choice> (l, pid (p + "Shape"), "Mod " + juce::String (i) + " Shape", modShapeNames(), 0);
+        addFloat (l, p + "Smooth", "Mod " + juce::String (i) + " Smoothing", { 0.0f, 1.0f }, 0.0f, pctText);
+    }
+
     // Envelope follower (appended): how loud the synth itself is, as a modulation source.
     addFloat (l, "folAtt", "Follower Attack", skewed (0.5f, 200.0f, 20.0f), 10.0f, [] (float v, int) { return juce::String (v, 1) + " ms"; });
     addFloat (l, "folRel", "Follower Release", skewed (10.0f, 2000.0f, 250.0f), 200.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; });
@@ -456,7 +464,8 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     for (int i = 0; i < NumModSlots; ++i)
     {
         const std::string p = "mod" + std::to_string (i + 1);
-        s.mod[(size_t) i] = { (int) param ((p + "Src").c_str()), (int) param ((p + "Dest").c_str()), param ((p + "Amt").c_str()) };
+        s.mod[(size_t) i] = { (int) param ((p + "Src").c_str()), (int) param ((p + "Dest").c_str()), param ((p + "Amt").c_str()),
+                              (int) param ((p + "Shape").c_str()), param ((p + "Smooth").c_str()) };
     }
     auto& sm = s.smp;
     sm.data = currentSample.load (std::memory_order_acquire);
@@ -1090,13 +1099,17 @@ void HypernovaAudioProcessor::applyGlobalModulation (FxSettings& fx)
 
     float d[NumDest] {};
     bool any = false;
-    for (const auto& slot : blockSettings.mod)
+    for (size_t i = 0; i < blockSettings.mod.size(); ++i)
     {
+        const auto& slot = blockSettings.mod[i];
         if (! isGlobalDest (slot.dest) || slot.src == SrcNone) continue;
         float v = 0;
-        if (slot.src >= SrcMacro1 && slot.src <= SrcMacro4) v = globalMod.macros[(size_t) (slot.src - SrcMacro1)];
-        else if (slot.src == SrcModWheel) v = globalMod.modWheel;
-        else if (newest != nullptr) v = newest->lastSrc[slot.src];
+        // Sources that don't belong to a voice are shaped here; the rest come from the newest voice,
+        // where the slot's shape and slew have already been applied.
+        if (slot.src >= SrcMacro1 && slot.src <= SrcMacro4) v = shapeMod (slot.shape, globalMod.macros[(size_t) (slot.src - SrcMacro1)]);
+        else if (slot.src == SrcModWheel) v = shapeMod (slot.shape, globalMod.modWheel);
+        else if (slot.src == SrcFollow) v = shapeMod (slot.shape, globalMod.follower);
+        else if (newest != nullptr) v = newest->slotValue[i];
         d[slot.dest] += v * slot.amount;
         any = true;
     }

@@ -675,6 +675,32 @@ int main (int argc, char** argv)
             check (p.lfoCurve (2) == HypernovaAudioProcessor::defaultLfoCurve(), "loading a preset starts the drawings fresh");
             check (HypernovaAudioProcessor::parseLfoCurve ("nonsense").size() >= 2, "a broken drawing falls back to the default shape");
 
+            // Shaping a modulation slot: the curve maps as it should, and smoothing stops it jumping.
+            {
+                auto near = [] (float a, float b) { return std::abs (a - b) < 0.001f; };
+                check (near (ab::shapeMod (ab::ShapeLinear, 0.5f), 0.5f) && near (ab::shapeMod (ab::ShapeExp, 0.5f), 0.25f)
+                       && near (ab::shapeMod (ab::ShapeLog, 0.25f), 0.5f) && near (ab::shapeMod (ab::ShapeS, 0.5f), 0.5f)
+                       && near (ab::shapeMod (ab::ShapeSteps4, 0.3f), 0.25f) && near (ab::shapeMod (ab::ShapeExp, -0.5f), -0.25f),
+                       "modulation shapes map the way they say (exponential, logarithmic, s-curve, steps, both signs)");
+                auto jumpiness = [&] (float smooth)
+                {
+                    HypernovaAudioProcessor p;
+                    setup (p);
+                    p.setParam ("lfo3Shape", (float) ab::LSquare);
+                    p.setParam ("lfo3Rate", 3.0f);
+                    p.setParam ("mod1Src", (float) ab::SrcLfo3);
+                    p.setParam ("mod1Dest", (float) ab::DALevel);
+                    p.setParam ("mod1Amt", -0.9f);
+                    p.setParam ("mod1Smooth", smooth);
+                    const auto w = windows (p, 1.2);
+                    float biggest = 0;
+                    for (size_t i = 12; i < w.size(); ++i) biggest = juce::jmax (biggest, std::abs (w[i] - w[i - 1]));
+                    return biggest;
+                };
+                const float sharp = jumpiness (0.0f), smooth = jumpiness (0.8f);
+                check (smooth < sharp * 0.6f, "smoothing a slot slows how fast it can move (" + juce::String (sharp, 3) + " -> " + juce::String (smooth, 3) + ")");
+            }
+
             // The envelope follower: it follows the synth, and routed to the level it ducks the sound itself.
             {
                 HypernovaAudioProcessor f;

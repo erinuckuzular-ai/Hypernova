@@ -22,6 +22,7 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - **lfo 3 and lfo 4**: add them from the widget library. same shapes, sync, fade in and retrigger as the first two, and they can be dragged onto any knob.
 - **draw your own lfo shape**: pick *drawn*, then drag the points. click to add one, double-click one to remove it, hold shift to snap to the grid. saved with the sound and undoable.
 - **once**: any lfo can play its shape one pass per note and hold the end, so a shape you draw becomes an envelope.
+- **shape any modulation**: right-click a row in the mod matrix for the curve it goes through (linear, exponential, logarithmic, s-curve, 4/8/16 steps) and how much it's smoothed. a small badge on the row shows when it isn't plain.
 - **follower**: a new widget that follows how loud the synth is, with attack, release and sensitivity. drag it onto any knob: duck the sound with itself, open a filter as you play harder, push an effect on the loud parts.
 
 ## compare and start fresh

@@ -2075,10 +2075,10 @@ private:
     ThemeColour colour;
 };
 
-class ModRow : public juce::Component
+class ModRow : public juce::Component, public juce::SettableTooltipClient
 {
 public:
-    ModRow (juce::AudioProcessorValueTreeState& state, int slot) : bar (Palette::mod)
+    ModRow (juce::AudioProcessorValueTreeState& state, int slot) : apvts (state), index (slot), bar (Palette::mod)
     {
         const juce::String p = "mod" + juce::String (slot + 1);
         src.addItemList (modSrcNames(), 1);
@@ -2090,6 +2090,54 @@ public:
         barAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, p + "Amt", bar);
         bar.setDoubleClickReturnValue (true, 0.0);
         bar.setTooltip ("Amount. Drag left for negative, double-click to zero.");
+        setTooltip ("Right-click for how this modulation is shaped and how fast it's allowed to move.");
+        setInterceptsMouseClicks (true, true);
+    }
+
+    // Right-click anywhere on the row: the shape the source is put through, and how much it's smoothed.
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (! e.mods.isPopupMenu()) return;
+        const juce::String p = "mod" + juce::String (index + 1);
+        auto* shape = apvts.getParameter (p + "Shape");
+        auto* smooth = apvts.getParameter (p + "Smooth");
+        if (shape == nullptr || smooth == nullptr) return;
+        const int shapeNow = (int) apvts.getRawParameterValue (p + "Shape")->load();
+        const float smoothNow = apvts.getRawParameterValue (p + "Smooth")->load();
+        juce::PopupMenu m;
+        m.setLookAndFeel (&getLookAndFeel());
+        m.addSectionHeader ("SHAPE");
+        const auto names = modShapeNames();
+        for (int i = 0; i < names.size(); ++i) m.addItem (100 + i, names[i], true, i == shapeNow);
+        m.addSectionHeader ("SMOOTHING");
+        const std::pair<const char*, float> amounts[] = { { "None", 0.0f }, { "A little", 0.25f }, { "Medium", 0.55f }, { "A lot", 0.85f } };
+        for (int i = 0; i < 4; ++i) m.addItem (200 + i, amounts[i].first, true, std::abs (smoothNow - amounts[i].second) < 0.02f);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, shape, smooth] (int r)
+        {
+            if (r >= 100 && r < 100 + NumModShapes) shape->setValueNotifyingHost (shape->convertTo0to1 ((float) (r - 100)));
+            else if (r >= 200 && r < 204) smooth->setValueNotifyingHost (juce::Array<float> { 0.0f, 0.25f, 0.55f, 0.85f }[r - 200]);
+            repaint();
+        });
+    }
+
+    // A small badge when this slot isn't plain and linear, so it's visible at a glance.
+    void paint (juce::Graphics& g) override
+    {
+        const juce::String p = "mod" + juce::String (index + 1);
+        const int shapeNow = (int) apvts.getRawParameterValue (p + "Shape")->load();
+        const float smoothNow = apvts.getRawParameterValue (p + "Smooth")->load();
+        if (shapeNow == ShapeLinear && smoothNow <= 0.001f) return;
+        static const char* shorts[] = { "", "EXP", "LOG", "S", "x4", "x8", "x16" };
+        juce::String text (shorts[juce::jlimit (0, NumModShapes - 1, shapeNow)]);
+        if (smoothNow > 0.001f) text = text.isEmpty() ? juce::String ("~") : text + "~";
+        const auto f = mono (8.0f).boldened();
+        const float w = juce::GlyphArrangement::getStringWidth (f, text) + 10.0f;
+        auto badge = juce::Rectangle<float> (w, 13.0f).withCentre ({ (float) bar.getX() - w * 0.5f - 3.0f, (float) getHeight() * 0.5f });
+        g.setColour (Palette::mod.withAlpha (0.2f));
+        g.fillRoundedRectangle (badge, 6.0f);
+        g.setColour (Palette::mod);
+        g.setFont (f);
+        g.drawText (text, badge, juce::Justification::centred, false);
     }
 
     void resized() override
@@ -2099,7 +2147,7 @@ public:
         src.setBounds (r.removeFromLeft (w * 30 / 100).reduced (0, 1));
         r.removeFromLeft (5);
         dest.setBounds (r.removeFromLeft (w * 37 / 100).reduced (0, 1));
-        r.removeFromLeft (5);
+        r.removeFromLeft (28); // room for the shape badge
         bar.setBounds (r);
     }
 
@@ -2107,6 +2155,8 @@ public:
     BipolarBar bar;
 
 private:
+    juce::AudioProcessorValueTreeState& apvts;
+    const int index;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> srcAttach, destAttach;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> barAttach;
 };

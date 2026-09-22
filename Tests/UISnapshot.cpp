@@ -956,7 +956,14 @@ int main (int argc, char** argv)
         return 0;
     }
 
-    snap ("ui_1_rager808_mod.png", "Rager 808", 0, 0);
+    snap ("ui_1_rager808_mod.png", "Rager 808", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor&)
+    {
+        // A couple of shaped slots, so the badges on the matrix rows show up.
+        proc.setParam ("mod1Shape", (float) ab::ShapeExp);
+        proc.setParam ("mod2Smooth", 0.55f);
+        proc.setParam ("mod3Shape", (float) ab::ShapeSteps8);
+    });
+    for (auto* id : { "mod1Shape", "mod2Smooth", "mod3Shape" }) proc.setParam (id, 0.0f);
     snap ("ui_2_classiclog_fx.png", "Classic Log", 1, 1);
     snap ("ui_3_hypernova_play.png", "Hypernova", 0, 3);
     snap ("ui_5_morefx.png", "Trance Pluck", 0, 2);
