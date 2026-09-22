@@ -719,14 +719,11 @@ public:
         }
         if (drag.ghost.isValid())
         {
-            auto r = drawnGhost();
-            for (int i = 5; i >= 1; --i)
-            {
-                g.setColour (juce::Colours::black.withAlpha (0.045f * (float) (6 - i)));
-                g.fillRoundedRectangle (r.translated (0, 4.0f * (float) i).expanded (2.5f * (float) i), 16.0f);
-            }
+            // The ghost and its shadow are one picture, made when the drag starts: every frame is a single
+            // copy rather than five big rounded rectangles and an image.
             g.setOpacity (0.94f);
-            g.drawImage (drag.ghost, r);
+            g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+            g.drawImage (drag.lifted, drawnGhost().expanded (shadowPad, shadowPad).translated (0.0f, shadowPad * 0.5f));
         }
     }
 
@@ -846,6 +843,7 @@ public:
         drag.ghost = ghost;
         drag.ghostSize = { ghost.getWidth() / 2, ghost.getHeight() / 2 };
         drag.grab = { drag.ghostSize.x / 2, 18 };
+        makeLiftedGhost();
         drag.lift.value = 0.9f; // from the library card: it grows a little as it comes off
         drag.lift.target = 1.0f;
         tracker.reset();
@@ -907,7 +905,7 @@ private:
         if (drag.active)
         {
             if (! shownPreview.isEmpty()) add (shownPreview.expanded (3.0f));
-            if (drag.ghost.isValid()) { const auto g = drawnGhost(); add (g.expanded (14.0f).withBottom (g.getBottom() + 36.0f)); }
+            if (drag.ghost.isValid()) { const auto g = drawnGhost(); add (g.expanded (shadowPad + 2.0f).translated (0.0f, shadowPad * 0.5f)); }
         }
         return r.getSmallestIntegerContainer();
     }
@@ -944,7 +942,26 @@ private:
         juce::Point<int> ghostSize, grab, pos;
         dock::Drop drop;
         motion::Spring lift { 1.0f, 0.0f, 1.0f, 0.001f }; // ghost size relative to its final size
+        juce::Image lifted;                               // the ghost with its shadow, drawn once
     } drag;
+    static constexpr float shadowPad = 22.0f;
+
+    // Paints the ghost onto its shadow once, so dragging only copies a picture.
+    void makeLiftedGhost()
+    {
+        if (! drag.ghost.isValid()) { drag.lifted = {}; return; }
+        const auto w = (float) drag.ghostSize.x, h = (float) drag.ghostSize.y;
+        drag.lifted = juce::Image (juce::Image::ARGB, juce::roundToInt ((w + shadowPad * 2.0f) * 2.0f), juce::roundToInt ((h + shadowPad * 2.0f) * 2.0f), true);
+        juce::Graphics g (drag.lifted);
+        g.addTransform (juce::AffineTransform::scale (2.0f));
+        const auto r = juce::Rectangle<float> (w, h).withPosition (shadowPad, shadowPad);
+        for (int i = 5; i >= 1; --i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.045f * (float) (6 - i)));
+            g.fillRoundedRectangle (r.translated (0, 4.0f * (float) i).expanded (2.5f * (float) i), 16.0f);
+        }
+        g.drawImage (drag.ghost, r);
+    }
 
     juce::Rectangle<int> ghostRect() const
     {
@@ -999,6 +1016,7 @@ private:
         drag.grab = { juce::jlimit (8, drag.ghostSize.x - 8, juce::roundToInt ((float) grabInWidget.x * k)),
                       juce::jlimit (8, drag.ghostSize.y - 8, juce::roundToInt ((float) grabInWidget.y * k)) };
         drag.pos = pos;
+        makeLiftedGhost();
         drag.lift.value = 1.0f / juce::jmax (0.05f, k);
         drag.lift.target = 1.0f;
         tracker.reset();
