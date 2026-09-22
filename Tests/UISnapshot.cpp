@@ -178,6 +178,9 @@ int main (int argc, char** argv)
             auto* dockOverlay = dynamic_cast<DockOverlay*> (overlay);
             dockOverlay->takeDirty();
             overlay->mouseDown (ev (gutterPoint));
+            // Two moves in a row: that's a drag in progress, so the panels hold a picture instead of laying
+            // their contents out at every step (one lone resize is laid out straight away).
+            overlay->mouseDrag (ev (gutterPoint + juce::Point<int> (30, 0)));
             overlay->mouseDrag (ev (gutterPoint + juce::Point<int> (60, 0)));
             const auto dirty = dockOverlay->takeDirty();
             check (dirty.getWidth() * dirty.getHeight() < overlay->getWidth() * overlay->getHeight() / 10,
