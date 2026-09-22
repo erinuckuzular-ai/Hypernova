@@ -1516,7 +1516,7 @@ private:
 };
 
 //==============================================================================
-class LfoView : public juce::Component
+class LfoView : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     LfoView (HypernovaAudioProcessor& p, int index) : proc (p), lfo (index) {}
@@ -1526,35 +1526,65 @@ public:
         auto r = getLocalBounds().toFloat();
         g.setColour (Colours::inset);
         g.fillRoundedRectangle (r, 8.0f);
-        auto area = r.reduced (8, 7);
+        const auto area = plotArea();
         g.setColour (Colours::line);
         g.drawHorizontalLine ((int) area.getCentreY(), area.getX(), area.getRight());
 
-        const int shape = (int) proc.apvts.getRawParameterValue ("lfo" + juce::String (lfo + 1) + "Shape")->load();
+        const int shape = shapeNow();
         juce::Path p;
-        juce::Random rnd (7);
-        std::array<float, 9> held {};
-        for (auto& h : held) h = rnd.nextFloat() * 2.0f - 1.0f;
-        constexpr int n = 120;
-        for (int i = 0; i <= n; ++i)
+        if (shape == LDrawn)
         {
-            const double ph = (double) i / n;
-            const int step = juce::jmin (7, (int) (ph * 8.0));
-            const double local = ph * 8.0 - step;
-            float v;
-            if (shape == LSnH) v = held[(size_t) step];
-            else if (shape == LSmooth) v = dsp::lfoShape (LSmooth, local, held[(size_t) step + 1], held[(size_t) step]);
-            else v = dsp::lfoShape (shape, ph, 0, 0);
-            const juce::Point<float> pt (area.getX() + area.getWidth() * (float) ph, area.getCentreY() - v * area.getHeight() * 0.46f);
-            if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+            // The drawn shape: a quiet 16-step grid to draw against, the curve, and its points.
+            g.setColour (Colours::line.withAlpha (0.35f));
+            for (int i = 1; i < 16; ++i)
+                g.drawVerticalLine ((int) (area.getX() + area.getWidth() * (float) i / 16.0f), area.getY(), area.getBottom());
+            const auto pts = HypernovaAudioProcessor::parseLfoCurve (proc.lfoCurve (lfo));
+            auto yAt = [&] (float x)
+            {
+                size_t k = 0;
+                while (k < pts.size() && pts[k].x <= x) ++k;
+                const auto a = k == 0 ? juce::Point<float> (pts.back().x - 1.0f, pts.back().y) : pts[k - 1];
+                const auto b = k == pts.size() ? juce::Point<float> (pts.front().x + 1.0f, pts.front().y) : pts[k];
+                return b.x - a.x > 1.0e-6f ? a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x) : b.y;
+            };
+            p.startNewSubPath (toScreen ({ 0.0f, yAt (0.0f) }));
+            for (auto& pt : pts) p.lineTo (toScreen (pt));
+            p.lineTo (toScreen ({ 1.0f, yAt (1.0f) }));
+            glowStroke (g, p, Palette::lfo, 1.5f, 0.7f);
+            for (size_t i = 0; i < pts.size(); ++i)
+            {
+                const bool hot = (int) i == hover || (int) i == dragging;
+                const auto c = toScreen (pts[i]);
+                g.setColour (Palette::lfo.withAlpha (hot ? 1.0f : 0.7f));
+                g.fillEllipse (juce::Rectangle<float> (hot ? 9.0f : 7.0f, hot ? 9.0f : 7.0f).withCentre (c));
+                g.setColour (Colours::bg0.withAlpha (0.8f));
+                g.drawEllipse (juce::Rectangle<float> (hot ? 9.0f : 7.0f, hot ? 9.0f : 7.0f).withCentre (c), 1.0f);
+            }
         }
-        glowStroke (g, p, Palette::lfo, 1.5f, 0.7f);
+        else
+        {
+            juce::Random rnd (7);
+            std::array<float, 9> held {};
+            for (auto& h : held) h = rnd.nextFloat() * 2.0f - 1.0f;
+            constexpr int n = 120;
+            for (int i = 0; i <= n; ++i)
+            {
+                const double ph = (double) i / n;
+                const int step = juce::jmin (7, (int) (ph * 8.0));
+                const double local = ph * 8.0 - step;
+                float v;
+                if (shape == LSnH) v = held[(size_t) step];
+                else if (shape == LSmooth) v = dsp::lfoShape (LSmooth, local, held[(size_t) step + 1], held[(size_t) step]);
+                else v = dsp::lfoShape (shape, ph, 0, 0);
+                const auto pt = toScreen ({ (float) ph, v });
+                if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+            }
+            glowStroke (g, p, Palette::lfo, 1.5f, 0.7f);
+        }
 
         if (shape != LSnH && shape != LSmooth)
         {
-            const float ph = proc.shownLfoPhase[lfo].load();
-            const float v = proc.shownLfo[lfo].load();
-            const juce::Point<float> dot (area.getX() + area.getWidth() * ph, area.getCentreY() - v * area.getHeight() * 0.46f);
+            const auto dot = toScreen ({ proc.shownLfoPhase[lfo].load(), proc.shownLfo[lfo].load() });
             g.setColour (Palette::lfo.withAlpha (0.25f));
             g.fillEllipse (juce::Rectangle<float> (12, 12).withCentre (dot));
             g.setColour (Colours::text);
@@ -1562,9 +1592,89 @@ public:
         }
     }
 
+    // Drawing (only for the Drawn shape): drag a point, click empty space to add one, double-click a point
+    // to remove it. Shift snaps to a 16-step grid and to quarter heights.
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const bool drawn = shapeNow() == LDrawn;
+        setMouseCursor (drawn ? juce::MouseCursor::CrosshairCursor : juce::MouseCursor::NormalCursor);
+        setTooltip (drawn ? "Drag the points. Click to add one, double-click one to remove it. Hold shift to snap to the grid." : juce::String());
+        const int h = drawn ? pointAt (e.position) : -1;
+        if (h != hover) { hover = h; repaint(); }
+    }
+    void mouseExit (const juce::MouseEvent&) override { if (hover >= 0) { hover = -1; repaint(); } }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (shapeNow() != LDrawn || e.mods.isPopupMenu()) return;
+        proc.undoManager.beginNewTransaction ("Draw LFO " + juce::String (lfo + 1));
+        auto pts = HypernovaAudioProcessor::parseLfoCurve (proc.lfoCurve (lfo));
+        dragging = pointAt (e.position);
+        if (dragging < 0)
+        {
+            pts.push_back (fromScreen (e.position, e.mods.isShiftDown()));
+            std::sort (pts.begin(), pts.end(), [] (auto a, auto b) { return a.x < b.x; });
+            const auto added = fromScreen (e.position, e.mods.isShiftDown());
+            for (size_t i = 0; i < pts.size(); ++i) if (pts[i] == added) dragging = (int) i;
+            proc.setLfoCurve (lfo, HypernovaAudioProcessor::lfoCurveText (pts));
+        }
+        repaint();
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragging < 0 || shapeNow() != LDrawn) return;
+        auto pts = HypernovaAudioProcessor::parseLfoCurve (proc.lfoCurve (lfo));
+        if (dragging >= (int) pts.size()) return;
+        auto v = fromScreen (e.position, e.mods.isShiftDown());
+        // A point stays between its neighbours, so dragging never reorders the shape under your finger.
+        const float lo = dragging > 0 ? pts[(size_t) dragging - 1].x + 0.002f : 0.0f;
+        const float hi = dragging + 1 < (int) pts.size() ? pts[(size_t) dragging + 1].x - 0.002f : 0.999f;
+        v.x = juce::jlimit (lo, juce::jmax (lo, hi), v.x);
+        pts[(size_t) dragging] = v;
+        proc.setLfoCurve (lfo, HypernovaAudioProcessor::lfoCurveText (pts));
+        repaint();
+    }
+    void mouseUp (const juce::MouseEvent&) override { dragging = -1; repaint(); }
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        if (shapeNow() != LDrawn) return;
+        auto pts = HypernovaAudioProcessor::parseLfoCurve (proc.lfoCurve (lfo));
+        const int i = pointAt (e.position);
+        if (i < 0 || pts.size() <= 2) return;
+        proc.undoManager.beginNewTransaction ("Remove LFO point");
+        pts.erase (pts.begin() + i);
+        proc.setLfoCurve (lfo, HypernovaAudioProcessor::lfoCurveText (pts));
+        hover = dragging = -1;
+        repaint();
+    }
+
 private:
     HypernovaAudioProcessor& proc;
-    int lfo;
+    int lfo, hover = -1, dragging = -1;
+
+    int shapeNow() const { return (int) proc.apvts.getRawParameterValue ("lfo" + juce::String (lfo + 1) + "Shape")->load(); }
+    juce::Rectangle<float> plotArea() const { return getLocalBounds().toFloat().reduced (8, 7); }
+    juce::Point<float> toScreen (juce::Point<float> v) const
+    {
+        const auto a = plotArea();
+        return { a.getX() + a.getWidth() * v.x, a.getCentreY() - v.y * a.getHeight() * 0.46f };
+    }
+    juce::Point<float> fromScreen (juce::Point<float> p, bool snap) const
+    {
+        const auto a = plotArea();
+        float x = juce::jlimit (0.0f, 0.999f, (p.x - a.getX()) / a.getWidth());
+        float y = juce::jlimit (-1.0f, 1.0f, (a.getCentreY() - p.y) / (a.getHeight() * 0.46f));
+        if (snap) { x = juce::jmin (0.999f, std::round (x * 16.0f) / 16.0f); y = std::round (y * 4.0f) / 4.0f; }
+        return { x, y };
+    }
+    int pointAt (juce::Point<float> p) const
+    {
+        const auto pts = HypernovaAudioProcessor::parseLfoCurve (proc.lfoCurve (lfo));
+        int best = -1;
+        float bestD = 8.0f;
+        for (size_t i = 0; i < pts.size(); ++i)
+            if (const float d = toScreen (pts[i]).getDistanceFrom (p); d < bestD) { bestD = d; best = (int) i; }
+        return best;
+    }
 };
 
 //==============================================================================

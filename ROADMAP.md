@@ -35,7 +35,7 @@ The widget interface comes first because every later feature (sampler, extra sou
 | 21 | Chop Lab | not started | Builds on the sampler (item 15). |
 | 23 | Interchangeable synthesis engines | not started | |
 | 24 | Physical models and resonators | not started | |
-| 25 | Expanded modular modulation | partial | Existing: 2 LFOs, a mod envelope, drag-to-modulate, the mod matrix and macros. 0.10.0: 27 effect controls and every oscillator's position and level are destinations; drag a knob's modulation ring to set how much is sent, and right-click a knob for each source's depth. Missing: addable LFOs, drawable envelopes, envelope followers, random sources, modulation conditioning. |
+| 25 | Expanded modular modulation | partial | Existing: 2 LFOs, a mod envelope, drag-to-modulate, the mod matrix and macros. 0.10.0: 27 effect controls and every oscillator's position and level are destinations; drag a knob's modulation ring to set how much is sent, and right-click a knob for each source's depth. Next release: LFO 3 and LFO 4 as widgets from the library (new mod sources and rate destinations), and a Drawn LFO shape for all four LFOs (drag points, click to add, double-click to remove, shift snaps to a 16-step grid; saved with the sound, undoable, reset by presets; `SmokeTest --lfo`). Missing: drawable envelopes, envelope followers, modulation conditioning (curves, smoothing, quantise per slot). |
 | 28 | Instrument zones and layers | not started | |
 | 29 | Sound worlds | not started | |
 | 30 | Patch exploration and learning | not started | |

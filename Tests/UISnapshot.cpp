@@ -3,6 +3,8 @@
 #include "../Source/PluginEditor.h"
 
 // Renders the editor to PNGs without a DAW: UISnapshot <outDir>
+namespace ab { inline int HypernovaAudioProcessorPoints (const juce::String& curve) { return (int) HypernovaAudioProcessor::parseLfoCurve (curve).size(); } }
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI gui;
@@ -394,6 +396,35 @@ int main (int argc, char** argv)
             for (int o = 2; o < ab::NumOsc; ++o) if (ed->layoutTree().contains ("osc" + ab::oscPrefix (o).toUpperCase())) ed->hideWidget ("osc" + ab::oscPrefix (o).toUpperCase());
             settle();
         }
+        // LFO 3 as a widget, and drawing its shape with the mouse.
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+            ed->addWidgetType ("lfo3");
+            settle();
+            auto* w = ed->findWidget ("lfo3");
+            check (w != nullptr && w->isVisible(), "LFO 3 can be added from the library");
+            tidy ("with LFO 3");
+            LfoView* view = nullptr;
+            for (auto* c : w->content.getChildren()) if (auto* v = dynamic_cast<LfoView*> (c)) view = v;
+            proc.setParam ("lfo3Shape", (float) ab::LDrawn);
+            const auto before = ab::HypernovaAudioProcessorPoints (proc.lfoCurve (2));
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            const juce::Point<float> at ((float) view->getWidth() * 0.9f, (float) view->getHeight() * 0.2f);
+            auto ev = [&] (juce::Point<float> p) { return juce::MouseEvent (src, p, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, view, view,
+                                                                           juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false); };
+            view->mouseDown (ev (at));
+            view->mouseDrag (ev (at.translated (0, 10)));
+            view->mouseUp (ev (at.translated (0, 10)));
+            const auto after = ab::HypernovaAudioProcessorPoints (proc.lfoCurve (2));
+            check (after == before + 1, "clicking the drawn shape adds a point (" + juce::String (before) + " -> " + juce::String (after) + ")");
+            proc.undoManager.undo();
+            check (ab::HypernovaAudioProcessorPoints (proc.lfoCurve (2)) == before, "and undo takes it away");
+            proc.setParam ("lfo3Shape", 0.0f);
+            ed->hideWidget ("lfo3");
+            settle();
+        }
+
         // Tiny window area: everything still fits (widgets shrink to their minimum, never overlap).
         std::printf ("%d failures\n", failures);
         return failures == 0 ? 0 : 1;
@@ -709,6 +740,15 @@ int main (int argc, char** argv)
         for (int o = 2; o < 4; ++o) proc.setParam (ab::oscPrefix (o) + "Level", 0.5f);
     });
     for (int o = 2; o < ab::NumOsc; ++o) proc.setParam (ab::oscPrefix (o) + "On", 0.0f);
+    snap ("ui_11_lfo3.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        proc.setParam ("lfo3Shape", (float) ab::LDrawn);
+        proc.setLfoCurve (2, "0:-0.8 0.12:1 0.3:0.2 0.45:0.6 0.7:-0.3 0.85:-1");
+        proc.setParam ("mod3Src", (float) ab::SrcLfo3); proc.setParam ("mod3Dest", (float) ab::DCutoff); proc.setParam ("mod3Amt", 0.4f);
+        e.addWidgetType ("lfo3");
+    });
+    proc.setParam ("lfo3Shape", 0.0f);
+    proc.setParam ("mod3Src", 0.0f);
     {
         // Sampling: a made-up recording (a plucked, slightly noisy tone) loaded and looping.
         const auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Glass Pluck.wav");

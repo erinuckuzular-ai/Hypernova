@@ -71,7 +71,7 @@ static ThemeColour modSourceColour (int src)
 {
     switch (src)
     {
-        case 1: case 2: return Palette::lfo;   // LFO 1 / 2
+        case 1: case 2: case 12: case 13: return Palette::lfo; // LFO 1 to 4
         case 3:         return Palette::env;   // mod envelope
         case 4:         return Palette::sub;   // velocity
         case 11:        return Palette::oscB;  // random
@@ -362,6 +362,33 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         sources.onRemoveOsc = [this] (int osc) { removeOscillator (osc); };
         w.finishBuilding();
         w.spread.setFlags (sources, Spread::Stretch);
+    }
+
+    // LFO 3 and 4: the same as the two on the modulation page, as widgets you add from the library. The
+    // controls sit in a column on the left; any extra room goes to the shape, which is where you draw.
+    for (int l = 2; l < ab::NumLfo; ++l)
+    {
+        const juce::Rectangle<int> design { 0, 0, 340, 204 };
+        const juce::String p = "lfo" + juce::String (l + 1);
+        auto& w = makeWidget (p, p, "LFO " + juce::String (l + 1), Palette::lfo, design);
+        auto* W = &w.content;
+        const int src = l == 2 ? ab::SrcLfo3 : ab::SrcLfo4;
+        modChips.push_back (std::make_unique<ModChip> ("DRAG LFO " + juce::String (l + 1), src, modSourceColour (src)));
+        modChips.back()->onHover = [this] (int s) { hoveredModSource = s; for (auto& k : knobs) k->repaint(); };
+        W->addAndMakeVisible (*modChips.back());
+        modChips.back()->setBounds (design.getWidth() - 116, 10, 104, 22);
+        combo (p + "Shape", lfoShapeNames(), { 12, 44, 130, 24 }, W);
+        combo (p + "Sync", lfoSyncNames(), { 12, 74, 130, 24 }, W);
+        knob (p + "Rate", "RATE", Palette::lfo, { 8, 102, 66, 68 }, 40, W);
+        knob (p + "Fade", "FADE IN", Palette::lfo, { 76, 102, 66, 68 }, 40, W);
+        toggle (std::make_unique<PillToggle> ("RETRIGGER", Palette::lfo), p + "Retrig", { 12, 172, 130, 22 },
+                "Restart the LFO on each note. Off = free-running, locked to the song when synced.", W);
+        extraLfoViews.push_back (std::make_unique<ab::ui::LfoView> (processor, l));
+        auto& view = *extraLfoViews.back();
+        W->addAndMakeVisible (view);
+        view.setBounds (154, 44, design.getWidth() - 166, 150);
+        w.finishBuilding();
+        w.spread.setFlags (view, Spread::Stretch);
     }
 
     // Sound space
@@ -795,6 +822,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
         modView.repaint();
         lfoView1.repaint();
         lfoView2.repaint();
+        for (auto& v : extraLfoViews) if (v->isVisible()) v->repaint();
         // Modulated knobs animate: repaint only the ones a live source is actually reaching.
         bool anyMod = false;
         for (int i = 0; i < ab::NumModSlots && ! anyMod; ++i)
@@ -1132,7 +1160,7 @@ Knob::ModInfo HypernovaAudioProcessorEditor::modInfoFor (const juce::String& par
         info.slot = i;
         const int src = (int) processor.apvts.getRawParameterValue (p + "Src")->load();
         info.colour = modSourceColour (src);
-        info.live = processor.shownModSource[(size_t) juce::jlimit (0, 11, src)].load();
+        info.live = processor.shownModSource[(size_t) juce::jlimit (0, ab::NumSrc - 1, src)].load();
         info.highlight = src == hoveredModSource;
     }
     if (info.slot < 0 && hoveredModSource > 0)

@@ -268,6 +268,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     add<Choice> (l, pid ("lowDuckRate"), "Low End Duck Rate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, 0);
     addFloat (l, "lowDuckRelease", "Low End Duck Release", skewed (0.02f, 0.6f, 0.15f), 0.15f, timeText);
 
+    // LFO 3 and 4 (appended): the same controls as LFO 1 and 2. They run whether or not their widget is on screen.
+    for (int i = 3; i <= NumLfo; ++i)
+    {
+        const juce::String p = "lfo" + juce::String (i);
+        const juce::String n = "LFO " + juce::String (i) + " ";
+        add<Choice> (l, pid (p + "Shape"), n + "Shape", lfoShapeNames(), 0);
+        addFloat (l, p + "Rate", n + "Rate", skewed (0.02f, 30.0f, 2.0f), 1.0f, lfoHzText);
+        add<Choice> (l, pid (p + "Sync"), n + "Sync", lfoSyncNames(), 0);
+        add<Bool> (l, pid (p + "Retrig"), n + "Retrigger", true);
+        addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
+    }
+
     return l;
 }
 
@@ -282,6 +294,7 @@ HypernovaAudioProcessor::HypernovaAudioProcessor()
     orderListener = std::make_unique<OrderListener> (*this);
     apvts.state.addListener (orderListener.get());
     syncFxOrder();
+    syncLfoTables();
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             apvts.addParameterListener (rp->getParameterID(), changeCounter.get());
@@ -415,10 +428,11 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     s.filterMix = param ("fltMix");
     s.env[0] = { param ("ampA"), param ("ampD"), param ("ampS"), param ("ampR") };
     s.env[1] = { param ("modA"), param ("modD"), param ("modS"), param ("modR") };
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < NumLfo; ++i)
     {
         const std::string p = "lfo" + std::to_string (i + 1);
         auto& ls = s.lfo[(size_t) i];
+        ls.table = lfoTables[(size_t) lfoTableSide[(size_t) i].load (std::memory_order_acquire)][(size_t) i].data();
         ls.shape = (int) param ((p + "Shape").c_str());
         const int sync = (int) param ((p + "Sync").c_str());
         ls.rateHz = sync == 0 ? param ((p + "Rate").c_str()) : (float) (bpm / 60.0 / lfoSyncBeats (sync));
@@ -808,9 +822,9 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         lastMode = settings.mode;
     }
 
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < NumLfo; ++i)
     {
-        const int sync = (int) param (i == 0 ? "lfo1Sync" : "lfo2Sync");
+        const int sync = (int) param (("lfo" + std::to_string (i + 1) + "Sync").c_str());
         if (sync != 0 && playing && ppq >= 0.0)
             freeLfoPhase[i] = dsp::frac (ppq / lfoSyncBeats (sync));
         globalMod.lfoPhase[(size_t) i] = freeLfoPhase[i];
@@ -984,7 +998,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     if (newest != nullptr)
     {
         for (int o = 0; o < NumOsc; ++o) shownPos[o] = newest->shownPos[o];
-        for (int o = 0; o < 2; ++o)
+        for (int o = 0; o < NumLfo; ++o)
         {
             shownLfo[o] = newest->shownLfo[o];
             shownLfoPhase[o] = (float) newest->shownLfoPhase[o];
@@ -993,29 +1007,33 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         shownCutoff = newest->shownCutoff;
         shownNote = newest->note;
         shownSample = newest->shownSample;
-        publishModSources (newest->shownLfo[0], newest->shownLfo[1], newest->shownModEnv, newest->shownVelocity, (float) newest->note);
+        publishModSources (newest->shownLfo, newest->shownModEnv, newest->shownVelocity, (float) newest->note);
     }
     else
     {
         for (int o = 0; o < NumOsc; ++o) shownPos[o] = settings.osc[(size_t) o].pos;
-        for (int o = 0; o < 2; ++o)
+        float idle[NumLfo];
+        for (int o = 0; o < NumLfo; ++o)
         {
             shownLfoPhase[o] = (float) globalMod.lfoPhase[(size_t) o];
-            shownLfo[o] = dsp::lfoShape (settings.lfo[(size_t) o].shape, globalMod.lfoPhase[(size_t) o], 0, 0);
+            idle[o] = dsp::lfoShape (settings.lfo[(size_t) o].shape, globalMod.lfoPhase[(size_t) o], 0, 0, settings.lfo[(size_t) o].table);
+            shownLfo[o] = idle[o];
         }
         shownEnv = 0;
         shownCutoff = settings.cutoff;
         shownNote = -1;
         shownSample = -1.0f;
-        publishModSources (shownLfo[0].load(), shownLfo[1].load(), 0.0f, 0.0f, -1.0f);
+        publishModSources (idle, 0.0f, 0.0f, -1.0f);
     }
 }
 
 // Feeds the editor the live value of every modulation source, so mod rings can animate.
-void HypernovaAudioProcessor::publishModSources (float lfo1, float lfo2, float modEnv, float velocity, float note)
+void HypernovaAudioProcessor::publishModSources (const float* lfo, float modEnv, float velocity, float note)
 {
-    shownModSource[1] = lfo1;
-    shownModSource[2] = lfo2;
+    shownModSource[SrcLfo1] = lfo[0];
+    shownModSource[SrcLfo2] = lfo[1];
+    shownModSource[SrcLfo3] = lfo[2];
+    shownModSource[SrcLfo4] = lfo[3];
     shownModSource[3] = modEnv;
     shownModSource[4] = velocity;
     shownModSource[5] = globalMod.modWheel;
@@ -1200,6 +1218,7 @@ void HypernovaAudioProcessor::applyPresetValues (const std::vector<std::pair<con
 {
     apvts.state.setProperty ("fxOrder", fxOrderText (defaultFxOrder()), &undoManager); // every sound starts from the standard rack
     apvts.state.setProperty ("fxRack", "", &undoManager);                               // showing just the effects it uses
+    for (int l = 0; l < NumLfo; ++l) apvts.state.removeProperty ("lfo" + juce::String (l + 1) + "Curve", &undoManager); // drawn LFOs start fresh
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             rp->setValueNotifyingHost (rp->getDefaultValue());
@@ -1237,6 +1256,64 @@ void HypernovaAudioProcessor::syncFxOrder()
 }
 
 FxOrder HypernovaAudioProcessor::getFxOrder() const { return parseFxOrder (apvts.state.getProperty ("fxOrder").toString()); }
+
+//==============================================================================
+// Drawn LFO shapes.
+juce::String HypernovaAudioProcessor::defaultLfoCurve() { return "0:-1 0.3:1 0.55:0.1 0.8:0.5"; }
+
+std::vector<juce::Point<float>> HypernovaAudioProcessor::parseLfoCurve (const juce::String& text)
+{
+    std::vector<juce::Point<float>> pts;
+    for (auto& t : juce::StringArray::fromTokens (text, " ", ""))
+        if (t.contains (":"))
+            pts.push_back ({ juce::jlimit (0.0f, 1.0f, t.upToFirstOccurrenceOf (":", false, false).getFloatValue()),
+                             juce::jlimit (-1.0f, 1.0f, t.fromFirstOccurrenceOf (":", false, false).getFloatValue()) });
+    std::sort (pts.begin(), pts.end(), [] (auto a, auto b) { return a.x < b.x; });
+    if (pts.size() < 2) return parseLfoCurve (defaultLfoCurve());
+    return pts;
+}
+
+juce::String HypernovaAudioProcessor::lfoCurveText (const std::vector<juce::Point<float>>& pts)
+{
+    juce::StringArray out;
+    for (auto p : pts) out.add (juce::String (p.x, 4) + ":" + juce::String (p.y, 4));
+    return out.joinIntoString (" ");
+}
+
+juce::String HypernovaAudioProcessor::lfoCurve (int lfo) const
+{
+    const auto v = apvts.state.getProperty ("lfo" + juce::String (lfo + 1) + "Curve").toString();
+    return v.isNotEmpty() ? v : defaultLfoCurve();
+}
+
+void HypernovaAudioProcessor::setLfoCurve (int lfo, const juce::String& points)
+{
+    apvts.state.setProperty ("lfo" + juce::String (lfo + 1) + "Curve", lfoCurveText (parseLfoCurve (points)), &undoManager);
+}
+
+// Rebuilds the tables for the audio thread: straight lines between the points, wrapping from the last
+// point round to the first, so the cycle joins up.
+void HypernovaAudioProcessor::syncLfoTables()
+{
+    for (int l = 0; l < NumLfo; ++l)
+    {
+        const auto pts = parseLfoCurve (lfoCurve (l));
+        const int side = 1 - lfoTableSide[(size_t) l].load();
+        auto& t = lfoTables[(size_t) side][(size_t) l];
+        for (int i = 0; i <= LfoTableSize; ++i)
+        {
+            const float x = (float) i / (float) LfoTableSize;
+            size_t k = 0;
+            while (k < pts.size() && pts[k].x <= x) ++k;
+            const auto a = k == 0 ? juce::Point<float> (pts.back().x - 1.0f, pts.back().y) : pts[k - 1];
+            const auto b = k == pts.size() ? juce::Point<float> (pts.front().x + 1.0f, pts.front().y) : pts[k];
+            const float span = b.x - a.x;
+            t[(size_t) i] = span > 1.0e-6f ? a.y + (b.y - a.y) * (x - a.x) / span : b.y;
+        }
+        lfoTableSide[(size_t) l].store (side, std::memory_order_release);
+    }
+    ++parameterChanges;
+}
 
 void HypernovaAudioProcessor::setFxOrder (const FxOrder& order)
 {
@@ -1753,7 +1830,7 @@ void HypernovaAudioProcessor::randomize()
     }
     if (r.nextFloat() < 0.6f)
     {
-        setParam ("lfo1Shape", (float) r.nextInt (NumLfoShapes));
+        setParam ("lfo1Shape", (float) r.nextInt (LDrawn)); // the built-in shapes (a drawn one needs drawing)
         setParam ("lfo1Sync", (float) pick ({ 5, 6, 7, 8, 11 }));
         setParam ("mod1Src", 1);
         setParam ("mod1Dest", (float) pick ({ DAPos, DCutoff, DAWarp }));

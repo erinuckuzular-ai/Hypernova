@@ -20,16 +20,20 @@ inline juce::StringArray filterNames() { return { "Low Pass 12", "Low Pass 24", 
 enum SubShape { SubSine, SubTri, SubSquare, SubPunch, NumSubShapes };
 inline juce::StringArray subShapeNames() { return { "Sine", "Triangle", "Square", "Punch" }; }
 
-enum LfoShape { LSine, LTri, LSaw, LRamp, LSquare, LSnH, LSmooth, NumLfoShapes };
-inline juce::StringArray lfoShapeNames() { return { "Sine", "Triangle", "Saw Down", "Ramp Up", "Square", "Sample & Hold", "Smooth Random" }; }
+enum LfoShape { LSine, LTri, LSaw, LRamp, LSquare, LSnH, LSmooth, LDrawn, NumLfoShapes };
+inline juce::StringArray lfoShapeNames() { return { "Sine", "Triangle", "Saw Down", "Ramp Up", "Square", "Sample & Hold", "Smooth Random", "Drawn" }; }
+
+constexpr int NumLfo = 4;           // LFO 1 and 2 on the modulation page, 3 and 4 as widgets
+constexpr int LfoTableSize = 256;   // a drawn LFO shape, sampled once per cycle (plus a wrap-around point)
 
 enum VoiceMode { ModePoly, ModeMono, ModeLegato, NumModes };
 inline juce::StringArray voiceModeNames() { return { "Poly", "Mono", "Legato" }; }
 
-enum ModSrc { SrcNone, SrcLfo1, SrcLfo2, SrcEnv2, SrcVelocity, SrcModWheel, SrcNote, SrcMacro1, SrcMacro2, SrcMacro3, SrcMacro4, SrcRandom, NumSrc };
+enum ModSrc { SrcNone, SrcLfo1, SrcLfo2, SrcEnv2, SrcVelocity, SrcModWheel, SrcNote, SrcMacro1, SrcMacro2, SrcMacro3, SrcMacro4, SrcRandom,
+              SrcLfo3, SrcLfo4, NumSrc }; // append only
 inline juce::StringArray modSrcNames()
 {
-    return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random" };
+    return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random", "LFO 3", "LFO 4" };
 }
 
 // Append only (saved sessions store indices). Everything from DDistFx on is global: the processor applies it to the effects.
@@ -40,7 +44,8 @@ enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DC
                DTapeWow, DTapeNoise, DTapeSat, DGateDepth, DGateShape, DPanDepth, DShiftMix, DEqLow, DEqHigh, DWidth, DChorusRate,
                DDistMix, DLowLevel, DLowDuck, DLowDrive, DEqMid, DEqMidFreq,
                // Oscillators C to H (appended).
-               DCPos, DDPos, DEPos, DFPos, DGPos, DHPos, DCLevel, DDLevel, DELevel, DFLevel, DGLevel, DHLevel, NumDest };
+               DCPos, DDPos, DEPos, DFPos, DGPos, DHPos, DCLevel, DDLevel, DELevel, DFLevel, DGLevel, DHLevel,
+               DLfo3Rate, DLfo4Rate, NumDest };
 constexpr int FirstGlobalDest = DDistFx;
 constexpr int FirstFxParamDest = DFxFltFreq;
 inline bool isGlobalDest (int d) { return (d >= FirstGlobalDest && d < DSmpLevel) || (d > DSmpLevel && d < DCPos); } // sampler and osc C-H are per voice
@@ -55,7 +60,7 @@ inline juce::StringArray modDestNames()
              "Gate Shape", "Auto Pan", "Pitch Shift Mix", "EQ Low", "EQ High", "Stereo Width", "Chorus Rate", "Distortion Mix",
              "Low End Level", "Low End Duck", "Low End Warmth", "EQ Mid", "EQ Mid Freq",
              "C Position", "D Position", "E Position", "F Position", "G Position", "H Position",
-             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level" };
+             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level", "LFO 3 Rate", "LFO 4 Rate" };
 }
 
 // The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
@@ -70,7 +75,8 @@ inline juce::String modDestParam (int dest)
                                  "flangMix", "tapeWow", "tapeNoise", "tapeSat", "gateDepth", "gateShape", "panDepth", "shiftMix", "eqLow",
                                  "eqHigh", "width", "chorusRate", "distMix", "lowLevel", "lowDuck", "lowDrive",
                                  "eqMidGain", "eqMidFreq",
-                                 "cPos", "dPos", "ePos", "fPos", "gPos", "hPos", "cLevel", "dLevel", "eLevel", "fLevel", "gLevel", "hLevel" };
+                                 "cPos", "dPos", "ePos", "fPos", "gPos", "hPos", "cLevel", "dLevel", "eLevel", "fLevel", "gLevel", "hLevel",
+                                 "lfo3Rate", "lfo4Rate" };
     return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
 
@@ -107,7 +113,7 @@ struct OscSettings
 
 struct EnvSettings { float a = 0.001f, d = 0.3f, s = 1.0f, r = 0.2f; };
 
-struct LfoSettings { int shape = LSine; float rateHz = 1.0f, fade = 0; bool retrig = true; };
+struct LfoSettings { int shape = LSine; float rateHz = 1.0f, fade = 0; bool retrig = true; const float* table = nullptr; }; // table: the drawn shape
 
 struct ModSlot { int src = SrcNone, dest = DNone; float amount = 0; };
 
@@ -134,7 +140,7 @@ struct SynthSettings
     float cutoff = 18000, res = 0.1f, filterDrive = 0, filterEnv = 0, keytrack = 0, filterMix = 1.0f;
 
     std::array<EnvSettings, 2> env;
-    std::array<LfoSettings, 2> lfo;
+    std::array<LfoSettings, NumLfo> lfo;
     std::array<ModSlot, NumModSlots> mod;
     float velSens = 0.5f;
     float transpose = 0, drift = 0; // semitones (incl. fine tune), 0..1
@@ -145,7 +151,7 @@ struct GlobalMod
 {
     float modWheel = 0, bendSemis = 0;
     std::array<float, 4> macros {};
-    std::array<double, 2> lfoPhase {}; // free/host-locked phase at block start, used by non-retriggered LFOs
+    std::array<double, NumLfo> lfoPhase {}; // free/host-locked phase at block start, used by non-retriggered LFOs
 };
 
 //==============================================================================
@@ -314,10 +320,18 @@ namespace dsp
         }
     };
 
-    inline float lfoShape (int shape, double p, float held, float prevHeld)
+    inline float lfoShape (int shape, double p, float held, float prevHeld, const float* table = nullptr)
     {
         switch (shape)
         {
+            case LDrawn:
+            {
+                if (table == nullptr) return 0.0f;
+                const double x = juce::jlimit (0.0, 1.0, p) * LfoTableSize;
+                const int i = juce::jmin (LfoTableSize - 1, (int) x);
+                const float t = (float) (x - i);
+                return table[i] + (table[i + 1] - table[i]) * t;
+            }
             case LSine:   return (float) std::sin (juce::MathConstants<double>::twoPi * p);
             case LTri:    return (float) (p < 0.25 ? 4.0 * p : (p < 0.75 ? 2.0 - 4.0 * p : 4.0 * p - 4.0));
             case LSaw:    return (float) (1.0 - 2.0 * p);
@@ -440,9 +454,9 @@ public:
     float ampLevel() const { return ampEnv.value; }
 
     // Modulated values of the last rendered sub-block, for the UI.
-    float shownPos[NumOsc] {}, shownLfo[2] {}, shownCutoff = 0, shownModEnv = 0, shownVelocity = 0;
+    float shownPos[NumOsc] {}, shownLfo[NumLfo] {}, shownCutoff = 0, shownModEnv = 0, shownVelocity = 0;
     float shownSample = -1; // sampler playhead, 0..1 of the sample (-1 when it isn't playing)
-    double shownLfoPhase[2] {};
+    double shownLfoPhase[NumLfo] {};
     float lastSrc[NumSrc] {}; // per-voice mod sources of the last sub-block (drives global FX destinations)
 
     void prepare (double sampleRate)
@@ -499,7 +513,7 @@ public:
             for (auto& c : comb) std::fill (std::begin (c), std::end (c), 0.0f);
             driftValue = 0.3f * rng.next();
         }
-        for (int l = 0; l < 2; ++l)
+        for (int l = 0; l < NumLfo; ++l)
         {
             if (s.lfo[(size_t) l].retrig) lfoPhase[l] = 0;
             else lfoPhase[l] = g.lfoPhase[(size_t) l];
@@ -551,13 +565,13 @@ public:
 
             // ---- control rate ----
             currentPitch = (float) (targetPitch + (currentPitch - targetPitch) * glideCoef);
-            float lfoVal[2];
+            float lfoVal[NumLfo];
             noteAge += (float) n / (float) sr;
-            for (int l = 0; l < 2; ++l)
+            for (int l = 0; l < NumLfo; ++l)
             {
                 const auto& ls = s.lfo[(size_t) l];
                 const float fade = ls.fade > 0.001f ? juce::jmin (1.0f, noteAge / ls.fade) : 1.0f;
-                lfoVal[l] = dsp::lfoShape (ls.shape, lfoPhase[l], lfoHeld[l], lfoPrevHeld[l]) * fade;
+                lfoVal[l] = dsp::lfoShape (ls.shape, lfoPhase[l], lfoHeld[l], lfoPrevHeld[l], ls.table) * fade;
                 shownLfo[l] = lfoVal[l];
                 shownModEnv = modEnv.value;
                 shownVelocity = velocity;
@@ -580,6 +594,8 @@ public:
             src[SrcNote] = ((float) note - 60.0f) / 24.0f;
             for (int m = 0; m < 4; ++m) src[SrcMacro1 + m] = g.macros[(size_t) m];
             src[SrcRandom] = noteRandom;
+            src[SrcLfo3] = lfoVal[2];
+            src[SrcLfo4] = lfoVal[3];
 
             std::copy (std::begin (src), std::end (src), std::begin (lastSrc));
 
@@ -589,6 +605,8 @@ public:
                     dst[slot.dest] += src[slot.src] * slot.amount;
             lfoRateMod[0] = dst[DLfo1Rate];
             lfoRateMod[1] = dst[DLfo2Rate];
+            lfoRateMod[2] = dst[DLfo3Rate];
+            lfoRateMod[3] = dst[DLfo4Rate];
 
             // Analog drift: a slow random walk of the whole voice's pitch.
             if (s.drift > 0.001f)
@@ -948,15 +966,15 @@ private:
     float noiseState[2] {};
     dsp::NoiseGen noise[2];
     float targetPitch = 60, currentPitch = 60, pitchEnv = 0, noteRandom = 0, noteAge = 0;
-    float lfoRateMod[2] {};
+    float lfoRateMod[NumLfo] {};
     float driftValue = 0, driftTarget = 0;
     int driftTimer = 0, startDelay = 0, fadeLen = 1, fadeLeft = 0;
     static constexpr int combSize = 4096;
     float comb[2][combSize] {};
     float combDamp[2] {};
     int combPos = 0;
-    double lfoPhase[2] {};
-    float lfoHeld[2] {}, lfoPrevHeld[2] {};
+    double lfoPhase[NumLfo] {};
+    float lfoHeld[NumLfo] {}, lfoPrevHeld[NumLfo] {};
     dsp::Env ampEnv, modEnv, smpEnv;
     dsp::SamplePlayer smpPlay;
     dsp::SVF svf[2][2];

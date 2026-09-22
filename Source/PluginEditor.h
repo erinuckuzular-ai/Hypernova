@@ -274,6 +274,7 @@ private:
     ab::ui::FilterView filterView;
     ab::ui::EnvView ampView, modView;
     ab::ui::LfoView lfoView1, lfoView2;
+    std::vector<std::unique_ptr<ab::ui::LfoView>> extraLfoViews; // LFO 3 and 4
     std::vector<std::unique_ptr<ab::ui::ModRow>> modRows;
     std::vector<std::unique_ptr<ab::ui::ModChip>> modChips;
     int hoveredModSource = -1, lastParameterChanges = -1, viewTick = 0;

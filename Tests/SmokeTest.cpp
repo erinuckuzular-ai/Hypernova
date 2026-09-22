@@ -592,6 +592,93 @@ int main (int argc, char** argv)
     }
 
     // SmokeTest --fxorder: the effects rack can be reordered, saved, undone, and reordering while playing doesn't click.
+    if (argc == 2 && juce::String (argv[1]) == "--lfo")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        // Renders a held note and returns the level in 20 ms windows.
+        auto windows = [&] (HypernovaAudioProcessor& p, double seconds)
+        {
+            p.prepareToPlay (rate, 256);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
+            std::vector<float> out;
+            double sum = 0; int n = 0;
+            const int win = (int) (rate * 0.02);
+            for (int b = 0; b < (int) (seconds * rate / 256); ++b)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                p.processBlock (buf, midi);
+                midi.clear();
+                for (int i = 0; i < 256; ++i)
+                {
+                    const float v = buf.getSample (0, i);
+                    sum += v * v;
+                    if (++n == win) { out.push_back ((float) std::sqrt (sum / n)); sum = 0; n = 0; }
+                }
+            }
+            return out;
+        };
+        auto swing = [] (const std::vector<float>& w)
+        {
+            float lo = 1.0e9f, hi = 0;
+            for (size_t i = 10; i < w.size(); ++i) { lo = juce::jmin (lo, w[i]); hi = juce::jmax (hi, w[i]); }
+            return hi / juce::jmax (1.0e-6f, lo);
+        };
+        auto setup = [] (HypernovaAudioProcessor& p)
+        {
+            p.setParam ("aPos", 0.66f); p.setParam ("ampS", 1.0f); p.setParam ("fltOn", 0.0f); p.setParam ("verbMix", 0.0f); p.setParam ("dlyMix", 0.0f);
+        };
+        {
+            HypernovaAudioProcessor p;
+            setup (p);
+            const auto still = swing (windows (p, 1.5));
+            HypernovaAudioProcessor q;
+            setup (q);
+            q.setParam ("lfo3Shape", (float) ab::LSquare); q.setParam ("lfo3Rate", 2.0f);
+            q.setParam ("mod1Src", (float) ab::SrcLfo3); q.setParam ("mod1Dest", (float) ab::DALevel); q.setParam ("mod1Amt", -0.9f);
+            const auto moving = swing (windows (q, 1.5));
+            check (still < 1.5f && moving > 3.0f, "LFO 3 modulates: a square on osc A's level makes the level jump (" + juce::String (still, 2) + "x still, " + juce::String (moving, 1) + "x with LFO 3)");
+            HypernovaAudioProcessor r;
+            setup (r);
+            r.setParam ("lfo4Shape", (float) ab::LSquare); r.setParam ("lfo4Rate", 2.0f);
+            r.setParam ("mod2Src", (float) ab::SrcLfo4); r.setParam ("mod2Dest", (float) ab::DALevel); r.setParam ("mod2Amt", -0.9f);
+            check (swing (windows (r, 1.5)) > 3.0f, "and so does LFO 4");
+        }
+        {
+            // A drawn shape that is high for the first half of the cycle and low for the second acts like a square.
+            HypernovaAudioProcessor p;
+            setup (p);
+            p.setParam ("lfo3Shape", (float) ab::LDrawn); p.setParam ("lfo3Rate", 2.0f);
+            p.setLfoCurve (2, "0:1 0.49:1 0.5:-1 0.99:-1");
+            p.setParam ("mod1Src", (float) ab::SrcLfo3); p.setParam ("mod1Dest", (float) ab::DALevel); p.setParam ("mod1Amt", -0.9f);
+            check (swing (windows (p, 1.5)) > 3.0f, "a drawn LFO shape drives modulation");
+            HypernovaAudioProcessor flat;
+            setup (flat);
+            flat.setParam ("lfo3Shape", (float) ab::LDrawn); flat.setParam ("lfo3Rate", 2.0f);
+            flat.setLfoCurve (2, "0:0.5 0.5:0.5");
+            flat.setParam ("mod1Src", (float) ab::SrcLfo3); flat.setParam ("mod1Dest", (float) ab::DALevel); flat.setParam ("mod1Amt", -0.9f);
+            check (swing (windows (flat, 1.5)) < 1.5f, "and a flat drawn line holds still");
+            juce::MemoryBlock saved;
+            p.getStateInformation (saved);
+            HypernovaAudioProcessor back;
+            back.setStateInformation (saved.getData(), (int) saved.getSize());
+            check (back.lfoCurve (2) == p.lfoCurve (2) && back.lfoCurve (2).startsWith ("0.0000:1.0000"), "the drawing is saved with the session (" + back.lfoCurve (2) + ")");
+            const auto before = p.lfoCurve (2);
+            p.undoManager.beginNewTransaction();
+            p.setLfoCurve (2, "0:0 0.5:1");
+            p.undoManager.undo();
+            check (p.lfoCurve (2) == before, "drawing is undoable");
+            for (int i = 0; i < p.getNumPrograms(); ++i) if (p.getProgramName (i) == "Reese Wide") p.setCurrentProgram (i);
+            check (p.lfoCurve (2) == HypernovaAudioProcessor::defaultLfoCurve(), "loading a preset starts the drawings fresh");
+            check (HypernovaAudioProcessor::parseLfoCurve ("nonsense").size() >= 2, "a broken drawing falls back to the default shape");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc == 2 && juce::String (argv[1]) == "--compare")
     {
         int failures = 0;

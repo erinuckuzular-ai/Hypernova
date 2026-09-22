@@ -163,6 +163,15 @@ public:
     // presets and undoable; the audio thread reads it from an atomic.
     ab::FxOrder getFxOrder() const;
     void setFxOrder (const ab::FxOrder&); // message thread, undoable
+
+    // Drawn LFO shapes: breakpoints ("x:y x:y ...", x 0..1 across one cycle, y -1..1), stored as the state
+    // property "lfo<n>Curve" so they're saved, undoable and travel with presets. The audio thread reads a
+    // table built from them.
+    juce::String lfoCurve (int lfo) const;
+    void setLfoCurve (int lfo, const juce::String& points); // message thread
+    static juce::String defaultLfoCurve();
+    static std::vector<juce::Point<float>> parseLfoCurve (const juce::String&);
+    static juce::String lfoCurveText (const std::vector<juce::Point<float>>&);
     // Effect-chain presets: the order and every effect setting, reusable across sounds.
     static juce::File chainFolder();
     bool saveChain (const juce::String& name);
@@ -188,15 +197,15 @@ public:
     static juce::String sectionName (int s);
     static bool paramInSection (const juce::String& id, int section);
     void mutateSection (int section, float amount);
-    void publishModSources (float lfo1, float lfo2, float modEnv, float velocity, float note);
+    void publishModSources (const float* lfo, float modEnv, float velocity, float note);
     std::array<std::atomic<bool>, NumSections> sectionLocked {}; // nudge the current sound by up to `amount` of each control's range
     juce::MidiKeyboardState keyboardState;
 
     // Visualiser taps.
     ab::ScopeRing scope;
-    std::atomic<float> shownPos[ab::NumOsc] {}, shownLfo[2] {}, shownLfoPhase[2] {}, shownEnv { 0 }, shownCutoff { 1000 };
+    std::atomic<float> shownPos[ab::NumOsc] {}, shownLfo[ab::NumLfo] {}, shownLfoPhase[ab::NumLfo] {}, shownEnv { 0 }, shownCutoff { 1000 };
     // Live value of every modulation source (index matches modSrcNames), so the editor can animate mod rings.
-    std::array<std::atomic<float>, 12> shownModSource {};
+    std::array<std::atomic<float>, ab::NumSrc> shownModSource {};
     std::atomic<int> shownVoices { 0 }, shownNote { -1 };
     double getCurrentSampleRate() const { return sampleRateNow; }
     bool isAsleep() const { return sleeping; }
@@ -253,7 +262,7 @@ private:
     juce::uint64 noteCounter = 0;
     double sampleRateNow = 44100.0;
     int maxBlock = 512;
-    double freeLfoPhase[2] {};
+    double freeLfoPhase[ab::NumLfo] {};
     float bpm = 120.0f;
     int pitchWheel = 8192;
     std::atomic<bool> panicRequested { false };
@@ -272,12 +281,20 @@ private:
     std::array<juce::RangedAudioParameter*, ab::NumDest> fxModParam {}; // the control each effect destination moves
     juce::dsp::IIR::Filter<float> speakerHp[2], speakerHp2[2], speakerBump[2], speakerLp[2];
     void syncFxOrder();
+    void syncLfoTables();
+    // Two copies of each drawn table: the audio thread reads one while the other is rebuilt, then they swap.
+    std::array<std::array<std::array<float, ab::LfoTableSize + 1>, ab::NumLfo>, 2> lfoTables {};
+    std::array<std::atomic<int>, ab::NumLfo> lfoTableSide {};
     struct OrderListener : juce::ValueTree::Listener
     {
         HypernovaAudioProcessor& p;
         explicit OrderListener (HypernovaAudioProcessor& o) : p (o) {}
-        void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier& id) override { if (id.toString() == "fxOrder") p.syncFxOrder(); }
-        void valueTreeRedirected (juce::ValueTree&) override { p.syncFxOrder(); }
+        void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier& id) override
+        {
+            if (id.toString() == "fxOrder") p.syncFxOrder();
+            else if (id.toString().startsWith ("lfo") && id.toString().endsWith ("Curve")) p.syncLfoTables();
+        }
+        void valueTreeRedirected (juce::ValueTree&) override { p.syncFxOrder(); p.syncLfoTables(); }
     };
     std::unique_ptr<OrderListener> orderListener;
     std::shared_ptr<const ab::SampleData> sampleHeld;

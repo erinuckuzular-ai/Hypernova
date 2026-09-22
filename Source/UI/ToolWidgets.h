@@ -568,8 +568,9 @@ public:
 
     void tick (bool sounding) override
     {
-        for (int s = 1; s < 11; ++s)
+        for (int s = 1; s < ab::NumSrc; ++s)
         {
+            if (s == ab::SrcRandom) continue; // per note: nothing to draw over time
             auto& h = history[(size_t) s];
             std::rotate (h.begin(), h.begin() + 1, h.end());
             h.back() = proc.shownModSource[(size_t) s].load();
@@ -613,7 +614,7 @@ public:
             g.drawHorizontalLine ((int) lane.getCentreY(), lane.getX(), lane.getRight());
             juce::Path p;
             const auto& h = history[(size_t) src];
-            const bool bipolar = src == 1 || src == 2 || src == 6;
+            const bool bipolar = src == ab::SrcLfo1 || src == ab::SrcLfo2 || src == ab::SrcLfo3 || src == ab::SrcLfo4 || src == ab::SrcNote;
             for (size_t k = 0; k < h.size(); ++k)
             {
                 const float v = bipolar ? h[k] * 0.5f : h[k] - 0.5f;
@@ -629,14 +630,14 @@ public:
 
 private:
     ToolServices services;
-    std::array<std::array<float, 120>, 12> history {};
+    std::array<std::array<float, 120>, ab::NumSrc> history {};
     std::vector<int> shown;
     std::vector<std::unique_ptr<ModChip>> chips;
     bool quiet = false;
 
     static ThemeColour colourFor (int src)
     {
-        switch (src) { case 1: case 2: return Palette::lfo; case 3: return Palette::env; case 4: return Palette::sub; default: return Palette::mod; }
+        switch (src) { case 1: case 2: case 12: case 13: return Palette::lfo; case 3: return Palette::env; case 4: return Palette::sub; default: return Palette::mod; }
     }
 
     std::vector<int> activeSources() const
@@ -648,7 +649,7 @@ private:
             const int s = (int) proc.apvts.getRawParameterValue (p + "Src")->load();
             const int d = (int) proc.apvts.getRawParameterValue (p + "Dest")->load();
             const float a = proc.apvts.getRawParameterValue (p + "Amt")->load();
-            if (s > 0 && s < 11 && d > 0 && std::abs (a) > 0.005f && std::find (out.begin(), out.end(), s) == out.end()) out.push_back (s);
+            if (s > 0 && s < ab::NumSrc && s != ab::SrcRandom && d > 0 && std::abs (a) > 0.005f && std::find (out.begin(), out.end(), s) == out.end()) out.push_back (s);
         }
         std::sort (out.begin(), out.end());
         return out;
@@ -1067,6 +1068,12 @@ private:
             if (t.startsWith ("osc") && t.length() == 4) // Osc A..H: a sine with the oscillator's letter ("+" for adding one)
             {
                 g.strokePath (wave (in.withTrimmedBottom (in.getHeight() * 0.3f), 1.0f, 0.36f), stroke);
+                g.setFont (mono (9.0f).boldened());
+                g.drawText (t.substring (3), in.removeFromBottom (11), juce::Justification::centred, false);
+            }
+            else if (t.startsWith ("lfo")) // LFO 3, 4: a wave with its number
+            {
+                g.strokePath (wave (in.withTrimmedBottom (in.getHeight() * 0.3f), 1.5f, 0.36f), stroke);
                 g.setFont (mono (9.0f).boldened());
                 g.drawText (t.substring (3), in.removeFromBottom (11), juce::Justification::centred, false);
             }
