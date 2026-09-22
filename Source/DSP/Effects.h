@@ -82,6 +82,11 @@ struct FxSettings
     int fxFilterRate = 4;
     float pitchSemis = 0, pitchMix = 0;
     bool flangerOn = true, tapeOn = true, gateOn = true, fxFilterOn = true, pitchOn = true;
+
+    // Low End: split at the crossover; only the upper band goes through the rack, the low band stays clean.
+    bool lowOn = false, lowMono = true;
+    float lowXover = 120.0f, lowLevelDb = 0, lowDrive = 0, lowDuck = 0, lowDuckRelease = 0.15f;
+    int lowDuckRate = 0;
     double ppq = 0;
     bool playing = false;
 };
@@ -287,6 +292,14 @@ public:
         lowSplit.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
         highSplit.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
         for (auto& e : ottEnv) e = 0;
+        lowEnd.prepare (spec);
+        lowEnd.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+        lowEnd.setCutoffFrequency (120.0f);
+        lowEnd.reset();
+        lowXoverNow = 120.0f;
+        lowBuf.setSize (2, blockSize);
+        lowGainSmoothed = 1.0f;
+        duckBeats = 0;
 
         const int maxDelay = (int) (sampleRate * 4.5) + 8;
         for (auto& d : delayLine) d.assign ((size_t) maxDelay, 0.0f);
@@ -328,14 +341,32 @@ public:
         auto* L = buffer.getWritePointer (0);
         auto* R = buffer.getWritePointer (1);
 
-        // A new order takes effect between blocks: this block fades out on the old order and the next fades in
-        // on the new one, so a reorder while playing dips for a moment instead of clicking.
-        const bool reordering = s.order != applied;
+        // Low End: the low band is taken out here, kept away from the rack and added back after it.
+        const bool split = appliedLowOn;
+        if (split)
+        {
+            if (std::abs (s.lowXover - lowXoverNow) > 0.5f) { lowXoverNow = s.lowXover; lowEnd.setCutoffFrequency (juce::jlimit (30.0f, 400.0f, lowXoverNow)); }
+            auto* lL = lowBuf.getWritePointer (0);
+            auto* lR = lowBuf.getWritePointer (1);
+            for (int i = 0; i < n; ++i)
+            {
+                float lo, hi;
+                lowEnd.processSample (0, L[i], lo, hi); lL[i] = lo; L[i] = hi;
+                lowEnd.processSample (1, R[i], lo, hi); lR[i] = lo; R[i] = hi;
+            }
+        }
+
+        // A new order (or switching Low End) takes effect between blocks: this block fades out on the old setup
+        // and the next fades in on the new one, so a change while playing dips for a moment instead of clicking.
+        const bool reordering = s.order != applied || s.lowOn != appliedLowOn;
         for (auto id : applied) runEffect (id, buffer, L, R, n, s);
+        if (split) processLowBand (L, R, n, s);
+        else lastLowRms = lastHighRms = 0.0f;
         if (reordering)
         {
             for (int i = 0; i < n; ++i) { const float g = 1.0f - (float) (i + 1) / (float) n; L[i] *= g; R[i] *= g; }
             applied = s.order;
+            if (s.lowOn != appliedLowOn) { appliedLowOn = s.lowOn; lowEnd.reset(); }
             fadeIn = true;
         }
         else if (fadeIn)
@@ -354,9 +385,56 @@ public:
         if (s.monoBass) monoBass (L, R, n);
     }
 
+    // For the Low End widget: how much energy each band carried in the last block (RMS).
+    float lastLowRms = 0, lastHighRms = 0;
+
 private:
     FxOrder applied = defaultFxOrder();
-    bool fadeIn = false;
+    bool fadeIn = false, appliedLowOn = false;
+    juce::dsp::LinkwitzRileyFilter<float> lowEnd;
+    juce::AudioBuffer<float> lowBuf;
+    float lowXoverNow = 120.0f, lowGainSmoothed = 1.0f;
+    double duckBeats = 0;
+
+    // The low band: optional mono, warmth, level and a tempo-synced duck (a sidechain pump without a sidechain).
+    void processLowBand (float* L, float* R, int n, const FxSettings& s)
+    {
+        auto* lL = lowBuf.getWritePointer (0);
+        auto* lR = lowBuf.getWritePointer (1);
+        static const double periods[] = { 1.0, 0.5, 2.0, 4.0, 0.25 };
+        const double period = periods[juce::jlimit (0, 4, s.lowDuckRate)];
+        const double beatsPerSample = s.bpm / 60.0 / sr;
+        const float target = juce::Decibels::decibelsToGain (s.lowLevelDb);
+        const float drive = s.lowDrive * s.lowDrive * 6.0f;
+        const float driveNorm = 1.0f / (1.0f + drive * 0.35f);
+        const float relSec = juce::jmax (0.01f, s.lowDuckRelease);
+        double beat = s.playing ? s.ppq : duckBeats;
+        double eL = 0, eH = 0;
+        for (int i = 0; i < n; ++i)
+        {
+            float a = lL[i], b = lR[i];
+            if (s.lowMono) a = b = 0.5f * (a + b);
+            if (drive > 0.001f) { a = std::tanh (a * (1.0f + drive)) * driveNorm; b = std::tanh (b * (1.0f + drive)) * driveNorm; }
+            lowGainSmoothed += (target - lowGainSmoothed) * 0.002f;
+            float g = lowGainSmoothed;
+            if (s.lowDuck > 0.001f)
+            {
+                const double tBeats = beat - std::floor (beat / period) * period;
+                const float t = (float) (tBeats * 60.0 / s.bpm);
+                const float env = t < 0.003f ? t / 0.003f : std::exp (-(t - 0.003f) / relSec);
+                g *= 1.0f - s.lowDuck * env;
+            }
+            beat += beatsPerSample;
+            eH += (double) L[i] * L[i] + (double) R[i] * R[i];
+            a *= g; b *= g;
+            eL += (double) a * a + (double) b * b;
+            L[i] += a;
+            R[i] += b;
+        }
+        duckBeats = s.playing ? beat : duckBeats + beatsPerSample * n;
+        lastLowRms = (float) std::sqrt (eL / (2.0 * juce::jmax (1, n)));
+        lastHighRms = (float) std::sqrt (eH / (2.0 * juce::jmax (1, n)));
+    }
 
     void runEffect (int id, juce::AudioBuffer<float>& buffer, float* L, float* R, int n, const FxSettings& s)
     {

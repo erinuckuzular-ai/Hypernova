@@ -145,6 +145,8 @@ public:
     std::shared_ptr<const ab::SampleData> sampleForUi() const { return sampleHeld; }
     std::atomic<int> sampleVersion { 0 };
     std::atomic<float> shownSample { -1.0f };
+    std::atomic<float> shownLowRms { 0 }, shownHighRms { 0 }; // Low End: energy below / above the crossover
+    std::atomic<bool> speakerCheck { false };                  // phone-speaker monitoring, not part of the sound
 
     //==========================================================================
     // Effects rack order. Stored as a property of the state ("fxOrder"), so it's saved with sessions and
@@ -249,6 +251,7 @@ private:
     bool hostPlaying = false;
     std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;
     std::atomic<juce::uint64> fxOrderPacked { 0 };
+    juce::dsp::IIR::Filter<float> speakerHp[2], speakerHp2[2], speakerBump[2], speakerLp[2];
     void syncFxOrder();
     struct OrderListener : juce::ValueTree::Listener
     {

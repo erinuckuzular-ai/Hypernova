@@ -24,6 +24,7 @@ namespace
         { "modmon",   "Mod Monitor",    "MODULATION", "Every active modulation source, live, and what it moves",       true,  SlotLfo },
         { "fx",       "Effects",        "EFFECTS",    "Distortion, OTT, chorus, delay, space, EQ and width",           false, SlotFx },
         { "morefx",   "More FX",        "EFFECTS",    "Flanger, tape, gate, filter, pitch and effect styles",          false, SlotFx },
+        { "lowend",   "Low End",        "EFFECTS",    "Keep the sub clean under the effects, duck it, check it on a phone", false, SlotSub },
         { "chain",    "FX Chain",       "EFFECTS",    "The effects in signal order: drag to reorder, save chains",     false, SlotFx },
         { "play",     "Play",           "PLAYING",    "Arp, chords, tuning, unison width and cross mod",               false, SlotEnv },
         { "space",    "Sound Space",    "VIEWS",      "Spectrum or orbit view of the output",                          false, SlotAccent },
@@ -189,7 +190,7 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
         // The rack order on top, both effect panels open in full, the core of the sound along the bottom.
         root = split (false, 1.0f, {
             leaf ({ "chain" }, 130), leaf ({ "fx" }, 190), leaf ({ "morefx" }, 190),
-            split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "sub" }, 240) }) });
+            split (true, 212, { leaf ({ "lowend" }, 500), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }) });
     }
     else if (name == "Sampling")
     {

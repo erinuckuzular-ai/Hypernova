@@ -463,6 +463,108 @@ int main (int argc, char** argv)
     }
 
     // SmokeTest --note "<preset>" <midiNote> <out.wav>: one 300 ms note, for A/B checks against references.
+    // SmokeTest --lowarch: Low End keeps the sub clean under distortion, adds nothing when neutral, ducks in time.
+    if (argc == 2 && juce::String (argv[1]) == "--lowarch")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        using Settings = std::vector<std::pair<const char*, float>>;
+        auto render = [&] (const Settings& values, int note, double seconds, std::function<void (HypernovaAudioProcessor&, int)> atBlock = {})
+        {
+            HypernovaAudioProcessor p;
+            p.prepareToPlay (rate, 256);
+            // A saw bass with a sub under it: plenty of low end and upper harmonics.
+            for (auto& [id, v] : Settings { { "aPos", 0.66f }, { "subOn", 1 }, { "subLevel", 0.8f }, { "fltOn", 0 }, { "monoBass", 0 } }) p.setParam (id, v);
+            for (auto& [id, v] : values) p.setParam (id, v);
+            std::vector<float> out;
+            const int total = (int) (seconds * rate);
+            for (int pos = 0, b = 0; pos < total; pos += 256, ++b)
+            {
+                if (atBlock) atBlock (p, b);
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 110), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256; ++i) out.push_back (0.5f * (buf.getSample (0, i) + buf.getSample (1, i)));
+            }
+            return out;
+        };
+        auto lowpass = [&] (std::vector<float> x, float hz)
+        {
+            const float c = std::exp (-juce::MathConstants<float>::twoPi * hz / (float) rate);
+            for (int pass = 0; pass < 4; ++pass) { float y = 0; for (auto& v : x) { y = v + c * (y - v); v = y; } }
+            return x;
+        };
+        auto rms = [] (const std::vector<float>& x, size_t from, size_t to)
+        {
+            double s = 0; for (size_t i = from; i < to && i < x.size(); ++i) s += x[i] * x[i];
+            return std::sqrt (s / juce::jmax ((size_t) 1, to - from));
+        };
+        auto diffRms = [] (const std::vector<float>& a, const std::vector<float>& b, size_t from, size_t to)
+        {
+            double s = 0; for (size_t i = from; i < to; ++i) s += (a[i] - b[i]) * (a[i] - b[i]);
+            return std::sqrt (s / (double) (to - from));
+        };
+        const size_t from = (size_t) (0.3 * rate), to = (size_t) (1.2 * rate);
+
+        // Neutral Low End: same level (the split sums back flat).
+        const auto off = render ({}, 33, 1.3), neutral = render ({ { "lowOn", 1 } }, 33, 1.3);
+        const double dB = 20.0 * std::log10 (rms (neutral, from, to) / rms (off, from, to));
+        check (std::abs (dB) < 0.5, "switched on with nothing turned, the level doesn't change (" + juce::String (dB, 2) + " dB)");
+
+        // Heavy distortion: with Low End the sub under 80 Hz stays close to the clean sound.
+        const Settings dist { { "distMix", 1.0f }, { "distDrive", 1.0f }, { "distType", 2 } };
+        Settings distLow = dist; distLow.push_back ({ "lowOn", 1 }); distLow.push_back ({ "lowXover", 150.0f });
+        const auto clean = lowpass (render ({ { "lowOn", 1 }, { "lowXover", 150.0f } }, 33, 1.3), 80.0f);
+        const auto dirty = lowpass (render (dist, 33, 1.3), 80.0f);
+        const auto kept = lowpass (render (distLow, 33, 1.3), 80.0f);
+        const double errDirty = diffRms (dirty, clean, from, to) / rms (clean, from, to);
+        const double errKept = diffRms (kept, clean, from, to) / rms (clean, from, to);
+        check (errKept < errDirty * 0.5, "under distortion the sub stays clean (error " + juce::String (errKept, 3) + " vs " + juce::String (errDirty, 3) + " without)");
+
+        // Level and warmth do something to the low band only.
+        const auto quieter = render ({ { "lowOn", 1 }, { "lowLevel", -12.0f } }, 33, 1.3);
+        check (rms (lowpass (quieter, 60.0f), from, to) < rms (lowpass (neutral, 60.0f), from, to) * 0.4, "low level turns the sub down");
+
+        // Duck: quarter notes at 120 BPM (not playing: free-running), the low band dips right after each beat.
+        const auto ducked = lowpass (render ({ { "lowOn", 1 }, { "lowDuck", 1.0f }, { "lowDuckRelease", 0.15f } }, 33, 2.0), 60.0f);
+        const size_t beat = (size_t) (0.5 * rate);
+        double dipped = 0, recovered = 0;
+        for (int k = 1; k < 3; ++k)
+        {
+            // (the measuring low-pass lags ~10 ms, and the sub's cycle is 36 ms, so the windows are a few cycles long)
+            dipped += rms (ducked, k * beat + (size_t) (0.012 * rate), k * beat + (size_t) (0.085 * rate));
+            recovered += rms (ducked, k * beat + (size_t) (0.39 * rate), k * beat + (size_t) (0.49 * rate));
+        }
+        check (dipped < recovered * 0.35, "the duck pumps the sub in time (" + juce::String (dipped / recovered, 2) + ")");
+
+        // Switching Low End on mid-note doesn't click.
+        const auto toggled = render ({}, 33, 1.3, [] (HypernovaAudioProcessor& p, int b) { if (b == 120) p.setParam ("lowOn", 1.0f); });
+        float normal = 0, atSwitch = 0;
+        for (size_t i = 1; i < toggled.size(); ++i)
+        {
+            const float step = std::abs (toggled[i] - toggled[i - 1]);
+            if (i > 256 * 60 && i < 256 * 118) normal = juce::jmax (normal, step);
+            if (i >= 256 * 119 && i < 256 * 124) atSwitch = juce::jmax (atSwitch, step);
+        }
+        check (atSwitch <= normal * 1.2f + 0.002f, "switching it on while playing doesn't click (" + juce::String (atSwitch, 3) + " vs " + juce::String (normal, 3) + ")");
+
+        // Phone speaker: takes the sub away, and isn't part of the saved sound.
+        HypernovaAudioProcessor q;
+        q.prepareToPlay (rate, 256);
+        q.speakerCheck = true;
+        juce::MemoryBlock st;
+        q.getStateInformation (st);
+        check (st.toString().indexOf ("speaker") < 0, "the phone-speaker check isn't saved with the sound");
+        const auto phone = render ({}, 33, 1.3, [] (HypernovaAudioProcessor& p, int b) { if (b == 0) p.speakerCheck = true; });
+        check (rms (lowpass (phone, 60.0f), from, to) < rms (lowpass (off, 60.0f), from, to) * 0.1, "phone speaker check takes the sub away");
+
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // SmokeTest --fxorder: the effects rack can be reordered, saved, undone, and reordering while playing doesn't click.
     if (argc == 2 && juce::String (argv[1]) == "--fxorder")
     {

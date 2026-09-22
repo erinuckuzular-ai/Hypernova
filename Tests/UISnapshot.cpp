@@ -23,6 +23,7 @@ int main (int argc, char** argv)
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         editor->loadWorkspace (workspace, false);
+        if (workspace == "Effects") { proc.setParam ("lowOn", 1.0f); proc.setParam ("lowDuck", 0.5f); proc.setParam ("distMix", 0.6f); }
 
         // Hold a note while the visualisers run so the 3D views have something to show.
         juce::MidiBuffer midi;

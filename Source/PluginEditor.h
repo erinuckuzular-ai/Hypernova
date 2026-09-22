@@ -9,6 +9,7 @@
 #include "UI/ToolWidgets.h"
 #include "UI/SamplerView.h"
 #include "UI/FxChain.h"
+#include "UI/LowEndView.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                       public juce::FileDragAndDropTarget,
@@ -185,6 +186,8 @@ private:
     ab::ui::SoundSpace space;
     ab::ui::SamplerView samplerView;
     ab::ui::FxChainView fxChain;
+    ab::ui::LowEndView lowEndView;
+    juce::TextButton phoneButton { "PHONE CHECK" };
     juce::TextButton chainButton { "CHAINS" };
     void showChainMenu (juce::Component* target, juce::Point<int> screenPos);
     juce::TextButton sampleButton { "LOAD" };

@@ -134,7 +134,7 @@ ButtonType& HypernovaAudioProcessorEditor::toggle (std::unique_ptr<ButtonType> b
 //==============================================================================
 HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p),
-      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), fxChain (p), filterView (p),
+      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), fxChain (p), lowEndView (p), filterView (p),
       ampView (p, "amp", Palette::env, true), modView (p, "mod", Palette::lfo, false),
       lfoView1 (p, 0), lfoView2 (p, 1),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
@@ -458,6 +458,37 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (samplerView, Spread::Stretch);
     }
 
+    // Low End: the clean sub under the effects
+    {
+        const juce::Rectangle<int> design { 0, 0, 560, 236 };
+        auto& w = makeWidget ("lowend", "lowend", "LOW END", Palette::sub, design, 38);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (Palette::sub), "lowOn", { 8, 8, 26, 26 },
+                "Low End on/off: keep everything under the crossover out of the effects", W);
+        W->addAndMakeVisible (phoneButton);
+        phoneButton.setBounds (design.getWidth() - 134, 11, 120, 24);
+        phoneButton.setClickingTogglesState (true);
+        phoneButton.setColour (juce::TextButton::buttonOnColourId, Colours::warm);
+        phoneButton.setTooltip ("Hear it on a phone speaker (monitoring only: it isn't part of the sound and isn't saved)");
+        phoneButton.onClick = [this]
+        {
+            processor.speakerCheck = phoneButton.getToggleState();
+            showMessage (phoneButton.getToggleState() ? "Phone speaker check on: this is monitoring only. Turn it off before you bounce."
+                                                      : juce::String ("Phone speaker check off"));
+        };
+        W->addAndMakeVisible (lowEndView);
+        lowEndView.setBounds (12, 44, 536, 104);
+        const char* ids[] = { "lowXover", "lowLevel", "lowDrive", "lowDuck", "lowDuckRelease" };
+        const char* names[] = { "SPLIT", "SUB LEVEL", "WARMTH", "DUCK", "RELEASE" };
+        for (int i = 0; i < 5; ++i) knob (ids[i], names[i], Palette::sub, { 12 + i * 62, 156, 62, 68 }, 40, W);
+        combo ("lowDuckRate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, { 334, 166, 96, 24 }, W)
+            .setTooltip ("How often the sub ducks, locked to the song (a sidechain pump without the sidechain)");
+        toggle (std::make_unique<PillToggle> ("MONO SUB", Palette::sub), "lowMono", { 440, 167, 108, 22 },
+                "Keep the sub in mono so it hits the same on every system", W);
+        w.finishBuilding();
+        w.spread.setFlags (lowEndView, Spread::Stretch);
+    }
+
     // FX chain: the rack order
     {
         const juce::Rectangle<int> design { 0, 0, 1232, 150 };
@@ -694,6 +725,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     tickTools (sounding);
     if (samplerView.isVisible()) samplerView.refresh();
     if (fxChain.isVisible()) fxChain.refresh();
+    if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
     if (sounding || changes != lastParameterChanges)

@@ -227,6 +227,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, "smpR", "Sampler Release", sDec, 0.25f, timeText);
     }
 
+    // Low End (appended).
+    add<Bool> (l, pid ("lowOn"), "Low End On", false);
+    addFloat (l, "lowXover", "Low End Crossover", skewed (40.0f, 300.0f, 110.0f), 120.0f, hzText);
+    addFloat (l, "lowLevel", "Low End Level", { -12.0f, 6.0f, 0.1f }, 0.0f, dbText);
+    addFloat (l, "lowDrive", "Low End Warmth", { 0.0f, 1.0f }, 0.0f, pctText);
+    add<Bool> (l, pid ("lowMono"), "Low End Mono", true);
+    addFloat (l, "lowDuck", "Low End Duck", { 0.0f, 1.0f }, 0.0f, pctText);
+    add<Choice> (l, pid ("lowDuckRate"), "Low End Duck Rate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, 0);
+    addFloat (l, "lowDuckRelease", "Low End Duck Release", skewed (0.02f, 0.6f, 0.15f), 0.15f, timeText);
+
     return l;
 }
 
@@ -280,6 +290,15 @@ void HypernovaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 {
     sampleRateNow = sampleRate;
     maxBlock = juce::jmax (32, samplesPerBlock);
+    // A small phone speaker: nothing much under ~300 Hz, a honky bump around 2.5 kHz, rolled off up top.
+    for (int c = 0; c < 2; ++c)
+    {
+        speakerHp[c].coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 320.0, 0.8);
+        speakerHp2[c].coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 320.0, 0.6);
+        speakerBump[c].coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sampleRate, 2500.0, 1.2, 1.8f);
+        speakerLp[c].coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, juce::jmin (9000.0, sampleRate * 0.45), 0.7);
+        for (auto* f : { &speakerHp[c], &speakerHp2[c], &speakerBump[c], &speakerLp[c] }) f->reset();
+    }
     for (int i = 0; i < 2; ++i)
     {
         voiceOversampler[(size_t) i] = std::make_unique<juce::dsp::Oversampling<float>> (2, (size_t) (i + 1),
@@ -506,6 +525,14 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.gateOn = param ("gateOn") > 0.5f;
     f.fxFilterOn = param ("fxFltOn") > 0.5f;
     f.pitchOn = param ("shiftOn") > 0.5f;
+    f.lowOn = param ("lowOn") > 0.5f;
+    f.lowXover = param ("lowXover");
+    f.lowLevelDb = param ("lowLevel");
+    f.lowDrive = param ("lowDrive");
+    f.lowMono = param ("lowMono") > 0.5f;
+    f.lowDuck = param ("lowDuck");
+    f.lowDuckRate = (int) param ("lowDuckRate");
+    f.lowDuckRelease = param ("lowDuckRelease");
     f.eqLow = param ("eqLow");
     f.eqHigh = param ("eqHigh");
     f.bpm = bpm;
@@ -834,6 +861,8 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         juce::AudioBuffer<float> chunk (chans, 2, n);
         effects.process (chunk, fx);
     }
+    shownLowRms = fx.lowOn ? effects.lastLowRms : 0.0f;
+    shownHighRms = fx.lowOn ? effects.lastHighRms : 0.0f;
 
     // Output: master volume, then a transparent look-ahead peak limiter at -0.3 dBFS. The required gain is
     // min-held over the look-ahead window and box-car smoothed across it, so the gain glides down over ~1.5 ms
@@ -877,6 +906,15 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     for (auto v : limHeld) limiterSum += v;
 
     scope.push (L, R, numSamples);
+
+    // Phone-speaker check: monitoring only (never saved, never in a bounce unless you leave it on).
+    if (speakerCheck.load (std::memory_order_relaxed))
+        for (int c = 0; c < 2; ++c)
+        {
+            float* d = c == 0 ? L : R;
+            for (int i = 0; i < numSamples; ++i)
+                d[i] = speakerLp[c].processSample (speakerBump[c].processSample (speakerHp2[c].processSample (speakerHp[c].processSample (d[i]))));
+        }
 
     // Fall asleep after a second of true silence with no voices (tails included).
     {
