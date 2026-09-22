@@ -201,6 +201,8 @@ public:
     // Called once a frame while the module is on screen.
     void advance()
     {
+        // A unit that's switched off has nothing to show: its display holds still until something changes.
+        if (! on() && fxId >= 0) return;
         if (live == nullptr || fxId == FxGate || fxId == FxDelay || fxId < 0 || fxId == FxEq || fxId == FxPitch) { repaint (display()); return; }
         head = (head + depth - 1) % depth;
         auto& out = history[(size_t) head];

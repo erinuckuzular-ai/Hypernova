@@ -849,7 +849,9 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
     tickTools (sounding);
     if (samplerView.isVisible()) samplerView.refresh();
-    if (rack.isVisible()) { rack.refresh(); rack.tick (sounding); }
+    // The rack's live displays run at 20 fps like the other 3D views: a rack full of effects is a lot of
+    // drawing, and two frames in three looks the same.
+    if (rack.isVisible()) { rack.refresh(); if ((viewTick % 3) != 0) rack.tick (sounding); }
     if (sources.isVisible()) sources.refresh();
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
