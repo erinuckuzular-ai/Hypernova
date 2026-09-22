@@ -40,7 +40,7 @@ The widget interface comes first because every later feature (sampler, extra sou
 | 29 | Sound worlds | not started | |
 | 30 | Patch exploration and learning | not started | |
 | 31 | Resample into a new module | not started | |
-| 32 | Character modules | partial | Existing: TAPE (wobble, noise, saturate) and distortion styles as fixed effects. Missing: placing them per layer or bus, early-digital sampling and companding, speaker/mic colouration. |
+| 32 | Character modules | partial | Existing: TAPE (wobble, noise, saturate), distortion styles, and CRUSH (bit depth and sample rate, mixable, modulatable) as rack units. Missing: placing them per layer or bus, early-digital sampling and companding, speaker/mic colouration. |
 | — | Everyday workflow | implemented (0.10.0) | A/B compare (an undoable switch; presets load into the slot you're on; sessions remember the slot), Init in the new-sound menu, type-in values (double-click a knob's value), shift-drag for fine moves, pressed states that show on the press. Tested with `SmokeTest --compare`. |
 | — | New sound catalogue | partial | Donk & Bounce (0.9.0): 10 FM donks designed from the two-operator donk recipe and checked by measurement only (attack brightness 320–1,260 Hz, settled 160–430 Hz, in tune). The old "Donk Bass" is retired: hidden, but its program number is kept. 48 Club Studies presets were added, relevelled and measured (UK dub, UK garage, house bass and stabs, baile funk, club percussion, club experimental). They have been checked by measurement only, not by ear. More dusty keys, organs and hybrid instruments are still needed. |
 

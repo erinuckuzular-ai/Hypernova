@@ -23,27 +23,30 @@ inline double delayTimeBeats (int i)
 
 // The rack: the effects that can be put in any order. Width and mono bass stay last (they're the output stage).
 // Append only: saved orders store these numbers.
-enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, NumFx };
+enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, FxCrush, NumFx }; // append only
 inline juce::StringArray fxRackNames()
 {
-    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ" };
+    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ", "CRUSH" };
 }
 using FxOrder = std::array<juce::uint8, NumFx>;
 inline FxOrder defaultFxOrder() { FxOrder o {}; for (int i = 0; i < NumFx; ++i) o[(size_t) i] = (juce::uint8) i; return o; }
-// "0,1,2,..." with every effect exactly once; anything else is the default order.
+// "0,1,2,..." — every effect at most once. A shorter list (a sound saved before an effect existed)
+// keeps the order it has and the newer effects follow it, so chains survive new effects.
 inline FxOrder parseFxOrder (const juce::String& text)
 {
     auto parts = juce::StringArray::fromTokens (text, ",", {});
     FxOrder o {};
     std::array<bool, NumFx> seen {};
-    if (parts.size() != NumFx) return defaultFxOrder();
-    for (int i = 0; i < NumFx; ++i)
+    int at = 0;
+    for (auto& part : parts)
     {
-        const int v = parts[i].getIntValue();
-        if (v < 0 || v >= NumFx || seen[(size_t) v]) return defaultFxOrder();
+        const int v = part.getIntValue();
+        if (v < 0 || v >= NumFx || seen[(size_t) v]) continue;
         seen[(size_t) v] = true;
-        o[(size_t) i] = (juce::uint8) v;
+        o[(size_t) at++] = (juce::uint8) v;
     }
+    if (at == 0) return defaultFxOrder();
+    for (int v = 0; v < NumFx; ++v) if (! seen[(size_t) v]) o[(size_t) at++] = (juce::uint8) v;
     return o;
 }
 inline juce::String fxOrderText (const FxOrder& o)
@@ -72,6 +75,9 @@ struct FxSettings
     float bpm = 120.0f;
     // Per-effect bypass (clicking an effect's name in the UI). Default on so older sessions are unchanged.
     bool distOn = true, ottOn = true, chorusOn = true, delayOn = true, reverbOn = true, eqOn = true;
+    // Crush (appended): sample-rate and bit reduction, the old sampler sound.
+    bool crushOn = true;
+    float crushBits = 16.0f, crushRate = 24000.0f, crushMix = 0;
 
     // Movement, character and pitch (the second effects page). All default to silent/neutral.
     int chorusMode = 0;                                    // classic / ensemble / dimension
@@ -462,6 +468,26 @@ public:
         if (s.monoBass) monoBass (L, R, n);
     }
 
+    // Crush: hold each sample for a while (a lower sample rate) and round it to fewer steps (fewer bits),
+    // mixed back against the clean sound. The classic early-sampler grit.
+    void crush (float* L, float* R, int n, const FxSettings& s)
+    {
+        const float step = juce::jmax (1.0f, std::pow (2.0f, juce::jlimit (1.0f, 16.0f, s.crushBits)) - 1.0f);
+        const double inc = juce::jlimit (200.0f, 24000.0f, s.crushRate) / sr;
+        for (int i = 0; i < n; ++i)
+        {
+            rackCrushPhase += inc;
+            if (rackCrushPhase >= 1.0)
+            {
+                rackCrushPhase -= std::floor (rackCrushPhase);
+                rackCrushHold[0] = std::round (juce::jlimit (-1.0f, 1.0f, L[i]) * step) / step;
+                rackCrushHold[1] = std::round (juce::jlimit (-1.0f, 1.0f, R[i]) * step) / step;
+            }
+            L[i] += (rackCrushHold[0] - L[i]) * s.crushMix;
+            R[i] += (rackCrushHold[1] - R[i]) * s.crushMix;
+        }
+    }
+
     // For the Low End widget: how much energy each band carried in the last block (RMS).
     float lastLowRms = 0, lastHighRms = 0;
 
@@ -472,6 +498,8 @@ private:
     juce::AudioBuffer<float> lowBuf, dryBuf;
     float rackMixNow = 1.0f;
     float lowXoverNow = 120.0f, lowGainSmoothed = 1.0f;
+    double rackCrushPhase = 0;   // the CRUSH module (the distortion's own crush is separate)
+    float rackCrushHold[2] {};
     double duckBeats = 0;
 
     // The low band: optional mono, warmth, level and a tempo-synced duck (a sidechain pump without a sidechain).
@@ -527,6 +555,9 @@ private:
                 break;
             case FxOtt:
                 if (s.ottOn && s.ott > 0.001f) ott (L, R, n, s.ott);
+                break;
+            case FxCrush:
+                if (s.crushOn && s.crushMix > 0.001f) crush (L, R, n, s);
                 break;
             case FxPitch:
                 if (s.pitchOn && s.pitchMix > 0.001f) shifter.process (L, R, n, s.pitchSemis, s.pitchMix);

@@ -276,6 +276,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Smooth", "Mod " + juce::String (i) + " Smoothing", { 0.0f, 1.0f }, 0.0f, pctText);
     }
 
+    // Crush (appended): bit and sample-rate reduction as a rack effect.
+    add<Bool> (l, pid ("crushOn"), "Crush On", true);
+    addFloat (l, "crushBits", "Crush Bits", { 1.0f, 16.0f, 0.1f }, 16.0f, [] (float v, int) { return juce::String (v, 1) + " bit"; });
+    addFloat (l, "crushRate", "Crush Rate", skewed (200.0f, 24000.0f, 6000.0f), 24000.0f, hzText);
+    addFloat (l, "crushMix", "Crush Mix", { 0.0f, 1.0f }, 0.0f, pctText);
+
     // MPE (appended): each note on its own channel, with its own bend, pressure and slide.
     add<Bool> (l, pid ("mpeOn"), "MPE", false);
     addFloat (l, "mpeBend", "MPE Bend Range", { 1.0f, 96.0f, 1.0f }, 48.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " st"; });
@@ -565,6 +571,10 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.delayTone = param ("dlyTone");
     f.width = param ("width");
     f.rackMix = param ("fxMix");
+    f.crushOn = param ("crushOn") > 0.5f;
+    f.crushBits = param ("crushBits");
+    f.crushRate = param ("crushRate");
+    f.crushMix = param ("crushMix");
     f.distOn = param ("distOn") > 0.5f;
     f.ottOn = param ("ottOn") > 0.5f;
     f.chorusOn = param ("chorusOn") > 0.5f;
@@ -1214,6 +1224,8 @@ void HypernovaAudioProcessor::applyGlobalModulation (FxSettings& fx)
     fx.eqHigh = moved (DEqHigh, fx.eqHigh);
     fx.width = moved (DWidth, fx.width);
     fx.rackMix = moved (DRackMix, fx.rackMix);
+    fx.crushMix = moved (DCrushMix, fx.crushMix);
+    fx.crushBits = juce::jlimit (1.0f, 16.0f, fx.crushBits + d[DCrushBits] * 8.0f);
     fx.chorusRate = moved (DChorusRate, fx.chorusRate);
     fx.distMix = moved (DDistMix, fx.distMix);
     fx.lowLevelDb = moved (DLowLevel, fx.lowLevelDb);
@@ -1439,7 +1451,7 @@ void HypernovaAudioProcessor::setFxOrder (const FxOrder& order)
 
 const char* HypernovaAudioProcessor::fxOnParam (int id)
 {
-    static const char* ids[] = { "distOn", "tapeOn", "ottOn", "shiftOn", "chorusOn", "flangOn", "fxFltOn", "gateOn", "dlyOn", "verbOn", "eqOn" };
+    static const char* ids[] = { "distOn", "tapeOn", "ottOn", "shiftOn", "chorusOn", "flangOn", "fxFltOn", "gateOn", "dlyOn", "verbOn", "eqOn", "crushOn" };
     return ids[juce::jlimit (0, NumFx - 1, id)];
 }
 
@@ -1461,6 +1473,7 @@ bool HypernovaAudioProcessor::fxAudible (int id) const
         case FxReverb:  return v ("verbMix") > 0.001f;
         case FxEq:      return std::abs (v ("eqLow")) > 0.05f || std::abs (v ("eqHigh")) > 0.05f || std::abs (v ("eqMidGain")) > 0.05f
                                || v ("eqLowCut") > 21.0f || v ("eqHighCut") < 19900.0f;
+        case FxCrush:   return v ("crushMix") > 0.001f;
         default:        return false;
     }
 }
@@ -1498,6 +1511,7 @@ void HypernovaAudioProcessor::addToRack (int id)
         case FxDelay:   setParam ("dlyMix", 0.3f); break;
         case FxReverb:  setParam ("verbMix", 0.3f); break;
         case FxEq:      setParam ("eqHigh", 3.0f); break;
+        case FxCrush:   setParam ("crushMix", 0.5f); setParam ("crushBits", 8.0f); setParam ("crushRate", 8000.0f); break;
         default: break;
     }
 }

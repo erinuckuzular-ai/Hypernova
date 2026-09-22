@@ -11,6 +11,7 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - **right-click a unit**: switch it off, move it earlier or later, reset its controls, replace it with another effect, or take it out.
 - **MIX** on the output: how much of the whole rack you hear against the sound going into it, so the effects can sit alongside the dry sound. it can be modulated like everything else.
 - **+ ADD** puts an effect in the rack, the x takes it out. the rack scrolls when it's squeezed: pull it by its background, flick it, and its ends give a little.
+- **crush**: a new unit. bit depth and sample rate, mixed against the clean sound: early-sampler grit, drill and donk edge, lo-fi keys. both its bits and its mix can be modulated.
 - **eq**: five bands (low cut, low shelf, two bells, high shelf). drag the points on its curve.
 - **every effect control can be modulated**: drag an lfo, envelope or macro chip onto it.
 

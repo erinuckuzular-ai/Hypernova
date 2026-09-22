@@ -43,6 +43,7 @@ inline ThemeColour fxColour (int fxId)
         case FxDelay:   return Palette::oscA;
         case FxReverb:  return Palette::mod;
         case FxEq:      return Palette::env;
+        case FxCrush:   return ThemeColour { SlotWarm };
         default:        return ThemeColour { SlotText };
     }
 }
@@ -527,6 +528,33 @@ private:
         switch (fxId)
         {
             case FxEq: paintEq (g, r); return;
+            case FxCrush:
+            {
+                // The sound as the crusher leaves it: the live wave held in steps and rounded to fewer levels.
+                if (live == nullptr) return;
+                const float bits = juce::jlimit (1.0f, 16.0f, v ("crushBits"));
+                const float levels = juce::jmax (1.0f, std::pow (2.0f, bits) - 1.0f);
+                const int hold = juce::jmax (1, juce::roundToInt (24000.0f / juce::jmax (200.0f, v ("crushRate"))));
+                const float mix = v ("crushMix");
+                juce::Path steps;
+                float heldValue = 0;
+                for (int i = 0; i < RackLive::wavePoints; ++i)
+                {
+                    const float raw = juce::jlimit (-1.0f, 1.0f, live->wave[(size_t) i]);
+                    if (i % hold == 0) heldValue = std::round (raw * levels) / levels;
+                    const float y = r.getCentreY() - (raw + (heldValue - raw) * mix) * r.getHeight() * 0.42f;
+                    const float x = r.getX() + r.getWidth() * (float) i / (float) (RackLive::wavePoints - 1);
+                    if (i == 0) steps.startNewSubPath (x, y);
+                    else { steps.lineTo (x, y); }
+                }
+                g.setColour (Colours::line.withAlpha (0.5f));
+                g.drawHorizontalLine ((int) r.getCentreY(), r.getX(), r.getRight());
+                glowStroke (g, steps, c, 1.6f, 0.8f);
+                g.setColour (Colours::textDim);
+                g.setFont (mono (9.0f));
+                g.drawText (juce::String (bits, 1) + " bit", r.reduced (3, 2), juce::Justification::topLeft, false);
+                return;
+            }
             case FxPitch:
             {
                 // The spectrum, and a copy of it shifted up or down by the interval.
@@ -677,7 +705,8 @@ public:
         {
             case FxDist: return 200;   case FxTape: return 200;    case FxOtt: return 130;   case FxPitch: return 150;
             case FxChorus: return 190; case FxFlanger: return 250; case FxFilter: return 250; case FxGate: return 250;
-            case FxDelay: return 250;  case FxReverb: return 210;  case FxEq: return 310;    default: return 208; // the output stage
+            case FxDelay: return 250;  case FxReverb: return 210;  case FxEq: return 310;    case FxCrush: return 200;
+            default: return 208; // the output stage
         }
     }
 

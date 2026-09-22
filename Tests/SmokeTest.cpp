@@ -1,4 +1,5 @@
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <set>
 #include "../Source/PluginProcessor.h"
 #include <set>
 #include <complex>
@@ -909,6 +910,7 @@ int main (int argc, char** argv)
     if (argc == 2 && juce::String (argv[1]) == "--fxorder")
     {
         int failures = 0;
+        constexpr double rate48 = 48000.0;
         auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
         const double rate = 48000.0;
         auto setup = [] (HypernovaAudioProcessor& p)
@@ -989,6 +991,37 @@ int main (int argc, char** argv)
                "loading it brings back the order and the settings");
         check (std::abs (e.apvts.getRawParameterValue ("cutoff")->load() - 500.0f) < 1.0f, "and leaves the synth alone");
         file.deleteFile();
+
+        // CRUSH: fewer bits means fewer different sample values, and old chains still load.
+        {
+            auto values = [&] (float bits, float rate)
+            {
+                HypernovaAudioProcessor p;
+                p.prepareToPlay (rate48, 256);
+                p.setParam ("aPos", 0.66f); p.setParam ("ampS", 1.0f); p.setParam ("fltOn", 0.0f);
+                p.setParam ("crushOn", 1.0f); p.setParam ("crushMix", 1.0f);
+                p.setParam ("crushBits", bits); p.setParam ("crushRate", rate);
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
+                std::set<int> seen;
+                for (int b = 0; b < 40; ++b)
+                {
+                    juce::AudioBuffer<float> buf (2, 256);
+                    buf.clear();
+                    p.processBlock (buf, midi);
+                    midi.clear();
+                    if (b > 20) for (int i = 0; i < 256; ++i) seen.insert (juce::roundToInt (buf.getSample (0, i) * 5000.0f));
+                }
+                return (int) seen.size();
+            };
+            const int coarse = values (3.0f, 6000.0f), fine = values (16.0f, 24000.0f);
+            check (coarse < fine / 2, "crush: three bits gives far fewer different values than sixteen (" + juce::String (coarse) + " vs " + juce::String (fine) + ")");
+            // A chain saved before CRUSH existed keeps its order, with the new effect on the end.
+            const auto oldText = juce::String ("10,9,8,7,6,5,4,3,2,1,0");
+            const auto parsed = ab::parseFxOrder (oldText);
+            check (parsed[0] == 10 && parsed[1] == 9 && parsed[(size_t) ab::NumFx - 1] == ab::FxCrush,
+                   "a chain saved before an effect existed keeps its order and the new one follows (" + ab::fxOrderText (parsed) + ")");
+        }
 
         // The rack's dry/wet: at 0 you hear the sound going in, at 1 the effects, and it doesn't click.
         {

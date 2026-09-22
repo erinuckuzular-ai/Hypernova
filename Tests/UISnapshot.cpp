@@ -29,7 +29,7 @@ int main (int argc, char** argv)
         if (workspace == "Effects")
         {
             proc.setParam ("lowOn", 1.0f); proc.setParam ("lowDuck", 0.5f); proc.setParam ("distMix", 0.6f);
-            for (int fx : { ab::FxFilter, ab::FxGate, ab::FxDelay, ab::FxReverb }) proc.addToRack (fx);
+            for (int fx : { ab::FxFilter, ab::FxGate, ab::FxCrush, ab::FxDelay, ab::FxReverb }) proc.addToRack (fx);
             proc.setParam ("fxFltDepth", 0.5f); proc.setParam ("eqMidGain", 5.0f); proc.setParam ("eqMidFreq", 900.0f); proc.setParam ("eqLowCut", 60.0f);
             proc.setParam ("dlyFb", 0.55f);
         }
@@ -768,6 +768,33 @@ int main (int argc, char** argv)
         ed->loadWorkspace ("Sound Design", false);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
         ed->finishMotion();
+        if (juce::String (argc > 3 ? argv[3] : "") == "crush")
+        {
+            // Just the crusher in the rack, so its display can be looked at.
+            ed->loadWorkspace ("Effects", false);
+            proc.addToRack (ab::FxCrush);
+            proc.setParam ("crushBits", 4.0f);
+            proc.setParam ("crushRate", 4000.0f);
+            proc.setParam ("crushMix", 0.9f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 40, 1.0f), 0);
+            for (int i = 0; i < 40; ++i)
+            {
+                juce::AudioBuffer<float> buf (2, 512);
+                proc.processBlock (buf, midi);
+                midi.clear();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (34);
+            }
+            ed->finishMotion();
+            auto shot = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
+            auto file = outDir.getChildFile ("repro_crush.png");
+            file.deleteFile();
+            juce::FileOutputStream stream (file);
+            juce::PNGImageFormat().writeImageToStream (shot, stream);
+            std::printf ("wrote %s\n", file.getFullPathName().toRawUTF8());
+            return 0;
+        }
+
         // A wider window, like a plug-in window dragged bigger, then an oscillator added.
         ed->setSize (2000, juce::roundToInt (2000.0 * HypernovaAudioProcessorEditor::baseHeight / HypernovaAudioProcessorEditor::baseWidth));
         juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
