@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Hypernova, a wavetable synthesizer for macOS</title>
-  <meta name="description" content="Hypernova is a wavetable synthesizer for macOS. Two oscillators, a sampler, 419 sounds, a panel layout you arrange yourself, wavetable import, cross modulation and fourteen effects. VST3, AU and standalone, for Apple Silicon and Intel.">
+  <meta name="description" content="Hypernova is a wavetable synthesizer for macOS. Up to eight oscillators, a sampler, 419 sounds, a panel layout you arrange yourself, wavetable import, cross modulation and fourteen effects in a rack. VST3, AU and standalone, for Apple Silicon and Intel.">
   <meta name="theme-color" content="#f2f1ee">
   <meta name="color-scheme" content="light">
   <meta property="og:type" content="website">
@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
   <script src="app.js?v=5" defer></script>
   <script src="play.js?v=5" defer></script>
 </head>
@@ -38,7 +38,7 @@
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <h1 id="hero-title">hypernova.</h1>
-      <p class="tagline">a wavetable synthesizer for macOS.<br>two oscillators, a sampler, 419 sounds, fourteen effects.<br>arrange it however you work.</p>
+      <p class="tagline">a wavetable synthesizer for macOS.<br>up to eight oscillators, a sampler, 419 sounds, fourteen effects.<br>arrange it however you work.</p>
 
       <div class="cta">
         <a class="download" href="https://github.com/erinuckuzular-ai/Hypernova/releases/latest" id="download">download for mac</a>
@@ -48,7 +48,7 @@
 
       <figure class="hero-shot" aria-label="Move the pointer to tilt">
         <img src="assets/theme_paper.jpg" width="1600" height="1233" fetchpriority="high"
-             alt="The Hypernova editor in the Paper theme: two wavetable oscillators in 3D, a spectrum view, filter, envelopes and the modulation deck.">
+             alt="The Hypernova editor in the Paper theme: two wavetable oscillators in 3D, Sound Space, filter, envelopes and the modulation deck.">
       </figure>
     </section>
 
@@ -75,7 +75,7 @@
     <section class="intro section">
       <h2>it does bass properly.</h2>
       <p>808s that decay like 808s. amapiano log drums rebuilt from the FL Studio DX10 patch, parameter for parameter. subs, reeses and growls that keep their low end when you push them. then keys, plucks, pads, stabs, a forty-sound experimental bank, club studies (uk garage, dub, house, baile funk and strange percussion), and a proper set of donks for bounce and hard house.</p>
-      <p>drop a recording anywhere and it plays in the sampler, trimmed and in tune. drop a WAV on an oscillator and it becomes a wavetable. drag an LFO onto a knob and it moves. click an effect's name to switch it off. the rest is where you'd expect it.</p>
+      <p>drop a recording anywhere and it plays in the sampler, trimmed and in tune. drop a WAV on an oscillator and it becomes a wavetable. drag an LFO onto a knob and it moves; drag the ring to set how far. press + OSC for another oscillator. click b to try an idea and a to hear where you started. the rest is where you'd expect it.</p>
     </section>
 
     <section id="specs" class="section" aria-labelledby="specs-title">
@@ -84,7 +84,8 @@
         <div>
           <h3>sound</h3>
           <ul class="spec">
-            <li>2 WAVETABLE OSCILLATORS, 7-VOICE UNISON</li>
+            <li>UP TO 8 WAVETABLE OSCILLATORS, 7-VOICE UNISON</li>
+            <li>SOURCES MIXER: LEVEL, PAN, FILTER ROUTE</li>
             <li>SAMPLER: DROP, TRIM, LOOP, REVERSE, AUTO-TUNED ROOT</li>
             <li>15 BUILT-IN TABLES &times; 32 FRAMES</li>
             <li>IMPORT YOUR OWN WAVETABLES FROM WAV</li>
@@ -102,7 +103,7 @@
             <li>2 LFOS, TEMPO SYNC, FADE IN</li>
             <li>8-SLOT MOD MATRIX, 4 MACROS</li>
             <li>DRAG A SOURCE ONTO ANY KNOB</li>
-            <li>LIVE MODULATION RINGS</li>
+            <li>LIVE MODULATION RINGS, DRAG THEM FOR DEPTH</li>
             <li>ARPEGGIATOR, CHORD MEMORY, STRUM</li>
             <li>MONO, LEGATO AND GLIDE</li>
             <li>XY PAD, LIVE MOD MONITOR</li>
@@ -117,9 +118,10 @@
             <li>TRANCE GATE, AUTO PAN, SWEPT FILTER</li>
             <li>DELAY: DIGITAL, REVERSE, GRANULAR</li>
             <li>REVERB: SPACE, PLATE, SPRING, ROOM</li>
-            <li>PITCH SHIFTER, EQ, WIDTH, MONO BASS</li>
-            <li>CLICK A NAME TO BYPASS IT</li>
-            <li>DRAG THE CHAIN INTO ANY ORDER, SAVE CHAINS</li>
+            <li>PITCH SHIFTER, 5-BAND EQ, WIDTH, MONO BASS</li>
+            <li>EVERY EFFECT A MODULE WITH A LIVE 3D DISPLAY</li>
+            <li>DRAG THEM INTO ANY ORDER, SAVE CHAINS</li>
+            <li>MODULATE ANY EFFECT CONTROL</li>
             <li>LOW END: CLEAN SUB UNDER THE EFFECTS, TEMPO DUCK</li>
           </ul>
         </div>
@@ -128,6 +130,7 @@
           <ul class="spec">
             <li>419 FACTORY SOUNDS + 22 FOUNDERS PACK</li>
             <li>SHARE SOUNDS AS .HNPRESET FILES</li>
+            <li>A / B COMPARE, UNDO FOR EVERYTHING</li>
             <li>DOCKING WIDGETS, SAVED WORKSPACES</li>
             <li>SCOPE, LUFS METER, PINBOARD</li>
             <li>5 THEMES, CUSTOM ACCENT COLOUR</li>
@@ -142,7 +145,7 @@
 
     <section id="layout" class="section" aria-labelledby="layout-title">
       <h2 id="layout-title">your layout.</h2>
-      <p class="lede">every panel is a widget. grab one by its name and drop it anywhere: in the middle of another to make tabs, beside it to split. drag the gaps to resize, double-click a title to fill the window. add a scope, a loudness meter, an XY pad, a live mod monitor or a pinboard of your own knobs from the widget library, and save the lot as a workspace. none of it touches the sound.</p>
+      <p class="lede">every panel is a widget. grab one by its name and drop it anywhere: in the middle of another to make tabs, beside it to split. drag the gaps to resize, double-click a title to fill the window. add a scope, a loudness meter, an XY pad, a live mod monitor or a pinboard of your own knobs from the widget library, and save the lot as a workspace. panels spring into place and can be caught mid-move. none of it touches the sound.</p>
       <div class="shots">
         <figure class="shot">
           <img src="assets/widgets_analysis.jpg" width="1600" height="1233" loading="lazy" alt="The Analysis workspace: Sound Space, a scope locked to the note, a loudness meter, a mod monitor, an XY pad and the filter.">
@@ -155,6 +158,14 @@
         <figure class="shot">
           <img src="assets/widgets_layout.jpg" width="1600" height="1233" loading="lazy" alt="Layout mode: each panel has a handle and round buttons, and the widget library sits alongside.">
           <figcaption>LAYOUT MODE + WIDGET LIBRARY</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/widgets_effects.jpg" width="1600" height="1232" loading="lazy" alt="The Effects workspace: the effects rack, each effect a module with its own live display, over Low End, the filter and the envelopes.">
+          <figcaption>EFFECTS RACK</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/widgets_sources.jpg" width="1600" height="1232" loading="lazy" alt="Two added oscillators as tabs beside Osc B, and the Sources mixer with a row for every source.">
+          <figcaption>EIGHT OSCILLATORS + SOURCES</figcaption>
         </figure>
       </div>
     </section>

@@ -1,10 +1,10 @@
 # Hypernova — handoff
 
-This is everything another engineer (human or AI) needs to pick up Hypernova where it stands on 21 September 2026: what it is, how it got here, how the code is organised, how the work has been done so far, what is still open, and exactly what to do to ship an update — including the download page.
+This is everything another engineer (human or AI) needs to pick up Hypernova where it stands on 22 September 2026: what it is, how it got here, how the code is organised, how the work has been done so far, what is still open, and exactly what to do to ship an update — including the download page.
 
 Owner: Erin (GitHub `erinuckuzular-ai`). The repo is public: https://github.com/erinuckuzular-ai/Hypernova
 Download page: https://erinuckuzular-ai.github.io/Hypernova/
-Current release: **0.5.1** (signed and notarized, published on GitHub).
+Current release: **0.10.0** (signed and notarized, published on GitHub). Development happens in the worktree `~/Hypernova-sampler` (branch `sampler`), fast-forwarded into `main` for each release.
 
 ---
 
@@ -14,12 +14,13 @@ A wavetable synthesizer plug-in for macOS (VST3, AU and a standalone app), built
 
 Current feature set:
 
-- **Sound:** 2 wavetable oscillators (15 built-in tables × 32 frames, position morph, 3D view), 7-voice unison, warps (sync, bend, mirror, PWM, crush, true FM), user wavetable import from WAV, audio-rate cross modulation (FM both ways, ring, AM, filter FM), sub oscillator, 8 noise types (white, pink, brown, blue, vinyl crackle, tape hiss, digital, wind), 8 filter types (LP12, LP24, HP, BP, notch, dirty, comb, formant), pitch drop envelope, glide, poly/mono/legato, drift, chord memory, strum, arpeggiator.
+- **Sound:** up to 8 wavetable oscillators (A and B, plus C to H added with + OSC; 15 built-in tables × 32 frames, position morph, 3D view), a Sources mixer, a sampler (drop any recording in; loops, reverse, root detection), 7-voice unison, warps (sync, bend, mirror, PWM, crush, true FM), user wavetable import from WAV, audio-rate cross modulation (FM both ways, ring, AM, filter FM), sub oscillator, 8 noise types (white, pink, brown, blue, vinyl crackle, tape hiss, digital, wind), 8 filter types (LP12, LP24, HP, BP, notch, dirty, comb, formant), pitch drop envelope, glide, poly/mono/legato, drift, chord memory, strum, arpeggiator.
 - **Modulation:** 2 envelopes with draggable handles, 2 LFOs (tempo sync, fade-in), an 8-slot mod matrix, 4 macros. Drag an LFO, the mod envelope or velocity onto any knob to modulate it; knobs draw a live modulation ring. Right-click any knob for the full source list, clear, or reset.
-- **Effects:** distortion (6 types, 4× oversampled), tape wear, OTT, pitch shifter, chorus (classic/ensemble/dimension), flanger, FX filter with synced sweep, trance gate with patterns, auto-pan, delay (digital/reverse/granular, ping-pong), reverb (space/plate/spring/room, shimmer), EQ, width, mono bass. Click an effect's name to bypass it. Effects are split over two deck tabs, EFFECTS and MORE FX.
+- **Effects:** an Effects Rack where every effect is a module with its own live 3D display, dragged along the chain by its name; a Low End split that keeps the sub clean under the effects; distortion (6 types, 4× oversampled), tape wear, OTT, pitch shifter, chorus (classic/ensemble/dimension), flanger, FX filter with synced sweep, trance gate with patterns, auto-pan, delay (digital/reverse/granular, ping-pong), reverb (space/plate/spring/room, shimmer), 5-band EQ with a draggable curve, width, mono bass. Every effect control can be modulated.
 - **Sounds:** 362 factory presets (808s, log drums, subs, reeses, growls, house stabs, techno, dub/dancehall, keys, plucks, pads, strings, bells, voices, arps, synth drums, cinematic, retro, folk instruments, soundscapes, a 40-sound Experimental bank) plus the 22-sound **FOUNDERS PACK**. Presets are shareable `.hnpreset` files; `.zip` sound packs can be dragged onto the window.
 - **Visuals:** Sound Space visualiser (3D spectrum, orbit, and a stereo view with goniometer, phase correlation and width by frequency), which can expand to fill the window or pop out into its own resizable window.
 - **Looks:** five themes — **Paper** (the default house look), Cosmic, Blackout, Daylight, Vapor — plus user accent colour, backdrop scene and brightness, knob style (planet, ring, minimal, machined), panel style (glass, flat, outlined), keyboard toggle and "always show knob values". Settings are per user, saved in `~/Library/Application Support/Arrow/Hypernova/look.xml`.
+- **Interface:** a docking widget layout (drag, stack, split, resize, collapse, hide, replace; a widget library; four workspaces), panels that move on interruptible springs, A/B compare, type-in values, drag the modulation ring for depth.
 - **Workflow:** preset browser (search, categories, favourites, audition while arrowing), undo/redo, dice menu (nudge/mutate/new) plus per-section dice with padlocks (oscillators, filter, modulation, effects), in-app update banner (checks GitHub at most once a day, one click downloads and opens the new installer).
 - **Performance:** the voice engine oversamples only patches that alias; the plug-in sleeps when silent (~0% CPU); an open editor with nothing playing uses about 2% of a core (3.5% in the animated Cosmic theme). Audio benchmark: 1.5% average, 9.4% worst case per instance.
 - **Compatibility:** universal binary; Intel builds run on macOS 10.13+, Apple Silicon on 11+. The installer app needs macOS 12+; older systems use the plain `.pkg` in the DMG's "Everything else" folder.
@@ -35,6 +36,9 @@ Current feature set:
 5. **0.4.1.** The user's Monterey (12.7.1) Mac couldn't open the AU or the installer. Cause: `CMAKE_OSX_DEPLOYMENT_TARGET` was set after `project()`, so builds silently targeted macOS 26. Fixed (10.13 Intel / 11 Apple Silicon), installer retargeted to macOS 12, plug-in open time cut from ~0.9 s to ~0.12 s. Notarization credentials had to be re-saved using the App Store Connect API key (see section 6).
 6. **0.5.0.** Feedback from a friend (Kauai) plus research into Pigments/Vital/Serum requests: noise types, draggable envelopes, drag-to-modulate, click-name bypass, clearer mono/glide/legato, logo easter egg, stereo view and pop-out visualiser, wavetable import, cross-mod, the whole second effects rack, themes and customisation, bundled fonts, roomier layout, section dice, sound packs. Download site moved from a Cloudflare draft to **GitHub Pages from `docs/`** (the user asked for the same setup as their Arrow Switch project). Site and plug-in rebranded to a quieter, Teenage-Engineering-inspired voice (the user's stated competition): light, lowercase, spec-sheet copy, one orange accent. Paper theme became the default; the logo is an orange dot plus lowercase "hypernova".
 7. **0.5.1.** The user reported "it's so bugged" and "heavy on the CPU". Driving the standalone app found: the PLAY page was empty (page switcher looped over 3 of 4 pages), pop-up menus ignored the plug-in's look, the preset browser was unreadable in light themes, right-click on knobs did nothing, theme switches left stale cached colours, the expanded visualiser was see-through, several clipped labels. CPU: idle editor 11–18% → ~2%. Plus a 3D pass (machined encoder knobs, lifted panels, switches with travel, deep keyboard keys, livelier 3D views with reflections and a comet trail, knob light trails) and the installer/DMG/icons rebranded to Paper.
+
+8. **0.6.0–0.9.0.** "Modular means widgets": the fixed layout became a docking widget layout with workspaces (layout state separate from patch state), a widget library and tool widgets; then the sampler (0.7.0), the reorderable FX chain (0.8.0), Low End and ten new donks (0.9.0; the old Donk Bass was "dog shit" and is retired, hidden but keeping its program number).
+9. **0.10.0 (the combined pass).** The user asked for it to "feel like apple" in function and ease of use, and chose "up to 8 oscillators" and the combined pass: Sources mixer + eight oscillators, the Effects Rack (Soundtoys EffectRack-style modules, each "its own plugin", with the 3D visuals people loved), every effect modulatable, 5-band EQ, knobs with type-in values, fine drag and drag-the-ring depth, A/B compare and Init, interruptible spring motion (the apple-design skill), a layout lint after an embarrassing DONE-over-the-macros overlap, a new logo mark (the wordmark text stays), and premium panel faces.
 
 ---
 
@@ -64,8 +68,13 @@ Source/
                         the audio thread reads an atomic pointer; replaced ones are retired for 3 s; FLAC in state
   UI/LowEndView.h       Low End split spectrum (drag the crossover). DSP: Effects::processLowBand + LR split in
                         Effects::process; phone check = processor.speakerCheck (atomic, not a parameter)
-  UI/FxChain.h          FX Chain widget (drag to reorder, bypass lights); order lives in state property "fxOrder",
-                        packed into an atomic for the audio thread; Effects::process runs it with a fade on change
+  UI/FxRack.h           Effects Rack: FxModule (one effect's controls + live 3D display, EQ curve editing) and
+                        EffectsRack (drag along the chain, springs, momentum scroll, rubber-band ends). Order lives
+                        in state property "fxOrder" (atomic for the audio thread, faded on change); rack membership
+                        in "fxRack"
+  UI/SourcesView.h      Sources mixer (a row per source: on, level, pan, filter route; + OSC adds C to H)
+  UI/Motion.h           springs (response/damping), velocity tracking, projection, rubber-banding, BoundsSprings
+                        (moves widgets); honours macOS Reduce Motion
   UI/SamplerView.h      sampler waveform editor (flags, loop brackets, playhead, drop to load)
   UI/Dock.h             docking layout tree (splits and tabbed leaves): layout, drop targets, dividers, save/load
   UI/Widgets.h          Widget (panel + Spread responsive relayout + edit chrome), StackTabs, DockOverlay (all
@@ -116,7 +125,8 @@ docs/                   THE DOWNLOAD PAGE (GitHub Pages serves main:/docs)
 2. **Measure before and after.** Every fidelity, click, loudness and CPU claim comes from a tool:
    - `./build/SmokeTest_artefacts/Release/SmokeTest` — full suite (renders all presets, timing, round-trip, pack, chords, arp, sleep/wake). Must print `ALL OK`.
    - `--bench` (audio CPU per preset), `--loudness` (feeds level_presets.py), `--lowend` (sub energy per bass), `--clicks [preset]` (note-change clicks), `--fidelity`, `--newfx` (every newer effect stays finite and audible), `--import <wav>` (wavetable import round trip), `--opentime` (table build time + checksum), `--note "<preset>" <note> <out.wav>`.
-   - `./build/UISnapshot_artefacts/Release/UISnapshot <dir>` renders every deck page, the browser and the stereo view. Use `HYPERNOVA_THEME=<Paper|Cosmic|Blackout|Daylight|Vapor>` to force a theme and `HYPERNOVA_NO_UPDATE_CHECK=1` to stop network calls. `--paintbench` lists the most expensive components.
+   - `./build/UISnapshot_artefacts/Release/UISnapshot <dir>` renders every deck page, the browser and the stereo view. Use `HYPERNOVA_THEME=<Paper|Cosmic|Blackout|Daylight|Vapor>` to force a theme and `HYPERNOVA_NO_UPDATE_CHECK=1` to stop network calls. `--paintbench` lists the most expensive components. `--layouttest` drives the docking, rack, oscillator and motion rules; `--lint` fails on any overlap, clipping or squashed label in every workspace (normal and layout mode). Set `HYPERNOVA_WORKSPACE_FOLDER` to a scratch folder so tests never touch the user's workspaces.
+   - More SmokeTest modes: `--sampler`, `--fxorder`, `--lowarch`, `--eqcheck`, `--compare` (A/B).
    - For real-world checks, open the standalone (`build/Hypernova_artefacts/Release/Standalone/Hypernova.app`) and click through every menu, tab and view; measure CPU with `ps -o %cpu= -p <pid>` and profile with `sample <pid> 4`.
 3. **Look at every rendered screen yourself** in all five themes before calling UI work done (contact sheets were used). Screenshots render with the CPU backdrop; the plug-in uses the GPU shader.
 4. **Commit small, with explanatory messages** (what changed and why, in plain prose). Every commit ends with a co-author line. Build, run SmokeTest, then commit.
@@ -169,7 +179,7 @@ From the user's requests and research that haven't been done yet:
 
 1. **More 3D / "edgy and fun"** — the user's latest direction. Ideas queued: a persistent modulation strip above the deck with live mini-scopes (the Pigments feature reviewers love most), an XY "orbiter" macro pad (drag a comet through a star field to morph many parameters), wavetable views reacting harder to modulation (ghost frame at the modulated position tinted by the source colour), hover-to-reveal targets in both directions, knob "click" feedback.
 2. **Playing and control:** MIDI learn for knobs, MPE, velocity and mod-wheel curves. (The step sequencer is excluded; see ROADMAP.md.)
-3. **From the feature research:** mod-matrix remap curves and drawable LFO shapes, a second filter with serial/parallel routing, unison spread modes, microtuning (MTS-ESP / Scala), envelope follower / sidechain as a mod source, A/B compare, reorderable effects chain, per-voice random / free-running phase, more filter models (ladder, diode). Formant shifter was requested but skipped (needs spectral processing).
+3. **From the feature research:** mod-matrix remap curves and drawable LFO shapes, a second filter with serial/parallel routing, unison spread modes, microtuning (MTS-ESP / Scala), envelope follower / sidechain as a mod source, per-voice random / free-running phase, more filter models (ladder, diode). Formant shifter was requested but skipped (needs spectral processing).
 4. **Preset browser:** tags, audition on hover, preset thumbnails.
 5. **Verification gaps:** the installer app has not been run on a real macOS 12 machine; notes on the standalone's on-screen keyboard weren't audibly checked in the last session (automated audio tests pass); pop-out window behaviour in hosts other than the standalone is untested.
 6. **Repo size:** a folder of test WAVs (~363 MB) was committed by mistake in 0.4.x and removed in `c81ecc2`, but it is still in git history, so clones are large. Cleaning it needs a history rewrite and force-push — only with the owner's explicit OK.
@@ -183,3 +193,5 @@ From the user's requests and research that haven't been done yet:
 - Cares a lot about CPU ("imagine this is on 10 tracks at once") and about things being bug-free ("make sure it's perfect").
 - Dislikes cheesy copy and generic "AI-looking" fonts; prefers the Paper look and the dry lowercase voice.
 - Sound is the priority: 808s must behave like 808s, log drums like the DX10 patch, basses heavy.
+- Wants it to feel like Apple in function and ease of use: respond on press, direct manipulation, nothing jumps. Overlaps and clipped text are "embarrassing": run `UISnapshot <dir> --lint` and look at the renders before shipping.
+- Loved the 3D wavetable and Sound Space views; carry that look into new features.
