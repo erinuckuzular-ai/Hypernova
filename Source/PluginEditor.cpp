@@ -421,8 +421,9 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         combo (p + "Sync", lfoSyncNames(), { 12, 74, 130, 24 }, W);
         knob (p + "Rate", "RATE", Palette::lfo, { 8, 102, 66, 68 }, 40, W);
         knob (p + "Fade", "FADE IN", Palette::lfo, { 76, 102, 66, 68 }, 40, W);
-        toggle (std::make_unique<PillToggle> ("RETRIGGER", Palette::lfo), p + "Retrig", { 12, 172, 130, 22 },
+        toggle (std::make_unique<PillToggle> ("RETRIG", Palette::lfo), p + "Retrig", { 12, 172, 80, 22 },
                 "Restart the LFO on each note. Off = free-running, locked to the song when synced.", W);
+        toggle (std::make_unique<PillToggle> ("ONCE", Palette::lfo), p + "Once", { 96, 172, 46, 22 }, "Play the shape once for each note and hold the end: a shape you draw becomes an envelope.", W);
         extraLfoViews.push_back (std::make_unique<ab::ui::LfoView> (processor, l));
         auto& view = *extraLfoViews.back();
         W->addAndMakeVisible (view);
@@ -1138,8 +1139,9 @@ void HypernovaAudioProcessorEditor::layoutModPage()
         view.setBounds (x, 36, 160, 62);
         knob (p + "Rate", "RATE", Palette::lfo, { x + 164, 32, 58, 68 }, 40, pg);
         knob (p + "Fade", "FADE IN", Palette::lfo, { x + 222, 32, 58, 68 }, 40, pg);
-        toggle (std::make_unique<PillToggle> ("RETRIGGER", Palette::lfo), p + "Retrig", { x, 106, 160, 22 },
+        toggle (std::make_unique<PillToggle> ("RETRIG", Palette::lfo), p + "Retrig", { x, 106, 100, 22 },
                 "Restart the LFO on each note. Off = free-running, locked to the song when synced.", pg);
+        toggle (std::make_unique<PillToggle> ("ONCE", Palette::lfo), p + "Once", { x + 104, 106, 56, 22 }, "Play the shape once for each note and hold the end: a shape you draw becomes an envelope.", pg);
         // Drag this onto any knob to have the LFO move it.
         modChips.push_back (std::make_unique<ModChip> ("DRAG LFO " + juce::String (l + 1), l + 1, modSourceColour (l + 1)));
         modChips.back()->onHover = [this] (int src) { hoveredModSource = src; for (auto& k : knobs) k->repaint(); };

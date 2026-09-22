@@ -119,7 +119,15 @@ struct OscSettings
 
 struct EnvSettings { float a = 0.001f, d = 0.3f, s = 1.0f, r = 0.2f; };
 
-struct LfoSettings { int shape = LSine; float rateHz = 1.0f, fade = 0; bool retrig = true; const float* table = nullptr; }; // table: the drawn shape
+struct LfoSettings
+{
+    int shape = LSine;
+    float rateHz = 1.0f, fade = 0;
+    bool retrig = true;
+    bool once = false;              // one cycle per note, then it holds: a shape you draw becomes an envelope
+    float drawnEnd = 1.0f;          // where the drawn shape's last point is, so "once" holds on that value
+    const float* table = nullptr;   // the drawn shape
+};
 
 struct ModSlot { int src = SrcNone, dest = DNone; float amount = 0; };
 
@@ -577,7 +585,9 @@ public:
             {
                 const auto& ls = s.lfo[(size_t) l];
                 const float fade = ls.fade > 0.001f ? juce::jmin (1.0f, noteAge / ls.fade) : 1.0f;
-                lfoVal[l] = dsp::lfoShape (ls.shape, lfoPhase[l], lfoHeld[l], lfoPrevHeld[l], ls.table) * fade;
+                // "Once" holds on the last point of the shape rather than running into the wrap back to the start.
+                const double ph = ls.once ? juce::jmin ((double) ls.drawnEnd, lfoPhase[l]) : lfoPhase[l];
+                lfoVal[l] = dsp::lfoShape (ls.shape, ph, lfoHeld[l], lfoPrevHeld[l], ls.table) * fade;
                 shownLfo[l] = lfoVal[l];
                 shownModEnv = modEnv.value;
                 shownVelocity = velocity;
@@ -585,9 +595,14 @@ public:
                 lfoPhase[l] += ls.rateHz * std::exp2 (juce::jlimit (-1.0f, 1.0f, lfoRateMod[l]) * 3.0f) * n / sr;
                 if (lfoPhase[l] >= 1.0)
                 {
-                    lfoPhase[l] = dsp::frac (lfoPhase[l]);
-                    lfoPrevHeld[l] = lfoHeld[l];
-                    lfoHeld[l] = rng.next();
+                    // "Once" holds the end of the shape instead of starting again: one pass per note.
+                    if (ls.once) lfoPhase[l] = 0.9999;
+                    else
+                    {
+                        lfoPhase[l] = dsp::frac (lfoPhase[l]);
+                        lfoPrevHeld[l] = lfoHeld[l];
+                        lfoHeld[l] = rng.next();
+                    }
                 }
             }
 

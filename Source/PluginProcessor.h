@@ -288,6 +288,7 @@ private:
     // Two copies of each drawn table: the audio thread reads one while the other is rebuilt, then they swap.
     std::array<std::array<std::array<float, ab::LfoTableSize + 1>, ab::NumLfo>, 2> lfoTables {};
     std::array<std::atomic<int>, ab::NumLfo> lfoTableSide {};
+    std::array<std::atomic<float>, ab::NumLfo> lfoDrawnEnd {}; // where each drawn shape ends
     struct OrderListener : juce::ValueTree::Listener
     {
         HypernovaAudioProcessor& p;

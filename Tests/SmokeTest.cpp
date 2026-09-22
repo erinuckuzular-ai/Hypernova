@@ -674,6 +674,21 @@ int main (int argc, char** argv)
             for (int i = 0; i < p.getNumPrograms(); ++i) if (p.getProgramName (i) == "Reese Wide") p.setCurrentProgram (i);
             check (p.lfoCurve (2) == HypernovaAudioProcessor::defaultLfoCurve(), "loading a preset starts the drawings fresh");
             check (HypernovaAudioProcessor::parseLfoCurve ("nonsense").size() >= 2, "a broken drawing falls back to the default shape");
+
+            // "Once": the shape plays one pass for each note and holds the end, so a drawing works as an envelope.
+            HypernovaAudioProcessor env;
+            setup (env);
+            env.setParam ("lfo3Shape", (float) ab::LDrawn);
+            env.setParam ("lfo3Rate", 1.0f);
+            env.setParam ("lfo3Once", 1.0f);
+            env.setLfoCurve (2, "0:-1 0.5:1 0.99:1");   // rise over half a second, then hold
+            env.setParam ("mod1Src", (float) ab::SrcLfo3);
+            env.setParam ("mod1Dest", (float) ab::DALevel);
+            env.setParam ("mod1Amt", 0.5f);
+            const auto shape = windows (env, 2.0);
+            const size_t start = 5, mid = shape.size() / 3, end = shape.size() - 5;
+            check (shape[mid] > shape[start] * 1.2f, "a drawn 'once' shape rises with the note (" + juce::String (shape[start], 3) + " -> " + juce::String (shape[mid], 3) + ")");
+            check (std::abs (shape[end] - shape[mid]) < shape[mid] * 0.25f, "and holds at the end instead of starting again (" + juce::String (shape[end], 3) + ")");
         }
         std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
         return failures == 0 ? 0 : 1;

@@ -268,6 +268,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     add<Choice> (l, pid ("lowDuckRate"), "Low End Duck Rate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, 0);
     addFloat (l, "lowDuckRelease", "Low End Duck Release", skewed (0.02f, 0.6f, 0.15f), 0.15f, timeText);
 
+    // One cycle per note for each LFO (appended): a drawn shape then works as an envelope.
+    for (int i = 1; i <= NumLfo; ++i)
+        add<Bool> (l, pid ("lfo" + juce::String (i) + "Once"), "LFO " + juce::String (i) + " Once", false);
+
     // The rack's own dry/wet (appended): 100% is the whole rack, lower blends the sound going in back over it.
     addFloat (l, "fxMix", "Rack Mix", { 0.0f, 1.0f }, 1.0f, pctText);
 
@@ -440,6 +444,8 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
         const int sync = (int) param ((p + "Sync").c_str());
         ls.rateHz = sync == 0 ? param ((p + "Rate").c_str()) : (float) (bpm / 60.0 / lfoSyncBeats (sync));
         ls.retrig = param ((p + "Retrig").c_str()) > 0.5f;
+        ls.once = param ((p + "Once").c_str()) > 0.5f;
+        ls.drawnEnd = ls.shape == LDrawn ? lfoDrawnEnd[(size_t) i].load() : 1.0f;
         ls.fade = param ((p + "Fade").c_str());
     }
     for (int i = 0; i < NumModSlots; ++i)
@@ -1316,6 +1322,7 @@ void HypernovaAudioProcessor::syncLfoTables()
             t[(size_t) i] = span > 1.0e-6f ? a.y + (b.y - a.y) * (x - a.x) / span : b.y;
         }
         lfoTableSide[(size_t) l].store (side, std::memory_order_release);
+        lfoDrawnEnd[(size_t) l].store (pts.back().x);
     }
     ++parameterChanges;
 }

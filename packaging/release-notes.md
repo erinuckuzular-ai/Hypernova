@@ -21,6 +21,7 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 ## more movement
 - **lfo 3 and lfo 4**: add them from the widget library. same shapes, sync, fade in and retrigger as the first two, and they can be dragged onto any knob.
 - **draw your own lfo shape**: pick *drawn*, then drag the points. click to add one, double-click one to remove it, hold shift to snap to the grid. saved with the sound and undoable.
+- **once**: any lfo can play its shape one pass per note and hold the end, so a shape you draw becomes an envelope.
 
 ## compare and start fresh
 - **a / b** in the header: click b to try changes on a copy, a to hear the original. right-click it to copy one over the other. presets load into the slot you're on, and undo works across a switch.
