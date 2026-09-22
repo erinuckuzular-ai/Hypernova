@@ -2,7 +2,7 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 
 ## eight oscillators
 - **up to eight wavetable oscillators in one sound.** press **+ OSC** (or drag *add oscillator* in from the library) and osc c to h join a and b, each with its own table, warp, unison, detune, blend, width, level, pan, pitch and filter switch.
-- **sources**: every sound source in one mixer. on light, level, pan and filter routing for each oscillator, the sub, the noise and the sampler. click a name to open its panel.
+- **sources**: every sound source in one mixer. on light, level, pan, filter routing and **solo** for each oscillator, the sub, the noise and the sampler. click a name to open its panel.
 - unison **width** now lives on each oscillator.
 
 ## effects rack
@@ -33,6 +33,11 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - panels for switched-off sources fade back, so what's playing stands out.
 - tidier layout mode: titles never run into their buttons, library cards don't overlap, each widget has its own icon.
 - a clearer mod monitor, loudness meter (with a scale and a 20 s history), low end view and scope.
+
+## smaller things
+- the 3d views fit their panels instead of running off the edges, and a panel is never squeezed below the size its controls need.
+- knob modulation rings sit inside the knob, clear of the label.
+- the header's icons are all the same size.
 
 ## look
 - **a new mark**: a lit core with an orbit ring. the wordmark is the same.
