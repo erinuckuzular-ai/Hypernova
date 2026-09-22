@@ -21,11 +21,40 @@ public:
         return ThemeColour { slots[juce::jlimit (0, 7, o)] };
     }
 
+    // Solo: everything else is switched off until you click it again. It's one undo step, and it isn't
+    // saved with the sound (it's a way of listening, not part of the patch).
+    void toggleSolo (const juce::String& onParam)
+    {
+        proc.undoManager.beginNewTransaction (soloed == onParam ? "Unsolo" : "Solo");
+        if (soloed == onParam)
+        {
+            for (auto& [id, was] : beforeSolo) proc.setParam (id, was);
+            soloed.clear();
+            beforeSolo.clear();
+        }
+        else
+        {
+            if (beforeSolo.empty())
+                for (auto& id : soloable())
+                    beforeSolo.push_back ({ id, proc.apvts.getRawParameterValue (id)->load() });
+            for (auto& id : soloable()) proc.setParam (id, id == onParam ? 1.0f : 0.0f);
+            soloed = onParam;
+        }
+        proc.apvts.copyState(); // land the changes in this undo step now, not on the next timer tick
+        for (auto& r : rows) r->setSoloed (! soloed.isEmpty() && r->onParamId() == soloed);
+        repaint();
+    }
+
     // Rows follow what's switched on; checked from the editor's timer.
     void refresh()
     {
         if (signature() != lastSignature) rebuild();
         else for (auto& r : rows) r->repaint();
+        // If anything else came back on (undo, a preset, automation), the solo is over.
+        if (soloed.isNotEmpty())
+            for (auto& id : soloable())
+                if (id != soloed && proc.apvts.getRawParameterValue (id)->load() > 0.5f) { soloed.clear(); beforeSolo.clear(); break; }
+        for (auto& r : rows) r->setSoloed (! soloed.isEmpty() && r->onParamId() == soloed);
     }
 
     void resized() override
@@ -46,10 +75,13 @@ private:
     public:
         Row (SourcesView& o, juce::AudioProcessorValueTreeState& state, const juce::String& title, const juce::String& widgetId, ThemeColour c,
              const char* onParam, const char* levelParam, const char* panParam, const char* routeParam, int oscIndex)
-            : owner (o), name (title), widget (widgetId), colour (c), osc (oscIndex), level (c)
+            : owner (o), name (title), widget (widgetId), colour (c), osc (oscIndex), on (onParam != nullptr ? juce::String (onParam) : juce::String()), level (c)
         {
             if (onParam != nullptr)
             {
+                addAndMakeVisible (solo);
+                solo.setTooltip ("Solo: hear this on its own. Click again to bring the rest back.");
+                solo.onClick = [this] { owner.toggleSolo (on); };
                 led = std::make_unique<PowerLed> (c);
                 addAndMakeVisible (*led);
                 attachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (state, onParam, *led));
@@ -71,6 +103,7 @@ private:
                 addAndMakeVisible (*route);
                 attachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (state, routeParam, *route));
             }
+            soloed = false;
             if (osc >= 2)
             {
                 addAndMakeVisible (remove);
@@ -90,6 +123,8 @@ private:
             r.removeFromLeft (6);
             if (osc >= 2) remove.setBounds (r.removeFromRight (20).withSizeKeepingCentre (18, 18)); else r.removeFromRight (20);
             r.removeFromRight (4);
+            if (on.isNotEmpty()) solo.setBounds (r.removeFromRight (24).withSizeKeepingCentre (22, 20)); else r.removeFromRight (24);
+            r.removeFromRight (4);
             if (route != nullptr) route->setBounds (r.removeFromRight (74).withSizeKeepingCentre (70, 20)); else r.removeFromRight (74);
             r.removeFromRight (6);
             if (panAttach != nullptr) pan.setBounds (r.removeFromRight (58)); else r.removeFromRight (58);
@@ -108,6 +143,8 @@ private:
         }
 
         const juce::String& title() const { return name; }
+        const juce::String& onParamId() const { return on; }
+        void setSoloed (bool b) { if (b != solo.lit) { solo.lit = b; solo.repaint(); } }
         void mouseEnter (const juce::MouseEvent&) override { repaint(); }
         void mouseExit (const juce::MouseEvent&) override { repaint(); }
         void mouseUp (const juce::MouseEvent& e) override
@@ -158,8 +195,11 @@ private:
                 g.fillRoundedRectangle (r, 4.0f);
                 const float v = (float) valueToProportionOfLength (getValue()), mid = r.getCentreX();
                 const float x = r.getX() + r.getWidth() * v;
-                g.setColour (colour.withAlpha (0.75f));
-                g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmin (mid, x), r.getY(), std::abs (x - mid) + 1.0f, r.getHeight()), 3.0f);
+                if (std::abs (x - mid) > 1.5f) // dead centre: just the tick, so the "C" stays readable
+                {
+                    g.setColour (colour.withAlpha (0.75f));
+                    g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmin (mid, x), r.getY(), std::abs (x - mid), r.getHeight()), 3.0f);
+                }
                 g.setColour (Colours::textFaint);
                 g.fillRect (mid - 0.5f, r.getY(), 1.0f, 3.0f);
                 g.fillRect (mid - 0.5f, r.getBottom() - 3.0f, 1.0f, 3.0f);
@@ -171,13 +211,43 @@ private:
             ThemeColour colour;
         } pan { colour };
         juce::TextButton remove { "x" };
+        struct SoloButton : juce::TextButton
+        {
+            SoloButton() : juce::TextButton ("S") {}
+            bool lit = false;
+            void paintButton (juce::Graphics& g, bool over, bool down) override
+            {
+                auto r = getLocalBounds().toFloat().reduced (0.5f);
+                g.setColour (lit ? Palette::sub.withAlpha (0.85f) : (over || down ? Colours::panelHi.brighter (0.06f) : Colours::panelHi.withAlpha (0.8f)));
+                g.fillRoundedRectangle (r, 6.0f);
+                g.setColour (lit ? Palette::sub.get() : Colours::line.get());
+                g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+                g.setColour (lit ? Colours::bg0.get() : Colours::text.withAlpha (over ? 0.95f : 0.7f));
+                g.setFont (mono (10.0f).boldened());
+                g.drawText ("S", r, juce::Justification::centred, false);
+            }
+        } solo;
+        juce::String on;
+        bool soloed = false;
         juce::Rectangle<int> nameArea;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> levelAttach, panAttach;
         std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> attachments;
     };
 
     std::vector<std::unique_ptr<Row>> rows;
-    juce::String lastSignature;
+    juce::String lastSignature, soloed;
+    std::vector<std::pair<juce::String, float>> beforeSolo;
+
+    // Everything that can be soloed: the oscillators that are on, the sub and the sampler.
+    juce::StringArray soloable() const
+    {
+        juce::StringArray ids;
+        for (int o = 0; o < NumOsc; ++o) ids.add (oscPrefix (o) + "On");
+        ids.add ("subOn");
+        ids.add ("smpOn");
+        ids.add ("noiseLevel"); // the noise has no switch of its own: solo turns its level down
+        return ids;
+    }
 
     juce::String signature() const
     {

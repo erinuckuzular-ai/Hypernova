@@ -417,6 +417,25 @@ int main (int argc, char** argv)
             for (int o = 2; o < ab::NumOsc; ++o) if (ed->layoutTree().contains ("osc" + ab::oscPrefix (o).toUpperCase())) ed->hideWidget ("osc" + ab::oscPrefix (o).toUpperCase());
             settle();
         }
+        // Solo in the Sources mixer: everything else goes quiet, and clicking it again brings it all back.
+        {
+            proc.setParam ("aOn", 1.0f);
+            proc.setParam ("bOn", 1.0f);
+            proc.setParam ("subOn", 1.0f);
+            auto& srcView = ed->sourcesView();
+            srcView.toggleSolo ("aOn");
+            check (proc.apvts.getRawParameterValue ("aOn")->load() > 0.5f && proc.apvts.getRawParameterValue ("bOn")->load() < 0.5f
+                   && proc.apvts.getRawParameterValue ("subOn")->load() < 0.5f, "solo leaves one source playing");
+            srcView.toggleSolo ("aOn");
+            check (proc.apvts.getRawParameterValue ("bOn")->load() > 0.5f && proc.apvts.getRawParameterValue ("subOn")->load() > 0.5f,
+                   "and clicking it again brings the others back");
+            srcView.toggleSolo ("subOn");
+            proc.undoManager.undo();
+            check (proc.apvts.getRawParameterValue ("bOn")->load() > 0.5f, "undo takes a solo back too");
+            srcView.toggleSolo ("subOn");
+            srcView.toggleSolo ("subOn");
+        }
+
         // LFO 3 as a widget, and drawing its shape with the mouse.
         {
             ed->loadWorkspace ("Sound Design", false);
