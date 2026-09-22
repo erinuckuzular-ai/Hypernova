@@ -115,8 +115,12 @@ public:
     {
         g.fillAll (ThemeState::get().base.light ? Colours::bg0.withAlpha (0.7f) : juce::Colours::black.withAlpha (0.45f)); // backdrop over the editor
         auto r = panelBounds().toFloat();
-        g.setColour (juce::Colours::black.withAlpha (0.55f));
-        g.fillRoundedRectangle (r.translated (0, 6), 18.0f);
+        // A soft shadow in layers (a single offset copy reads as a dark bar under the panel).
+        for (int i = 4; i >= 1; --i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.06f * (float) (5 - i)));
+            g.fillRoundedRectangle (r.translated (0, 2.0f * (float) i).expanded ((float) i), 18.0f + (float) i);
+        }
         panel (g, r, 18.0f, Colours::panelHi.withAlpha (0.97f));
         sectionLabel (g, "SOUNDS", { r.getX() + 20, r.getY() + 16, 200, 24 }, Colours::text);
 

@@ -122,8 +122,18 @@ struct LookSettings
         juce::PropertiesFile p (options());
         auto& t = ThemeState::get();
         auto name = p.getValue ("theme", "Cosmic");
-        const auto forced = juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_THEME", {}); // for snapshots
-        if (forced.isNotEmpty()) name = forced;
+        // Snapshots: HYPERNOVA_THEME picks a theme as it ships, without this machine's own tweaks.
+        const auto forced = juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_THEME", {});
+        if (forced.isNotEmpty())
+        {
+            for (const auto& th : builtInThemes()) if (th.name.equalsIgnoreCase (forced)) t.base = th;
+            t.accentOverride = {};
+            t.backdrop = t.knobStyle = t.panelStyle = -1;
+            t.backdropStrength = -1.0f;
+            t.alwaysShowValues = false;
+            ++t.version;
+            return;
+        }
         for (const auto& th : builtInThemes()) if (th.name == name) t.base = th;
         const auto accent = p.getValue ("accent");
         t.accentOverride = accent.isNotEmpty() ? juce::Colour::fromString (accent) : juce::Colour();
