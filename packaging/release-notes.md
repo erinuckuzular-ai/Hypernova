@@ -18,6 +18,11 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - **drag the modulation ring** to set how much an lfo or envelope sends; right-click a knob for each source's depth. double-click the ring to clear it.
 - right-click a knob and choose **type a value**. shift-drag for fine moves.
 
+## mpe
+- **play it from an mpe controller** (push, osmose, linnstrument, seaboard): switch **mpe** on in the play page and every note arrives on its own channel, so a bend, a press or a slide belongs to that note alone.
+- **bend** sets how far a note's own bend reaches (48 semitones by default, what mpe controllers send).
+- **pressure** and **slide** are modulation sources: drag them onto any knob. with mpe off they still work from ordinary aftertouch and cc 74.
+
 ## more movement
 - **lfo 3 and lfo 4**: add them from the widget library. same shapes, sync, fade in and retrigger as the first two, and they can be dragged onto any knob.
 - **draw your own lfo shape**: pick *drawn*, then drag the points. click to add one, double-click one to remove it, hold shift to snap to the grid. saved with the sound and undoable.

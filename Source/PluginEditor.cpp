@@ -1221,6 +1221,23 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
         .slider.setTooltip ("Osc B chops osc A's level: tremolo at low pitches, sidebands at high ones");
     knob ("xFltFm", "FLT FM", Palette::filter, { 774 + 4 * xw, knobY, xw, 72 }, 40, pg)
         .slider.setTooltip ("Osc A shakes the filter cutoff at audio rate: growl and buzz");
+
+    // MPE: every note on its own channel, with its own bend, pressure and slide.
+    pg->captions.push_back ({ { 1060, 6, 1, 122 }, {}, {}, true });
+    pg->captions.push_back ({ { 1074, 4, 90, 24 }, "MPE", Palette::mod, false });
+    toggle (std::make_unique<PillToggle> ("MPE", Palette::mod), "mpeOn", { 1120, 5, 58, 22 },
+            "Play from an MPE controller (Push, Osmose, LinnStrument, Seaboard): each note arrives on its own "
+            "channel, so bends, pressure and slide belong to that note alone.", pg);
+    knob ("mpeBend", "BEND", Palette::mod, { 1074, knobY, 56, 72 }, 40, pg)
+        .slider.setTooltip ("How far a note's own bend reaches, in semitones. MPE controllers normally send 48.");
+    for (int i = 0; i < 2; ++i)
+    {
+        const int src = i == 0 ? ab::SrcPressure : ab::SrcSlide;
+        modChips.push_back (std::make_unique<ModChip> (i == 0 ? "DRAG PRESS" : "DRAG SLIDE", src, modSourceColour (src)));
+        modChips.back()->onHover = [this] (int s) { hoveredModSource = s; for (auto& k : knobs) k->repaint(); };
+        pg->addAndMakeVisible (*modChips.back());
+        modChips.back()->setBounds (1134, knobY + 6 + i * 26, 86, 22);
+    }
 }
 
 //==============================================================================

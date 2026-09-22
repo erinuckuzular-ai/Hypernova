@@ -276,6 +276,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Smooth", "Mod " + juce::String (i) + " Smoothing", { 0.0f, 1.0f }, 0.0f, pctText);
     }
 
+    // MPE (appended): each note on its own channel, with its own bend, pressure and slide.
+    add<Bool> (l, pid ("mpeOn"), "MPE", false);
+    addFloat (l, "mpeBend", "MPE Bend Range", { 1.0f, 96.0f, 1.0f }, 48.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " st"; });
+
     // Envelope follower (appended): how loud the synth itself is, as a modulation source.
     addFloat (l, "folAtt", "Follower Attack", skewed (0.5f, 200.0f, 20.0f), 10.0f, [] (float v, int) { return juce::String (v, 1) + " ms"; });
     addFloat (l, "folRel", "Follower Release", skewed (10.0f, 2000.0f, 250.0f), 200.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; });
@@ -619,7 +623,7 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
 }
 
 //==============================================================================
-void HypernovaAudioProcessor::noteOn (int note, float velocity)
+void HypernovaAudioProcessor::noteOn (int note, float velocity, int channel)
 {
     const auto& s = blockSettings;
     heldNotes.erase (std::remove (heldNotes.begin(), heldNotes.end(), note), heldNotes.end());
@@ -642,6 +646,11 @@ void HypernovaAudioProcessor::noteOn (int note, float velocity)
             sustained[(size_t) (&v - voices.data())] = false;
             v.start (n, velocity, glide ? (float) (lastNote + chord[k]) : -1.0f, true, s, globalMod, noteCounter, (int) k * strumSamples);
             v.trigger = note;
+            v.channel = channel;
+            const auto& e = channelExpression[(size_t) juce::jlimit (1, 16, channel)];
+            v.noteBend = mpeOn() ? e.bend : 0.0f;
+            v.pressure = e.pressure;
+            v.slide = e.slide;
         }
     }
     else
@@ -698,8 +707,9 @@ Voice& HypernovaAudioProcessor::allocateVoice()
     return *target;
 }
 
-void HypernovaAudioProcessor::noteOff (int note)
+void HypernovaAudioProcessor::noteOff (int note, int channel)
 {
+    juce::ignoreUnused (channel);
     heldNotes.erase (std::remove (heldNotes.begin(), heldNotes.end(), note), heldNotes.end());
     if (blockSettings.mode == ModePoly)
     {
@@ -901,15 +911,45 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         renderVoices (cursor, pos);
         cursor = pos;
 
+        const int ch = juce::jlimit (1, 16, msg.getChannel());
         if (msg.isNoteOn())
-            noteOn (msg.getNoteNumber(), msg.getFloatVelocity());
+            noteOn (msg.getNoteNumber(), msg.getFloatVelocity(), ch);
         else if (msg.isNoteOff())
-            noteOff (msg.getNoteNumber());
+            noteOff (msg.getNoteNumber(), ch);
         else if (msg.isPitchWheel())
-            pitchWheel = msg.getPitchWheelValue();
+        {
+            // With MPE on, a bend on a note's own channel bends that note alone; channel 1 stays the master.
+            if (mpeOn() && ch != 1)
+            {
+                channelExpression[(size_t) ch].bend = (float) (msg.getPitchWheelValue() - 8192) / 8192.0f * param ("mpeBend");
+                applyExpressionToVoices (ch);
+            }
+            else pitchWheel = msg.getPitchWheelValue();
+        }
+        else if (msg.isChannelPressure() || msg.isAftertouch())
+        {
+            // Pressure: per channel with MPE, per note with poly aftertouch, otherwise it moves every voice.
+            const float v = (float) (msg.isAftertouch() ? msg.getAfterTouchValue() : msg.getChannelPressureValue()) / 127.0f;
+            if (msg.isAftertouch())
+            {
+                for (auto& voice : voices)
+                    if (voice.isActive() && voice.note == msg.getNoteNumber() && (! mpeOn() || voice.channel == ch)) voice.pressure = v;
+            }
+            else
+            {
+                channelExpression[(size_t) ch].pressure = v;
+                applyExpressionToVoices (ch);
+            }
+        }
         else if (msg.isController())
         {
-            if (msg.getControllerNumber() == 1)
+            if (msg.getControllerNumber() == 74)
+            {
+                // Slide (timbre): the third MPE dimension, centred.
+                channelExpression[(size_t) ch].slide = (float) msg.getControllerValue() / 127.0f * 2.0f - 1.0f;
+                applyExpressionToVoices (ch);
+            }
+            else if (msg.getControllerNumber() == 1)
                 globalMod.modWheel = (float) msg.getControllerValue() / 127.0f;
             else if (msg.getControllerNumber() == 64)
             {
@@ -1065,7 +1105,30 @@ void HypernovaAudioProcessor::publishModSources (const float* lfo, float modEnv,
     shownModSource[6] = note >= 0 ? juce::jlimit (-1.0f, 1.0f, (note - 60.0f) / 36.0f) : 0.0f;
     for (int m = 0; m < 4; ++m) shownModSource[(size_t) (7 + m)] = globalMod.macros[(size_t) m];
     shownModSource[SrcFollow] = globalMod.follower;
+    {
+        // Pressure and slide: shown from the newest voice that's playing.
+        const Voice* newest = nullptr;
+        for (auto& v : voices) if (v.isActive() && (newest == nullptr || v.age > newest->age)) newest = &v;
+        shownModSource[SrcPressure] = newest != nullptr ? newest->pressure : 0.0f;
+        shownModSource[SrcSlide] = newest != nullptr ? newest->slide : 0.0f;
+    }
     shownModSource[11] = 0.0f; // random is per note; its ring shows depth only
+}
+
+// Hands a channel's expression to the notes playing on it (all of them when MPE is off, so plain
+// aftertouch and CC 74 still work as modulation sources).
+void HypernovaAudioProcessor::applyExpressionToVoices (int channel)
+{
+    const auto& e = channelExpression[(size_t) juce::jlimit (1, 16, channel)];
+    const bool mpe = mpeOn();
+    for (auto& v : voices)
+    {
+        if (! v.isActive()) continue;
+        if (mpe && v.channel != channel) continue;
+        if (mpe) v.noteBend = e.bend;
+        v.pressure = e.pressure;
+        v.slide = e.slide;
+    }
 }
 
 // The envelope follower: how loud the synth is right now, smoothed with its own attack and release.

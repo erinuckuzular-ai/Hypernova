@@ -228,11 +228,17 @@ private:
     void processChunk (juce::AudioBuffer<float>&, juce::MidiBuffer&);
     void applyQuality (int q);
     void smoothSettings (ab::SynthSettings&, int numSamples);
-    void noteOn (int note, float velocity);
+    void noteOn (int note, float velocity, int channel = 1);
     ab::Voice& allocateVoice();
     void runArpeggiator (juce::MidiBuffer& midi, int numSamples, double ppq, bool playing);
     void applyGlobalModulation (ab::FxSettings& fx);
-    void noteOff (int note);
+    void noteOff (int note, int channel = 1);
+
+    // MPE: each note arrives on its own channel, which then carries its bend, pressure and slide.
+    struct ChannelExpression { float bend = 0, pressure = 0, slide = 0; };
+    std::array<ChannelExpression, 17> channelExpression {};
+    bool mpeOn() const { return apvts.getRawParameterValue ("mpeOn")->load() > 0.5f; }
+    void applyExpressionToVoices (int channel);
     void allNotesOff (bool hard);
 
     std::array<ab::Voice, ab::MaxVoices> voices;

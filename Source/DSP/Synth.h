@@ -30,10 +30,10 @@ enum VoiceMode { ModePoly, ModeMono, ModeLegato, NumModes };
 inline juce::StringArray voiceModeNames() { return { "Poly", "Mono", "Legato" }; }
 
 enum ModSrc { SrcNone, SrcLfo1, SrcLfo2, SrcEnv2, SrcVelocity, SrcModWheel, SrcNote, SrcMacro1, SrcMacro2, SrcMacro3, SrcMacro4, SrcRandom,
-              SrcLfo3, SrcLfo4, SrcFollow, NumSrc }; // append only
+              SrcLfo3, SrcLfo4, SrcFollow, SrcPressure, SrcSlide, NumSrc }; // append only
 inline juce::StringArray modSrcNames()
 {
-    return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random", "LFO 3", "LFO 4", "Follower" };
+    return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random", "LFO 3", "LFO 4", "Follower", "Pressure", "Slide" };
 }
 
 // Append only (saved sessions store indices). Everything from DDistFx on is global: the processor applies it to the effects.
@@ -479,6 +479,9 @@ class Voice
 {
 public:
     int note = -1;
+    int channel = 1;              // MPE: the channel this note came in on, which carries its expression
+    float noteBend = 0;           // semitones, from that channel's pitch bend
+    float pressure = 0, slide = 0; // how hard it's pressed and where along the key, 0..1 and -1..1
     float velocity = 0;
     juce::uint64 age = 0;
     int trigger = -1; // the key that started this voice (chord voices share their root's key)
@@ -639,6 +642,8 @@ public:
             src[SrcLfo3] = lfoVal[2];
             src[SrcLfo4] = lfoVal[3];
             src[SrcFollow] = g.follower;
+            src[SrcPressure] = pressure;
+            src[SrcSlide] = slide;
 
             std::copy (std::begin (src), std::end (src), std::begin (lastSrc));
 
@@ -672,7 +677,7 @@ public:
                 driftValue += (driftTarget - driftValue) * (float) n * 3.0f / (float) sr;
             }
 
-            const float basePitch = currentPitch + g.bendSemis + s.transpose + s.pitchEnvAmt * pitchEnv + dst[DPitch] * 12.0f
+            const float basePitch = currentPitch + g.bendSemis + noteBend + s.transpose + s.pitchEnvAmt * pitchEnv + dst[DPitch] * 12.0f
                                     + s.drift * 0.35f * driftValue;
             pitchEnv *= pitchEnvCoef;
 

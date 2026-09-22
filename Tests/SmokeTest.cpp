@@ -746,6 +746,128 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    if (argc == 2 && juce::String (argv[1]) == "--mpe")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        // Renders a phrase and returns the pitch of the last half second, from rising zero crossings.
+        auto pitchOf = [&] (HypernovaAudioProcessor& p, const std::vector<std::pair<int, juce::MidiMessage>>& messages, double seconds)
+        {
+            p.prepareToPlay (rate, 256);
+            std::vector<float> out;
+            const int blocks = (int) (seconds * rate / 256);
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                for (auto& [atBlock, m] : messages) if (atBlock == b) midi.addEvent (m, 0);
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            const size_t from = out.size() / 2;
+            int crossings = 0;
+            for (size_t i = from + 1; i < out.size(); ++i)
+                if (out[i - 1] <= 0.0f && out[i] > 0.0f) ++crossings;
+            return (float) crossings * (float) rate / (float) (out.size() - from);
+        };
+        auto plain = [] (HypernovaAudioProcessor& p)
+        {
+            p.setParam ("aPos", 0.0f); p.setParam ("aUni", 1.0f); p.setParam ("ampS", 1.0f); p.setParam ("ampA", 0.001f);
+            p.setParam ("fltOn", 0.0f); p.setParam ("verbMix", 0.0f); p.setParam ("dlyMix", 0.0f); p.setParam ("chorusMix", 0.0f);
+            p.setParam ("drift", 0.0f); p.setParam ("subOn", 0.0f);
+        };
+        const auto noteOn2 = juce::MidiMessage::noteOn (2, 57, 1.0f);   // A3, on its own channel
+        const auto bendUp2 = juce::MidiMessage::pitchWheel (2, 8192 + 2048); // a quarter of the range up
+        {
+            HypernovaAudioProcessor p;
+            plain (p);
+            p.setParam ("mpeOn", 1.0f);
+            p.setParam ("mpeBend", 48.0f);
+            const float before = pitchOf (p, { { 0, noteOn2 } }, 1.0);
+            HypernovaAudioProcessor q;
+            plain (q);
+            q.setParam ("mpeOn", 1.0f);
+            q.setParam ("mpeBend", 48.0f);
+            const float after = pitchOf (q, { { 0, noteOn2 }, { 20, bendUp2 } }, 1.0);
+            check (before > 180.0f && before < 250.0f, "a note on a member channel plays in tune (" + juce::String (before, 1) + " Hz)");
+            check (after > before * 1.9f && after < before * 2.1f, "and a bend on that channel moves it by the MPE range (" + juce::String (after, 1) + " Hz: a quarter of 48 semitones is an octave)");
+        }
+        {
+            // Two notes on two channels: bending one leaves the other where it is.
+            HypernovaAudioProcessor p;
+            plain (p);
+            p.setParam ("mpeOn", 1.0f);
+            const auto noteOn3 = juce::MidiMessage::noteOn (3, 57, 1.0f);
+            const float both = pitchOf (p, { { 0, noteOn3 } }, 1.0);
+            HypernovaAudioProcessor q;
+            plain (q);
+            q.setParam ("mpeOn", 1.0f);
+            const float bentOther = pitchOf (q, { { 0, noteOn3 }, { 20, bendUp2 } }, 1.0);
+            check (std::abs (bentOther - both) < both * 0.05f, "a bend on one channel leaves the notes on other channels alone");
+        }
+        {
+            // With MPE off, a bend on any channel is the old global bend.
+            HypernovaAudioProcessor p;
+            plain (p);
+            p.setParam ("bendRange", 12.0f);
+            const float before = pitchOf (p, { { 0, juce::MidiMessage::noteOn (1, 57, 1.0f) } }, 1.0);
+            HypernovaAudioProcessor q;
+            plain (q);
+            q.setParam ("bendRange", 12.0f);
+            const float after = pitchOf (q, { { 0, juce::MidiMessage::noteOn (1, 57, 1.0f) }, { 20, juce::MidiMessage::pitchWheel (1, 16383) } }, 1.0);
+            check (after > before * 1.9f && after < before * 2.1f, "with MPE off the bend wheel still bends everything by its own range (" + juce::String (after / juce::jmax (1.0f, before), 2) + "x)");
+        }
+        {
+            // Pressure and slide are modulation sources.
+            auto level = [&] (HypernovaAudioProcessor& p, const std::vector<std::pair<int, juce::MidiMessage>>& messages)
+            {
+                p.prepareToPlay (rate, 256);
+                double sum = 0;
+                int n = 0;
+                for (int b = 0; b < 80; ++b)
+                {
+                    juce::MidiBuffer midi;
+                    for (auto& [atBlock, m] : messages) if (atBlock == b) midi.addEvent (m, 0);
+                    juce::AudioBuffer<float> buf (2, 256);
+                    buf.clear();
+                    p.processBlock (buf, midi);
+                    if (b > 40) for (int i = 0; i < 256; ++i) { sum += (double) buf.getSample (0, i) * buf.getSample (0, i); ++n; }
+                }
+                return (float) std::sqrt (sum / juce::jmax (1, n));
+            };
+            HypernovaAudioProcessor quiet;
+            plain (quiet);
+            quiet.setParam ("mpeOn", 1.0f);
+            quiet.setParam ("aLevel", 0.3f);
+            quiet.setParam ("mod1Src", (float) ab::SrcPressure);
+            quiet.setParam ("mod1Dest", (float) ab::DALevel);
+            quiet.setParam ("mod1Amt", 0.7f);
+            const float noPress = level (quiet, { { 0, noteOn2 } });
+            HypernovaAudioProcessor pressed;
+            plain (pressed);
+            pressed.setParam ("mpeOn", 1.0f);
+            pressed.setParam ("aLevel", 0.3f);
+            pressed.setParam ("mod1Src", (float) ab::SrcPressure);
+            pressed.setParam ("mod1Dest", (float) ab::DALevel);
+            pressed.setParam ("mod1Amt", 0.7f);
+            const float withPress = level (pressed, { { 0, noteOn2 }, { 10, juce::MidiMessage::channelPressureChange (2, 127) } });
+            check (withPress > noPress * 1.5f, "pressure moves what it's routed to (" + juce::String (noPress, 3) + " -> " + juce::String (withPress, 3) + ")");
+            HypernovaAudioProcessor slid;
+            plain (slid);
+            slid.setParam ("mpeOn", 1.0f);
+            slid.setParam ("aLevel", 0.3f);
+            slid.setParam ("mod1Src", (float) ab::SrcSlide);
+            slid.setParam ("mod1Dest", (float) ab::DALevel);
+            slid.setParam ("mod1Amt", 0.7f);
+            const float withSlide = level (slid, { { 0, noteOn2 }, { 10, juce::MidiMessage::controllerEvent (2, 74, 127) } });
+            check (withSlide > noPress * 1.2f, "and so does slide (" + juce::String (withSlide, 3) + ")");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc == 2 && juce::String (argv[1]) == "--compare")
     {
         int failures = 0;
