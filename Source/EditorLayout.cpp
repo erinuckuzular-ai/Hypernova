@@ -22,10 +22,8 @@ namespace
         { "macros",   "Macros",         "MODULATION", "The four macros, big: rename them, see what they move",         false, SlotFx },
         { "xy",       "XY Pad",         "MODULATION", "Two macros on one pad: drag to move both",                      true,  SlotMod },
         { "modmon",   "Mod Monitor",    "MODULATION", "Every active modulation source, live, and what it moves",       true,  SlotLfo },
-        { "fx",       "Effects",        "EFFECTS",    "Distortion, OTT, chorus, delay, space, EQ and width",           false, SlotFx },
-        { "morefx",   "More FX",        "EFFECTS",    "Flanger, tape, gate, filter, pitch and effect styles",          false, SlotFx },
+        { "rack",     "Effects Rack",   "EFFECTS",    "Every effect as its own module: drag them along the chain",     false, SlotFx },
         { "lowend",   "Low End",        "EFFECTS",    "Keep the sub clean under the effects, duck it, check it on a phone", false, SlotSub },
-        { "chain",    "FX Chain",       "EFFECTS",    "The effects in signal order: drag to reorder, save chains",     false, SlotFx },
         { "play",     "Play",           "PLAYING",    "Arp, chords, tuning, unison width and cross mod",               false, SlotEnv },
         { "space",    "Sound Space",    "VIEWS",      "Spectrum or orbit view of the output",                          false, SlotAccent },
         { "scope",    "Scope",          "VIEWS",      "Oscilloscope that locks to the note you play",                  true,  SlotOscA },
@@ -190,8 +188,9 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
     {
         // The rack order on top, both effect panels open in full, the core of the sound along the bottom.
         root = split (false, 1.0f, {
-            leaf ({ "chain" }, 130), leaf ({ "fx" }, 190), leaf ({ "morefx" }, 190),
-            split (true, 212, { leaf ({ "lowend" }, 500), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }) });
+            leaf ({ "rack" }, 280),
+            split (true, 250, { leaf ({ "lowend" }, 560), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }),
+            leaf ({ "mod", "play" }, 190) });
     }
     else if (name == "Sampling")
     {
@@ -199,7 +198,7 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
         root = split (false, 1.0f, {
             split (true, 330, { leaf ({ "sampler" }, 740), leaf ({ "space" }, 480) }),
             split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "oscA" }, 280) }),
-            leaf ({ "fx", "morefx", "chain", "mod", "play" }, 190) });
+            leaf ({ "rack", "mod", "play" }, 190) });
     }
     else if (name == "Analysis")
     {
@@ -211,14 +210,14 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
         root = split (false, 1.0f, {
             split (true, 330, { leaf ({ "space" }, 560), leaf ({ "scope-1" }, 400), leaf ({ "meter-1" }, 260) }),
             split (true, 260, { leaf ({ "modmon-1" }, 520), leaf ({ "xy-1" }, 300), leaf ({ "filter" }, 400) }),
-            leaf ({ "mod", "fx", "morefx", "play", "chain" }, 190, page) });
+            leaf ({ "mod", "rack", "play" }, 190, juce::jlimit (0, 2, page == 3 ? 2 : page == 0 ? 0 : 1)) });
     }
     else
     {
         root = split (false, 1.0f, {
             split (true, 378, { leaf ({ "oscA" }, 400), leaf ({ "oscB" }, 400), leaf ({ "space" }, 408) }),
             split (true, 212, { leaf ({ "sub" }, 240), leaf ({ "pitch" }, 256), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }),
-            leaf ({ "mod", "fx", "morefx", "play", "chain" }, 190, page) });
+            leaf ({ "mod", "rack", "play" }, 190, juce::jlimit (0, 2, page == 3 ? 2 : page == 0 ? 0 : 1)) });
     }
     ws.appendChild (toolsTree, nullptr);
     juce::ValueTree dockTree ("Dock");
@@ -257,6 +256,13 @@ void HypernovaAudioProcessorEditor::applyLayout (const juce::ValueTree& layout)
     }
     const auto dockTree = layout.getChildWithName ("Dock");
     tree.fromValueTree (dockTree.getNumChildren() > 0 ? dockTree.getChild (0) : juce::ValueTree());
+    // Layouts saved before the rack: the old effects panels become the rack (once).
+    for (auto old : { "fx", "morefx", "chain" })
+        if (tree.contains (old))
+        {
+            if (! tree.contains ("rack")) tree.replace (old, "rack");
+            else tree.remove (old);
+        }
     for (auto& id : tree.allWidgets())
     {
         ensureWidget (id);
@@ -432,8 +438,8 @@ void HypernovaAudioProcessorEditor::activateWidget (const juce::String& id)
     tree.activate (id);
     if (maximisedId.isNotEmpty() && maximisedId != id)
         if (auto* leaf = tree.findLeaf (maximisedId); leaf != nullptr && leaf->widgets.contains (id)) maximisedId = id;
-    static const char* pages[] = { "mod", "fx", "morefx", "play" };
-    for (int i = 0; i < 4; ++i) if (id == pages[i]) processor.uiDeckPage = i;
+    static const char* pages[] = { "mod", "rack", "rack", "play" };
+    for (int i = 0; i < 4; ++i) if (id == pages[i]) { processor.uiDeckPage = i; break; }
     relayoutWidgets (false);
     layoutChanged();
 }

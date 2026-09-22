@@ -137,6 +137,11 @@ class GateAndPan
 {
 public:
     static juce::StringArray patternNames() { return { "Steady", "Off-beat", "Gallop", "Sixteenths", "Triplet feel" }; }
+    static juce::uint16 patternMask (int pattern)
+    {
+        static const juce::uint16 patterns[] = { 0xFFFF, 0xAAAA, 0xCCDD, 0xFFFF, 0xDB6D };
+        return patterns[juce::jlimit (0, 4, pattern)];
+    }
 
     void prepare (double sampleRate) { sr = sampleRate; env = 1.0f; panPhase = 0; }
 

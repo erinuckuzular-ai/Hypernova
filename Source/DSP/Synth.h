@@ -34,15 +34,24 @@ inline juce::StringArray modSrcNames()
 
 // Append only (saved sessions store indices). Everything from DDistFx on is global: the processor applies it to the effects.
 enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DCutoff, DRes, DDrive, DSub, DNoise, DADetune, DBDetune, DPan, DAmp,
-               DLfo1Rate, DLfo2Rate, DDistFx, DOttFx, DChorusFx, DDelayFx, DReverbFx, DShimmerFx, DSmpLevel, NumDest };
+               DLfo1Rate, DLfo2Rate, DDistFx, DOttFx, DChorusFx, DDelayFx, DReverbFx, DShimmerFx, DSmpLevel,
+               // Every effect control (appended): applied to the effects once per block.
+               DFxFltFreq, DFxFltRes, DFxFltSweep, DDelayFb, DDelayTone, DReverbSize, DFlangRate, DFlangDepth, DFlangFb, DFlangMix,
+               DTapeWow, DTapeNoise, DTapeSat, DGateDepth, DGateShape, DPanDepth, DShiftMix, DEqLow, DEqHigh, DWidth, DChorusRate,
+               DDistMix, DLowLevel, DLowDuck, DLowDrive, DEqMid, DEqMidFreq, NumDest };
 constexpr int FirstGlobalDest = DDistFx;
-inline bool isGlobalDest (int d) { return d >= FirstGlobalDest && d < DSmpLevel; } // per-voice destinations after the effects
+constexpr int FirstFxParamDest = DFxFltFreq;
+inline bool isGlobalDest (int d) { return (d >= FirstGlobalDest && d < DSmpLevel) || (d > DSmpLevel && d < NumDest); } // DSmpLevel is per voice
 inline juce::StringArray modDestNames()
 {
     return { "-", "A Position", "B Position", "A Warp", "B Warp", "A Level", "B Level", "Pitch", "Cutoff", "Resonance",
              "Filter Drive", "Sub Level", "Noise Level", "A Detune", "B Detune", "Pan", "Volume",
              "LFO 1 Rate", "LFO 2 Rate", "FX Distortion", "FX OTT", "FX Chorus", "FX Delay", "FX Reverb", "FX Shimmer",
-             "Sample Level" };
+             "Sample Level",
+             "FX Filter Freq", "FX Filter Res", "FX Filter Sweep", "Delay Feedback", "Delay Tone", "Reverb Size", "Flanger Rate",
+             "Flanger Depth", "Flanger Feedback", "Flanger Mix", "Tape Wobble", "Tape Noise", "Tape Saturation", "Gate Depth",
+             "Gate Shape", "Auto Pan", "Pitch Shift Mix", "EQ Low", "EQ High", "Stereo Width", "Chorus Rate", "Distortion Mix",
+             "Low End Level", "Low End Duck", "Low End Warmth", "EQ Mid", "EQ Mid Freq" };
 }
 
 // The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
@@ -52,7 +61,11 @@ inline juce::String modDestParam (int dest)
     static const char* ids[] = { "", "aPos", "bPos", "aWarpAmt", "bWarpAmt", "aLevel", "bLevel", "", "cutoff", "res",
                                  "fltDrive", "subLevel", "noiseLevel", "aDetune", "bDetune", "", "",
                                  "lfo1Rate", "lfo2Rate", "distDrive", "ott", "chorusMix", "dlyMix", "verbMix", "verbShimmer",
-                                 "smpLevel" };
+                                 "smpLevel",
+                                 "fxFltFreq", "fxFltRes", "fxFltDepth", "dlyFb", "dlyTone", "verbSize", "flangRate", "flangDepth", "flangFb",
+                                 "flangMix", "tapeWow", "tapeNoise", "tapeSat", "gateDepth", "gateShape", "panDepth", "shiftMix", "eqLow",
+                                 "eqHigh", "width", "chorusRate", "distMix", "lowLevel", "lowDuck", "lowDrive",
+                                 "eqMidGain", "eqMidFreq" };
     return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
 

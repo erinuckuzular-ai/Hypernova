@@ -65,6 +65,9 @@ struct FxSettings
     float reverbSize = 0.6f, reverbMix = 0, shimmer = 0;
     bool monoBass = true, delayPing = true;
     float delayTone = 0.6f, width = 1.0f, eqLow = 0, eqHigh = 0;
+    // EQ bands beyond the two shelves (defaults keep older sounds exactly as they were).
+    float eqLowFreq = 120.0f, eqHighFreq = 5000.0f, eqMidFreq = 1000.0f, eqMidGain = 0, eqMidQ = 1.0f,
+          eqLowCut = 20.0f, eqHighCut = 20000.0f;
     float bpm = 120.0f;
     // Per-effect bypass (clicking an effect's name in the UI). Default on so older sessions are unchanged.
     bool distOn = true, ottOn = true, chorusOn = true, delayOn = true, reverbOn = true, eqOn = true;
@@ -266,6 +269,57 @@ private:
     float shimmerPhase = 0, shimmerLp = 0, shimmerOut = 0, lfoPhase = 0;
 };
 
+// RBJ cookbook biquad with its coefficients computed in place (no allocation, so it can move every block).
+struct Biquad
+{
+    float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+    float z1[2] {}, z2[2] {};
+    enum Kind { LowShelf, HighShelf, Peak, HighPass, LowPass };
+
+    void set (Kind kind, double sr, double hz, double q, double gainDb)
+    {
+        hz = juce::jlimit (10.0, sr * 0.45, hz);
+        const double A = std::pow (10.0, gainDb / 40.0), w = juce::MathConstants<double>::twoPi * hz / sr;
+        const double cw = std::cos (w), sw = std::sin (w), alpha = sw / (2.0 * juce::jmax (0.05, q));
+        double B0 = 1, B1 = 0, B2 = 0, A0 = 1, A1 = 0, A2 = 0;
+        switch (kind)
+        {
+            case LowShelf:
+            {
+                const double k = 2.0 * std::sqrt (A) * alpha;
+                B0 = A * ((A + 1) - (A - 1) * cw + k); B1 = 2 * A * ((A - 1) - (A + 1) * cw); B2 = A * ((A + 1) - (A - 1) * cw - k);
+                A0 = (A + 1) + (A - 1) * cw + k;        A1 = -2 * ((A - 1) + (A + 1) * cw);    A2 = (A + 1) + (A - 1) * cw - k;
+                break;
+            }
+            case HighShelf:
+            {
+                const double k = 2.0 * std::sqrt (A) * alpha;
+                B0 = A * ((A + 1) + (A - 1) * cw + k); B1 = -2 * A * ((A - 1) + (A + 1) * cw); B2 = A * ((A + 1) + (A - 1) * cw - k);
+                A0 = (A + 1) - (A - 1) * cw + k;        A1 = 2 * ((A - 1) - (A + 1) * cw);      A2 = (A + 1) - (A - 1) * cw - k;
+                break;
+            }
+            case Peak:
+                B0 = 1 + alpha * A; B1 = -2 * cw; B2 = 1 - alpha * A; A0 = 1 + alpha / A; A1 = -2 * cw; A2 = 1 - alpha / A;
+                break;
+            case HighPass:
+                B0 = (1 + cw) / 2; B1 = -(1 + cw); B2 = (1 + cw) / 2; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha;
+                break;
+            case LowPass:
+                B0 = (1 - cw) / 2; B1 = 1 - cw; B2 = (1 - cw) / 2; A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha;
+                break;
+        }
+        b0 = (float) (B0 / A0); b1 = (float) (B1 / A0); b2 = (float) (B2 / A0); a1 = (float) (A1 / A0); a2 = (float) (A2 / A0);
+    }
+    inline float tick (int c, float x)
+    {
+        const float y = b0 * x + z1[c];
+        z1[c] = b1 * x - a1 * y + z2[c];
+        z2[c] = b2 * x - a2 * y;
+        return y;
+    }
+    void reset() { z1[0] = z1[1] = z2[0] = z2[1] = 0; }
+};
+
 class Effects
 {
 public:
@@ -314,9 +368,8 @@ public:
         shifter.prepare (sampleRate);
 
         scratch.setSize (2, blockSize);
-        for (auto& f : eqLowF) f.reset();
-        for (auto& f : eqHighF) f.reset();
-        lastEqLow = lastEqHigh = 1000.0f;
+        for (auto& f : eqBands) f.reset();
+        eqKey[0] = -99;
         dcX[0] = dcX[1] = dcY[0] = dcY[1] = 0;
         sideHp[0] = sideHp[1] = 0;
         crushHold[0] = crushHold[1] = 0;
@@ -487,7 +540,8 @@ private:
                 if (s.reverbOn && s.reverbMix > 0.001f) reverb.process (L, R, n, s.reverbSize, s.reverbMix, s.shimmer, s.reverbMode);
                 break;
             case FxEq:
-                if (s.eqOn && (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f)) eq (L, R, n, s);
+                if (s.eqOn && (std::abs (s.eqLow) > 0.05f || std::abs (s.eqHigh) > 0.05f || std::abs (s.eqMidGain) > 0.05f
+                               || s.eqLowCut > 21.0f || s.eqHighCut < 19900.0f)) eq (L, R, n, s);
                 break;
             default: break;
         }
@@ -517,8 +571,8 @@ private:
     float dcX[2] {}, dcY[2] {};
     float sideHp[2] {};
     float crushHold[2] {};
-    juce::dsp::IIR::Filter<float> eqLowF[2], eqHighF[2];
-    float lastEqLow = 1000.0f, lastEqHigh = 1000.0f;
+    Biquad eqBands[5];
+    float eqKey[7] { -99, -99, -99, -99, -99, -99, -99 }, eqKeyCuts[2] { -1, -1 };
     int crushCount = 0;
 
     static inline float shape (int type, float x, float g)
@@ -724,24 +778,27 @@ private:
     }
 
     // Low shelf at 120 Hz and high shelf at 5 kHz, +-12 dB.
+    // Five bands: low cut, low shelf, a bell, high shelf, high cut. Only the bands doing something run.
     void eq (float* L, float* R, int n, const FxSettings& s)
     {
-        if (s.eqLow != lastEqLow)
+        const float key[7] = { s.eqLow, s.eqHigh, s.eqLowFreq, s.eqHighFreq, s.eqMidFreq, s.eqMidGain, s.eqMidQ };
+        if (! std::equal (std::begin (key), std::end (key), std::begin (eqKey)) || s.eqLowCut != eqKeyCuts[0] || s.eqHighCut != eqKeyCuts[1])
         {
-            auto c = juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, 120.0f, 0.7f, juce::Decibels::decibelsToGain (s.eqLow));
-            for (auto& f : eqLowF) f.coefficients = c;
-            lastEqLow = s.eqLow;
+            eqBands[0].set (Biquad::LowShelf, sr, s.eqLowFreq, 0.7, s.eqLow);
+            eqBands[1].set (Biquad::Peak, sr, s.eqMidFreq, s.eqMidQ, s.eqMidGain);
+            eqBands[2].set (Biquad::HighShelf, sr, s.eqHighFreq, 0.7, s.eqHigh);
+            eqBands[3].set (Biquad::HighPass, sr, s.eqLowCut, 0.707, 0);
+            eqBands[4].set (Biquad::LowPass, sr, s.eqHighCut, 0.707, 0);
+            std::copy (std::begin (key), std::end (key), std::begin (eqKey));
+            eqKeyCuts[0] = s.eqLowCut; eqKeyCuts[1] = s.eqHighCut;
         }
-        if (s.eqHigh != lastEqHigh)
+        const bool on[5] = { std::abs (s.eqLow) > 0.05f, std::abs (s.eqMidGain) > 0.05f, std::abs (s.eqHigh) > 0.05f,
+                             s.eqLowCut > 21.0f, s.eqHighCut < 19900.0f };
+        for (int b = 0; b < 5; ++b)
         {
-            auto c = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 5000.0f, 0.7f, juce::Decibels::decibelsToGain (s.eqHigh));
-            for (auto& f : eqHighF) f.coefficients = c;
-            lastEqHigh = s.eqHigh;
-        }
-        for (int i = 0; i < n; ++i)
-        {
-            L[i] = eqHighF[0].processSample (eqLowF[0].processSample (L[i]));
-            R[i] = eqHighF[1].processSample (eqLowF[1].processSample (R[i]));
+            if (! on[b]) { eqBands[b].reset(); continue; }
+            auto& f = eqBands[b];
+            for (int i = 0; i < n; ++i) { L[i] = f.tick (0, L[i]); R[i] = f.tick (1, R[i]); }
         }
     }
 

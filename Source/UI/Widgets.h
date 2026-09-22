@@ -313,7 +313,7 @@ public:
         const int strip = tabStripHeight();
         const float fit = fitHeight ? (float) (r.getHeight() - strip) / (float) designH
                                     : juce::jmin ((float) r.getWidth() / (float) designW, (float) (r.getHeight() - strip) / (float) designH);
-        scaleNow = juce::jlimit (fitHeight ? 0.6f : 0.3f, maxScale, fit);
+        scaleNow = juce::jlimit (fitHeight ? 0.6f : 0.3f, fitHeight ? 1.0f : maxScale, fit); // strips grow in size, not zoom
         // Floor, not ceil: scaled back up the content must never reach past the panel's edge.
         const int w = (int) std::floor ((float) r.getWidth() / scaleNow);
         const int h = (int) std::floor ((float) (r.getHeight() - strip) / scaleNow);

@@ -146,7 +146,9 @@ public:
     std::atomic<int> sampleVersion { 0 };
     std::atomic<float> shownSample { -1.0f };
     std::atomic<float> shownLowRms { 0 }, shownHighRms { 0 }; // Low End: energy below / above the crossover
-    std::atomic<bool> speakerCheck { false };                  // phone-speaker monitoring, not part of the sound
+    std::atomic<bool> speakerCheck { false };
+    std::atomic<double> shownBeats { 0 };                   // song position in beats (free-running when stopped), for the displays
+    std::atomic<float> shownBpm { 120 };                  // phone-speaker monitoring, not part of the sound
 
     //==========================================================================
     // Effects rack order. Stored as a property of the state ("fxOrder"), so it's saved with sessions and
@@ -158,6 +160,13 @@ public:
     bool saveChain (const juce::String& name);
     bool loadChain (const juce::File&);
     static bool isFxParam (const juce::String& id);
+    // The effects rack as shown: which effects are in it (in chain order). Effects that are doing something
+    // are always in it; the rest only when added. Removing one switches it off.
+    static const char* fxOnParam (int fxId);
+    bool fxAudible (int fxId) const;
+    std::vector<int> rackEffects() const;          // in chain order
+    void addToRack (int fxId);                     // switches it on (with a sensible amount if it was silent)
+    void removeFromRack (int fxId);                // switches it off
     std::atomic<int> parameterChanges { 0 }; // bumped on any parameter change, so the editor redraws only when needed
     int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
@@ -251,6 +260,8 @@ private:
     bool hostPlaying = false;
     std::unordered_map<std::string, std::shared_ptr<const ab::Wavetable>> tableCache;
     std::atomic<juce::uint64> fxOrderPacked { 0 };
+    double freeBeats = 0;
+    std::array<juce::RangedAudioParameter*, ab::NumDest> fxModParam {}; // the control each effect destination moves
     juce::dsp::IIR::Filter<float> speakerHp[2], speakerHp2[2], speakerBump[2], speakerLp[2];
     void syncFxOrder();
     struct OrderListener : juce::ValueTree::Listener

@@ -135,7 +135,7 @@ ButtonType& HypernovaAudioProcessorEditor::toggle (std::unique_ptr<ButtonType> b
 //==============================================================================
 HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p),
-      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), fxChain (p), lowEndView (p), filterView (p),
+      viewA (p, 0, Palette::oscA), viewB (p, 1, Palette::oscB), space (p), samplerView (p), rack (p), lowEndView (p), filterView (p),
       ampView (p, "amp", Palette::env, true), modView (p, "mod", Palette::lfo, false),
       lfoView1 (p, 0), lfoView2 (p, 1),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
@@ -490,31 +490,27 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (lowEndView, Spread::Stretch);
     }
 
-    // FX chain: the rack order
+    // Effects rack: every effect a module with its own display and controls, in chain order.
     {
-        const juce::Rectangle<int> design { 0, 0, 1232, 150 };
-        auto& w = makeWidget ("chain", "chain", "FX CHAIN", Palette::fx, design);
+        const juce::Rectangle<int> design { 0, 0, 1232, 250 };
+        auto& w = makeWidget ("rack", "rack", "EFFECTS", Palette::fx, design);
         auto* W = &w.content;
+        W->addAndMakeVisible (rackAddButton);
+        rackAddButton.setTooltip ("Add an effect to the end of the chain");
+        rackAddButton.onClick = [this] { showAddEffectMenu (&rackAddButton, {}); };
         W->addAndMakeVisible (chainButton);
-        chainButton.setBounds (design.getWidth() - 124, 11, 110, 24);
         chainButton.setTooltip ("Save this chain (the order and every effect setting), load a saved one, or reset the order");
         chainButton.onClick = [this] { showChainMenu (&chainButton, {}); };
-        W->addAndMakeVisible (fxChain);
-        fxChain.setBounds (12, 44, design.getWidth() - 24, design.getHeight() - 52);
-        fxChain.onMenu = [this] (juce::Point<int> pos) { showChainMenu (nullptr, pos); };
-        fxChain.onShowEffect = [this] (int id)
-        {
-            const bool first = id == ab::FxDist || id == ab::FxOtt || id == ab::FxChorus || id == ab::FxDelay || id == ab::FxReverb || id == ab::FxEq;
-            const juce::String page = first ? "fx" : "morefx";
-            if (layoutTree().contains (page)) activateWidget (page); else addWidgetType (page);
-            showMessage (ab::fxRackNames()[id] + " is on the " + (first ? juce::String ("Effects") : juce::String ("More FX")) + " panel");
-        };
-        // The strip keeps its height and gets as wide as its place; the chips scroll when there isn't room.
+        W->addAndMakeVisible (rack);
+        rack.onAdd = [this] (juce::Point<int> pos) { showAddEffectMenu (nullptr, pos); };
+        buildRackModules();
+        // The rack keeps its height and gets as wide as its place; the modules scroll when there isn't room.
         w.fitHeight = true;
         w.onLayout = [this] (int width, int height)
         {
-            chainButton.setBounds (width - 124, 11, 110, 24);
-            fxChain.setBounds (12, 44, width - 24, height - 52);
+            chainButton.setBounds (width - 110, 11, 96, 24);
+            rackAddButton.setBounds (width - 214, 11, 96, 24);
+            rack.setBounds (12, 42, width - 24, height - 46);
         };
     }
 
@@ -548,10 +544,12 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     }
 
     // The four deck pages are widgets too, stacked as tabs where the deck used to be.
-    const char* pageIds[] = { "mod", "fx", "morefx", "play" };
-    const char* pageTitles[] = { "MODULATION", "EFFECTS", "MORE FX", "PLAY" };
+    // The modulation and play pages are widgets too (the effects pages became the rack).
+    const char* pageIds[] = { "mod", "", "", "play" };
+    const char* pageTitles[] = { "MODULATION", "", "", "PLAY" };
     for (int i = 0; i < 4; ++i)
     {
+        if (juce::String (pageIds[i]).isEmpty()) continue;
         auto& w = makeWidget (pageIds[i], pageIds[i], pageTitles[i], Palette::mod, deckPanel, 14, 44);
         w.headerFreeWidth = deckPanel.getWidth() - 40;
         w.content.addAndMakeVisible (pages[(size_t) i]);
@@ -564,12 +562,11 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         };
     }
     layoutModPage();
-    layoutFxPage();
-    layoutMoreFxPage();
     layoutPlayPage();
     // Pages spread their groups out when there's room; the LFO views and the matrix grow.
     for (int i = 0; i < 4; ++i)
     {
+        if (juce::String (pageIds[i]).isEmpty()) continue;
         auto& pg = pages[(size_t) i];
         pg.spread.capture (pg, deckContent.getWidth(), deckContent.getHeight(), 0);
         if (auto* w = findWidget (pageIds[i]))
@@ -730,7 +727,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
     tickTools (sounding);
     if (samplerView.isVisible()) samplerView.refresh();
-    if (fxChain.isVisible()) fxChain.refresh();
+    if (rack.isVisible()) { rack.refresh(); rack.tick (sounding); }
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
@@ -982,7 +979,7 @@ void HypernovaAudioProcessorEditor::DeckPage::paint (juce::Graphics& g)
 
 void HypernovaAudioProcessorEditor::showDeckPage (int page)
 {
-    static const char* ids[] = { "mod", "fx", "morefx", "play" };
+    static const char* ids[] = { "mod", "rack", "rack", "play" };
     processor.uiDeckPage = juce::jlimit (0, 3, page);
     const juce::String id = ids[processor.uiDeckPage];
     if (tree.contains (id)) activateWidget (id);
@@ -1023,121 +1020,6 @@ void HypernovaAudioProcessorEditor::layoutModPage()
         const int col = i / 4, row = i % 4;
         modRows.back()->setBounds (mx + col * 308, 4 + row * 32, 296, 26);
     }
-}
-
-void HypernovaAudioProcessorEditor::layoutFxPage()
-{
-    auto* pg = &pages[1];
-    constexpr int cell = 64, knobY = 36, gap = 22;
-    int x = 12;
-    // Each effect's name is its bypass switch.
-    auto group = [&] (const juce::String& title, int cells, const char* onParam = nullptr) -> int
-    {
-        const int start = x;
-        if (onParam != nullptr)
-            toggle (std::make_unique<ab::ui::SectionToggle> (title, Palette::fx), onParam, { x, 4, juce::jmin (cells * cell, 92), 24 },
-                    "Click to switch " + title.toLowerCase() + " off and on", pg);
-        else
-            pg->captions.push_back ({ { x, 4, cells * cell, 24 }, title, Colours::textDim, false });
-        x += cells * cell + gap;
-        pg->captions.push_back ({ { x - gap / 2, 6, 1, 122 }, {}, {}, true });
-        return start;
-    };
-    auto fxKnob = [&] (const char* id, const char* label, int gx, int i) { knob (id, label, Palette::fx, { gx + i * cell, knobY, cell, 72 }, 42, pg); };
-
-    int g = group ("DIST", 2, "distOn");
-    combo ("distType", distNames(), { g + 56, 4, 2 * cell - 56, 24 }, pg);
-    fxKnob ("distDrive", "DRIVE", g, 0);
-    fxKnob ("distMix", "MIX", g, 1);
-
-    g = group ("OTT", 1, "ottOn");
-    fxKnob ("ott", "SQUASH", g, 0);
-
-    g = group ("CHORUS", 2, "chorusOn");
-    fxKnob ("chorusRate", "RATE", g, 0);
-    fxKnob ("chorusMix", "MIX", g, 1);
-
-    g = group ("DELAY", 3, "dlyOn");
-    combo ("dlyTime", delayTimeNames(), { g + 52, 4, 78, 24 }, pg);
-    toggle (std::make_unique<PillToggle> ("PING", Palette::fx), "dlyPing", { g + 134, 5, 3 * cell - 134, 22 }, "Ping-pong: repeats bounce left and right", pg);
-    fxKnob ("dlyFb", "FEEDBACK", g, 0);
-    fxKnob ("dlyTone", "TONE", g, 1);
-    fxKnob ("dlyMix", "MIX", g, 2);
-
-    g = group ("SPACE", 3, "verbOn");
-    fxKnob ("verbSize", "SIZE", g, 0);
-    fxKnob ("verbShimmer", "SHIMMER", g, 1);
-    fxKnob ("verbMix", "MIX", g, 2);
-
-    g = group ("EQ", 2, "eqOn");
-    fxKnob ("eqLow", "LOW", g, 0);
-    fxKnob ("eqHigh", "HIGH", g, 1);
-
-    g = group ("OUTPUT", 3);
-    toggle (std::make_unique<PillToggle> ("MONO BASS", Palette::fx), "monoBass", { g + cell + 6, knobY + 12, 2 * cell - 12, 24 },
-            "Keeps everything under 120 Hz in mono so the bass hits hard on club systems", pg);
-    fxKnob ("width", "WIDTH", g, 0);
-    pg->captions.pop_back(); // no divider after the last group
-}
-
-// Second effects page: movement, character and pitch. Same rules as the first: the name is the on/off switch.
-void HypernovaAudioProcessorEditor::layoutMoreFxPage()
-{
-    auto* pg = &pages[2];
-    constexpr int cell = 58, knobY = 36, gap = 16;
-    int x = 12;
-    auto group = [&] (const juce::String& title, int cells, const char* onParam) -> int
-    {
-        const int start = x;
-        toggle (std::make_unique<ab::ui::SectionToggle> (title, Palette::fx), onParam, { x, 4, juce::jmin (cells * cell, 104), 24 },
-                "Click to switch " + title.toLowerCase() + " off and on", pg);
-        x += cells * cell + gap;
-        pg->captions.push_back ({ { x - gap / 2, 6, 1, 122 }, {}, {}, true });
-        return start;
-    };
-    auto fxKnob = [&] (const char* id, const char* label, int gx, int i) { knob (id, label, Palette::fx, { gx + i * cell, knobY, cell, 72 }, 42, pg); };
-
-    int g = group ("FLANGER", 4, "flangOn");
-    fxKnob ("flangRate", "RATE", g, 0);
-    fxKnob ("flangDepth", "DEPTH", g, 1);
-    fxKnob ("flangFb", "FEEDBACK", g, 2);
-    fxKnob ("flangMix", "MIX", g, 3);
-
-    g = group ("TAPE", 3, "tapeOn");
-    fxKnob ("tapeWow", "WOBBLE", g, 0);
-    fxKnob ("tapeNoise", "NOISE", g, 1);
-    fxKnob ("tapeSat", "SATURATE", g, 2);
-
-    g = group ("GATE", 4, "gateOn");
-    // Pattern in the header; the two rate boxes sit under the knobs they belong to.
-    combo ("gatePattern", ab::dsp::GateAndPan::patternNames(), { g + 104, 4, 4 * cell - 104, 24 }, pg);
-    fxKnob ("gateDepth", "GATE", g, 0);
-    fxKnob ("gateShape", "SHAPE", g, 1);
-    fxKnob ("panDepth", "AUTO PAN", g, 2);
-    combo ("gateRate", ab::dsp::syncRateNames(), { g + 4, knobY + 76, 2 * cell - 8, 22 }, pg).setTooltip ("Gate rate");
-    combo ("panRate", ab::dsp::syncRateNames(), { g + 2 * cell + 2, knobY + 76, cell - 4, 22 }, pg).setTooltip ("Auto pan rate");
-
-    g = group ("FILTER", 4, "fxFltOn");
-    combo ("fxFltType", ab::dsp::FxFilter::typeNames(), { g + 104, 4, 4 * cell - 104, 24 }, pg);
-    fxKnob ("fxFltFreq", "FREQ", g, 0);
-    fxKnob ("fxFltRes", "RES", g, 1);
-    fxKnob ("fxFltDepth", "SWEEP", g, 2);
-    combo ("fxFltRate", ab::dsp::syncRateNames(), { g + 2 * cell + 2, knobY + 76, cell - 4, 22 }, pg).setTooltip ("Sweep rate");
-
-    g = group ("PITCH", 2, "shiftOn");
-    fxKnob ("shiftSemis", "SHIFT", g, 0);
-    fxKnob ("shiftMix", "MIX", g, 1);
-
-    // Styles for the effects on the first page, kept here so each page stays readable.
-    pg->captions.push_back ({ { x, 4, 160, 24 }, "STYLES", Colours::textDim, false });
-    auto styleCombo = [&] (const char* id, const juce::StringArray& items, const char* label, int row)
-    {
-        pg->captions.push_back ({ { x, 34 + row * 32, 50, 22 }, label, Colours::textFaint, false });
-        combo (id, items, { x + 50, 32 + row * 32, 104, 24 }, pg);
-    };
-    styleCombo ("chorusMode", juce::StringArray { "Classic", "Ensemble", "Dimension" }, "CHORUS", 0);
-    styleCombo ("dlyStyle", juce::StringArray { "Digital", "Reverse", "Granular" }, "DELAY", 1);
-    styleCombo ("verbMode", juce::StringArray { "Space", "Plate", "Spring", "Room" }, "SPACE", 2);
 }
 
 void HypernovaAudioProcessorEditor::layoutPlayPage()
@@ -1591,6 +1473,80 @@ void HypernovaAudioProcessorEditor::showSampleMenu()
     {
         if (r == 1) chooseSample();
         else if (r == 2) { processor.clearSample(); processor.setParam ("smpOn", 0.0f); showMessage ("Sample removed"); }
+    });
+}
+
+// Each effect module's own controls, laid out on its faceplate under the display.
+void HypernovaAudioProcessorEditor::buildRackModules()
+{
+    const auto c = Palette::fx;
+    constexpr int ky = 90, by = 162;
+    auto kn = [&] (int fx, const char* id, const char* label, int x) { knob (id, label, c, { x, ky, 58, 68 }, 38, fx < 0 ? &rack.output() : &rack.module (fx)); };
+    auto cb = [&] (int fx, const char* id, const juce::StringArray& items, juce::Rectangle<int> r) { combo (id, items, r, &rack.module (fx)); };
+    for (int fx = 0; fx < ab::NumFx; ++fx)
+        toggle (std::make_unique<PowerLed> (c), HypernovaAudioProcessor::fxOnParam (fx), { 8, 6, 22, 22 },
+                "Switch " + ab::fxRackNames()[fx].toLowerCase() + " off and on", &rack.module (fx));
+
+    kn (ab::FxDist, "distDrive", "DRIVE", 30);   kn (ab::FxDist, "distMix", "MIX", 112);
+    cb (ab::FxDist, "distType", distNames(), { 10, by, 180, 24 });
+    kn (ab::FxTape, "tapeWow", "WOBBLE", 10);    kn (ab::FxTape, "tapeNoise", "NOISE", 71);   kn (ab::FxTape, "tapeSat", "SATURATE", 132);
+    kn (ab::FxOtt, "ott", "SQUASH", 36);
+    kn (ab::FxPitch, "shiftSemis", "SHIFT", 14); kn (ab::FxPitch, "shiftMix", "MIX", 78);
+    kn (ab::FxChorus, "chorusRate", "RATE", 30); kn (ab::FxChorus, "chorusMix", "MIX", 102);
+    cb (ab::FxChorus, "chorusMode", juce::StringArray { "Classic", "Ensemble", "Dimension" }, { 10, by, 170, 24 });
+    kn (ab::FxFlanger, "flangRate", "RATE", 8);  kn (ab::FxFlanger, "flangDepth", "DEPTH", 67);
+    kn (ab::FxFlanger, "flangFb", "FEEDBACK", 126); kn (ab::FxFlanger, "flangMix", "MIX", 185);
+    kn (ab::FxFilter, "fxFltFreq", "FREQ", 20);  kn (ab::FxFilter, "fxFltRes", "RES", 96);     kn (ab::FxFilter, "fxFltDepth", "SWEEP", 172);
+    cb (ab::FxFilter, "fxFltType", ab::dsp::FxFilter::typeNames(), { 10, by, 140, 24 });
+    cb (ab::FxFilter, "fxFltRate", ab::dsp::syncRateNames(), { 156, by, 84, 24 });
+    kn (ab::FxGate, "gateDepth", "GATE", 20);    kn (ab::FxGate, "gateShape", "SHAPE", 96);   kn (ab::FxGate, "panDepth", "AUTO PAN", 172);
+    cb (ab::FxGate, "gatePattern", ab::dsp::GateAndPan::patternNames(), { 10, by, 112, 24 });
+    cb (ab::FxGate, "gateRate", ab::dsp::syncRateNames(), { 126, by, 56, 24 });
+    cb (ab::FxGate, "panRate", ab::dsp::syncRateNames(), { 186, by, 54, 24 });
+    kn (ab::FxDelay, "dlyFb", "FEEDBACK", 20);   kn (ab::FxDelay, "dlyTone", "TONE", 96);     kn (ab::FxDelay, "dlyMix", "MIX", 172);
+    cb (ab::FxDelay, "dlyTime", delayTimeNames(), { 10, by, 72, 24 });
+    cb (ab::FxDelay, "dlyStyle", juce::StringArray { "Digital", "Reverse", "Granular" }, { 86, by, 96, 24 });
+    toggle (std::make_unique<PillToggle> ("PING", c), "dlyPing", { 186, by + 1, 54, 22 }, "Ping-pong: repeats bounce left and right", &rack.module (ab::FxDelay));
+    kn (ab::FxReverb, "verbSize", "SIZE", 12);   kn (ab::FxReverb, "verbShimmer", "SHIMMER", 76); kn (ab::FxReverb, "verbMix", "MIX", 140);
+    cb (ab::FxReverb, "verbMode", juce::StringArray { "Space", "Plate", "Spring", "Room" }, { 10, by, 190, 24 });
+    kn (ab::FxEq, "eqLow", "LOW", 10);           kn (ab::FxEq, "eqMidGain", "MID", 68);      kn (ab::FxEq, "eqMidFreq", "FREQ", 126);
+    kn (ab::FxEq, "eqMidQ", "WIDTH", 184);       kn (ab::FxEq, "eqHigh", "HIGH", 242);
+    kn (-1, "width", "WIDTH", 46);
+    toggle (std::make_unique<PillToggle> ("MONO BASS", c), "monoBass", { 10, by + 1, 130, 22 },
+            "Keeps everything under 120 Hz in mono so the bass hits hard on club systems", &rack.output());
+}
+
+void HypernovaAudioProcessorEditor::showAddEffectMenu (juce::Component* target, juce::Point<int> screenPos)
+{
+    juce::PopupMenu m;
+    m.setLookAndFeel (&lookAndFeel);
+    m.addSectionHeader ("ADD AN EFFECT");
+    const auto inRack = processor.rackEffects();
+    static const char* blurbs[] = { "warmth to grit", "wobble, hiss, saturation", "multiband squash", "shift up or down",
+                                    "width and movement", "jet swooshes", "sweeping filter", "trance gate and auto pan",
+                                    "echoes", "reverb", "low and high shelves" };
+    for (int fx = 0; fx < ab::NumFx; ++fx)
+    {
+        const bool there = std::find (inRack.begin(), inRack.end(), fx) != inRack.end();
+        m.addItem (100 + fx, ab::fxRackNames()[fx] + "   " + blurbs[fx], ! there, there);
+    }
+    auto options = juce::PopupMenu::Options();
+    options = target != nullptr ? options.withTargetComponent (target) : options.withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 });
+    m.showMenuAsync (options, [this] (int r)
+    {
+        if (r < 100 || r >= 100 + ab::NumFx) return;
+        const int fx = r - 100;
+        // A new effect goes at the end of the chain (before the output).
+        auto order = processor.getFxOrder();
+        std::vector<juce::uint8> v (order.begin(), order.end());
+        v.erase (std::find (v.begin(), v.end(), (juce::uint8) fx));
+        v.push_back ((juce::uint8) fx);
+        std::copy (v.begin(), v.end(), order.begin());
+        processor.setFxOrder (order);
+        processor.addToRack (fx);
+        rack.refresh (true);
+        rack.reveal (fx);
+        showMessage (ab::fxRackNames()[fx] + " added at the end of the chain. Drag its name to move it.");
     });
 }
 

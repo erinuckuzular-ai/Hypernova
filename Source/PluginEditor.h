@@ -8,7 +8,7 @@
 #include "UI/Updater.h"
 #include "UI/ToolWidgets.h"
 #include "UI/SamplerView.h"
-#include "UI/FxChain.h"
+#include "UI/FxRack.h"
 #include "UI/LowEndView.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -150,8 +150,6 @@ private:
     void dockActivate (const juce::String& widgetId) override;
 
     void layoutModPage();
-    void layoutFxPage();
-    void layoutMoreFxPage();
     void layoutPlayPage();
     void showDeckPage (int page);
 
@@ -187,7 +185,10 @@ private:
     ab::ui::WavetableView viewA, viewB;
     ab::ui::SoundSpace space;
     ab::ui::SamplerView samplerView;
-    ab::ui::FxChainView fxChain;
+    ab::ui::EffectsRack rack;
+    juce::TextButton rackAddButton { "+ ADD" };
+    void buildRackModules();
+    void showAddEffectMenu (juce::Component* target, juce::Point<int> screenPos);
     ab::ui::LowEndView lowEndView;
     juce::TextButton phoneButton { "PHONE CHECK" };
     juce::TextButton chainButton { "CHAINS" };

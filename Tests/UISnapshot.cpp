@@ -23,7 +23,13 @@ int main (int argc, char** argv)
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         editor->loadWorkspace (workspace, false);
-        if (workspace == "Effects") { proc.setParam ("lowOn", 1.0f); proc.setParam ("lowDuck", 0.5f); proc.setParam ("distMix", 0.6f); }
+        if (workspace == "Effects")
+        {
+            proc.setParam ("lowOn", 1.0f); proc.setParam ("lowDuck", 0.5f); proc.setParam ("distMix", 0.6f);
+            for (int fx : { ab::FxFilter, ab::FxGate, ab::FxDelay, ab::FxReverb }) proc.addToRack (fx);
+            proc.setParam ("fxFltDepth", 0.5f); proc.setParam ("eqMidGain", 5.0f); proc.setParam ("eqMidFreq", 900.0f); proc.setParam ("eqLowCut", 60.0f);
+            proc.setParam ("dlyFb", 0.55f);
+        }
 
         // Hold a note while the visualisers run so the 3D views have something to show.
         juce::MidiBuffer midi;
@@ -86,7 +92,7 @@ int main (int argc, char** argv)
         std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         ed->loadWorkspace ("Sound Design", false);
-        const auto stateBefore = proc.apvts.copyState().toXmlString();
+        auto stateBefore = proc.apvts.copyState().toXmlString();
         const auto area = ed->layoutArea();
 
         // Structural changes slide into place; let them land before measuring.
@@ -111,8 +117,8 @@ int main (int argc, char** argv)
         auto* pitch = ed->findWidget ("pitch");
         check (oscA != nullptr && std::abs (oscA->getX() - 24) <= 1 && std::abs (oscA->getWidth() - 400) <= 8 && std::abs (oscA->getHeight() - 378) <= 8,
                "Sound Design is the classic layout (" + oscA->getBounds().toString() + ")");
-        check (ed->findWidget ("mod")->isVisible() && ! ed->findWidget ("fx")->isVisible()
-               && ed->layoutTree().findLeaf ("mod") == ed->layoutTree().findLeaf ("fx"), "deck pages share one place as tabs");
+        check (ed->findWidget ("mod")->isVisible() && ! ed->findWidget ("rack")->isVisible()
+               && ed->layoutTree().findLeaf ("mod") == ed->layoutTree().findLeaf ("rack"), "deck pages share one place as tabs");
         tidy ("default");
 
         // Normal mode: the overlay only takes the gutters, never a control.
@@ -247,38 +253,45 @@ int main (int argc, char** argv)
                "the Analysis workspace brings its scope and meter");
         tidy ("Analysis");
         ed->loadWorkspace ("Effects", false);
-        check (ed->findWidget ("fx")->isVisible() && ed->findWidget ("fx")->getWidth() == area.getWidth() && ! ed->findWidget ("oscA")->isVisible(), "Effects workspace");
+        check (ed->findWidget ("rack")->isVisible() && ed->findWidget ("rack")->getWidth() == area.getWidth() && ! ed->findWidget ("oscA")->isVisible(), "Effects workspace");
         tidy ("Effects");
 
-        // The FX chain: drag the first effect three places along and the processor's order follows.
+        // The effects rack: add effects, drag one along the chain by its name, remove one, and it scrolls when squeezed.
         {
-            FxChainView* chain = nullptr;
-            for (auto* c : ed->findWidget ("chain")->content.getChildren()) if (auto* v = dynamic_cast<FxChainView*> (c)) chain = v;
-            check (chain != nullptr && chain->isVisible(), "the Effects workspace shows the FX chain");
-            auto src = juce::Desktop::getInstance().getMainMouseSource();
-            const float slotW = ((float) chain->getWidth() - 108.0f) / (float) ab::NumFx;
-            const juce::Point<float> from (54.0f + slotW * 0.5f, (float) chain->getHeight() * 0.4f);
-            const auto to = from + juce::Point<float> (slotW * 3.0f, 0.0f);
-            auto ev = [&] (juce::Point<float> p) { return juce::MouseEvent (src, p, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, chain, chain,
-                                                                           juce::Time::getCurrentTime(), from, juce::Time::getCurrentTime(), 1, false); };
-            chain->mouseDown (ev (from));
-            chain->mouseDrag (ev (from + juce::Point<float> (10.0f, 0.0f)));
-            chain->mouseDrag (ev (to));
-            chain->mouseUp (ev (to));
-            const auto order = proc.getFxOrder();
-            check (order[3] == ab::FxDist && order[0] == ab::FxTape, "dragging a chip reorders the effects (" + ab::fxOrderText (order) + ")");
-            proc.undoManager.undo();
-            check (proc.getFxOrder() == ab::defaultFxOrder(), "and undo puts it back");
-
-            // Squeezed beside another panel, the chain keeps its chips a usable size and scrolls instead.
-            ed->moveWidget ("chain", "lowend", dock::Zone::Right);
+            ed->loadWorkspace ("Effects", false);
             settle();
-            check (chain->isScrollable() && chain->chipWidth() >= 95.0f, "a narrow chain scrolls instead of shrinking its chips (chip "
-                   + juce::String (chain->chipWidth(), 0) + ", widget " + juce::String (ed->findWidget ("chain")->getWidth()) + " wide)");
-            chain->mouseWheelMove (ev ({ 200.0f, 30.0f }), juce::MouseWheelDetails { -0.5f, 0.0f, false, false, false });
-            check (chain->scrollPosition() > 50.0f, "a sideways swipe scrolls it (" + juce::String (chain->scrollPosition(), 0) + ")");
+            EffectsRack* rackView = nullptr;
+            for (auto* c : ed->findWidget ("rack")->content.getChildren()) if (auto* v = dynamic_cast<EffectsRack*> (c)) rackView = v;
+            check (rackView != nullptr && rackView->isVisible(), "the Effects workspace shows the rack");
+            for (int fx : { ab::FxDist, ab::FxDelay, ab::FxReverb }) proc.addToRack (fx);
+            rackView->refresh (true);
+            check (rackView->shownCount() == 3 && proc.fxAudible (ab::FxDelay), "added effects appear as modules, and are heard");
+            check (! rackView->isScrollable(), "three modules fit without scrolling (" + rackView->metrics() + ")");
+            auto& dist = rackView->module (ab::FxDist);
+            auto src = juce::Desktop::getInstance().getMainMouseSource();
+            auto ev = [&] (juce::Point<float> p) { return juce::MouseEvent (src, p, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &dist, &dist,
+                                                                           juce::Time::getCurrentTime(), { 60.0f, 12.0f }, juce::Time::getCurrentTime(), 1, false); };
+            // Drag DIST by its name to the far end: it should land after DELAY and SPACE.
+            dist.mouseDown (ev ({ 60.0f, 12.0f }));
+            for (float dx = 20.0f; dx <= 700.0f; dx += 40.0f) dist.mouseDrag (ev ({ 60.0f + dx, 12.0f }));
+            dist.mouseUp (ev ({ 760.0f, 12.0f }));
+            const auto order = proc.getFxOrder();
+            auto pos = [&] (int fx) { return (int) (std::find (order.begin(), order.end(), (juce::uint8) fx) - order.begin()); };
+            check (pos (ab::FxDist) > pos (ab::FxDelay) && pos (ab::FxDist) > pos (ab::FxReverb), "dragging a module moves that effect along the chain (" + ab::fxOrderText (order) + ")");
+            proc.undoManager.undo();
+            check (pos (ab::FxDist) != -1 && proc.getFxOrder() != order, "and undo puts it back");
+            proc.removeFromRack (ab::FxReverb);
+            rackView->refresh (true);
+            check (rackView->shownCount() == 2 && ! proc.fxAudible (ab::FxReverb), "removing a module switches the effect off");
+            // Squeezed next to another panel, the rack scrolls rather than shrinking its modules.
+            for (int fx : { ab::FxTape, ab::FxChorus, ab::FxFlanger, ab::FxGate }) proc.addToRack (fx);
+            rackView->refresh (true);
+            ed->moveWidget ("rack", "lowend", dock::Zone::Right);
+            settle();
+            check (rackView->isScrollable(), "a narrow rack scrolls (" + juce::String (rackView->getWidth()) + " px for " + juce::String (rackView->shownCount()) + " modules)");
             ed->undoLayout();
             settle();
+            stateBefore = proc.apvts.copyState().toXmlString(); // the rack test changed the sound on purpose
         }
         ed->loadWorkspace ("Sound Design", false);
         check (ed->captureLayout().toXmlString() == now, "Sound Design remembers its edits");

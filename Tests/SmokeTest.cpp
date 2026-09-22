@@ -1,6 +1,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "../Source/PluginProcessor.h"
 #include <set>
+#include <complex>
 
 // Renders every factory preset with a short bass phrase (with a legato slide), checks for NaNs,
 // silence and clipping, times the render and writes a WAV per preset: SmokeTest <outDir>
@@ -463,6 +464,31 @@ int main (int argc, char** argv)
     }
 
     // SmokeTest --note "<preset>" <midiNote> <out.wav>: one 300 ms note, for A/B checks against references.
+    // SmokeTest --eqcheck: the new in-place EQ shelves match the old JUCE ones, so older sounds don't change.
+    if (argc == 2 && juce::String (argv[1]) == "--eqcheck")
+    {
+        const double sr = 48000.0;
+        double worst = 0;
+        for (auto kind : { 0, 1 })
+            for (float gain : { -12.0f, -6.0f, 2.5f, 6.0f, 12.0f })
+            {
+                const double hz = kind == 0 ? 120.0 : 5000.0;
+                auto ref = kind == 0 ? juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, (float) hz, 0.7f, juce::Decibels::decibelsToGain (gain))
+                                     : juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, (float) hz, 0.7f, juce::Decibels::decibelsToGain (gain));
+                ab::Biquad b;
+                b.set (kind == 0 ? ab::Biquad::LowShelf : ab::Biquad::HighShelf, sr, hz, 0.7, gain);
+                for (double f : { 30.0, 80.0, 120.0, 300.0, 1000.0, 3000.0, 5000.0, 10000.0, 16000.0 })
+                {
+                    const std::complex<double> z = std::polar (1.0, -juce::MathConstants<double>::twoPi * f / sr);
+                    const auto h = ((double) b.b0 + (double) b.b1 * z + (double) b.b2 * z * z) / (1.0 + (double) b.a1 * z + (double) b.a2 * z * z);
+                    const double mine = juce::Decibels::gainToDecibels (std::abs (h)), theirs = juce::Decibels::gainToDecibels (ref->getMagnitudeForFrequency (f, sr));
+                    worst = juce::jmax (worst, std::abs (mine - theirs));
+                }
+            }
+        std::printf ("largest difference from the old shelves: %.3f dB\n%s\n", worst, worst < 0.05 ? "ALL OK" : "FAILED");
+        return worst < 0.05 ? 0 : 1;
+    }
+
     // SmokeTest --lowarch: Low End keeps the sub clean under distortion, adds nothing when neutral, ducks in time.
     if (argc == 2 && juce::String (argv[1]) == "--lowarch")
     {

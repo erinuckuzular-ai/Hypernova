@@ -227,6 +227,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, "smpR", "Sampler Release", sDec, 0.25f, timeText);
     }
 
+    // EQ bands (appended; the defaults are the old fixed shelves, so older sounds don't change).
+    addFloat (l, "eqLowFreq", "EQ Low Freq", skewed (30.0f, 600.0f, 140.0f), 120.0f, hzText);
+    addFloat (l, "eqHighFreq", "EQ High Freq", skewed (1000.0f, 16000.0f, 5000.0f), 5000.0f, hzText);
+    addFloat (l, "eqMidFreq", "EQ Mid Freq", skewed (60.0f, 12000.0f, 1000.0f), 1000.0f, hzText);
+    addFloat (l, "eqMidGain", "EQ Mid", { -18.0f, 18.0f, 0.1f }, 0.0f, dbText);
+    addFloat (l, "eqMidQ", "EQ Mid Q", skewed (0.3f, 8.0f, 1.2f), 1.0f, [] (float v, int) { return juce::String (v, 2); });
+    addFloat (l, "eqLowCut", "EQ Low Cut", skewed (20.0f, 1000.0f, 120.0f), 20.0f, [] (float v, int) { return v <= 20.5f ? juce::String ("Off") : hzText (v, 0); });
+    addFloat (l, "eqHighCut", "EQ High Cut", skewed (1000.0f, 20000.0f, 8000.0f), 20000.0f, [] (float v, int) { return v >= 19900.0f ? juce::String ("Off") : hzText (v, 0); });
+
     // Low End (appended).
     add<Bool> (l, pid ("lowOn"), "Low End On", false);
     addFloat (l, "lowXover", "Low End Crossover", skewed (40.0f, 300.0f, 110.0f), 120.0f, hzText);
@@ -247,6 +256,7 @@ HypernovaAudioProcessor::HypernovaAudioProcessor()
 {
     WavetableBank::get(); // build the tables up front, not on the audio thread
     changeCounter = std::make_unique<ChangeCounter> (parameterChanges);
+    for (int d = FirstFxParamDest; d < NumDest; ++d) fxModParam[(size_t) d] = apvts.getParameter (modDestParam (d));
     orderListener = std::make_unique<OrderListener> (*this);
     apvts.state.addListener (orderListener.get());
     syncFxOrder();
@@ -525,6 +535,13 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.gateOn = param ("gateOn") > 0.5f;
     f.fxFilterOn = param ("fxFltOn") > 0.5f;
     f.pitchOn = param ("shiftOn") > 0.5f;
+    f.eqLowFreq = param ("eqLowFreq");
+    f.eqHighFreq = param ("eqHighFreq");
+    f.eqMidFreq = param ("eqMidFreq");
+    f.eqMidGain = param ("eqMidGain");
+    f.eqMidQ = param ("eqMidQ");
+    f.eqLowCut = param ("eqLowCut");
+    f.eqHighCut = param ("eqHighCut");
     f.lowOn = param ("lowOn") > 0.5f;
     f.lowXover = param ("lowXover");
     f.lowLevelDb = param ("lowLevel");
@@ -755,6 +772,9 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         }
     hostPpq = ppq >= 0.0 ? ppq : 0.0;
     hostPlaying = playing && ppq >= 0.0;
+    freeBeats += buffer.getNumSamples() * bpm / 60.0 / juce::jmax (8000.0, sampleRateNow);
+    shownBeats = hostPlaying ? hostPpq : freeBeats;
+    shownBpm = bpm;
 
     blockSettings = readSynthSettings();
     applyQuality ((int) param ("quality"));
@@ -1012,6 +1032,41 @@ void HypernovaAudioProcessor::applyGlobalModulation (FxSettings& fx)
     fx.delayMix = clamp01 (fx.delayMix + d[DDelayFx] * 0.6f);
     fx.reverbMix = clamp01 (fx.reverbMix + d[DReverbFx] * 0.7f);
     fx.shimmer = clamp01 (fx.shimmer + d[DShimmerFx]);
+
+    // Every other effect control: the modulation moves it through its own range (skewed where the knob is).
+    auto moved = [&] (int dest, float base)
+    {
+        auto* p = fxModParam[(size_t) dest];
+        if (p == nullptr || std::abs (d[dest]) < 1.0e-5f) return base;
+        return p->convertFrom0to1 (clamp01 (p->convertTo0to1 (base) + d[dest]));
+    };
+    fx.fxFilterFreq = moved (DFxFltFreq, fx.fxFilterFreq);
+    fx.fxFilterRes = moved (DFxFltRes, fx.fxFilterRes);
+    fx.fxFilterDepth = moved (DFxFltSweep, fx.fxFilterDepth);
+    fx.delayFeedback = moved (DDelayFb, fx.delayFeedback);
+    fx.delayTone = moved (DDelayTone, fx.delayTone);
+    fx.reverbSize = moved (DReverbSize, fx.reverbSize);
+    fx.flangerRate = moved (DFlangRate, fx.flangerRate);
+    fx.flangerDepth = moved (DFlangDepth, fx.flangerDepth);
+    fx.flangerFeedback = moved (DFlangFb, fx.flangerFeedback);
+    fx.flangerMix = moved (DFlangMix, fx.flangerMix);
+    fx.tapeWobble = moved (DTapeWow, fx.tapeWobble);
+    fx.tapeNoise = moved (DTapeNoise, fx.tapeNoise);
+    fx.tapeSat = moved (DTapeSat, fx.tapeSat);
+    fx.gateDepth = moved (DGateDepth, fx.gateDepth);
+    fx.gateShape = moved (DGateShape, fx.gateShape);
+    fx.panDepth = moved (DPanDepth, fx.panDepth);
+    fx.pitchMix = moved (DShiftMix, fx.pitchMix);
+    fx.eqLow = moved (DEqLow, fx.eqLow);
+    fx.eqHigh = moved (DEqHigh, fx.eqHigh);
+    fx.width = moved (DWidth, fx.width);
+    fx.chorusRate = moved (DChorusRate, fx.chorusRate);
+    fx.distMix = moved (DDistMix, fx.distMix);
+    fx.lowLevelDb = moved (DLowLevel, fx.lowLevelDb);
+    fx.lowDuck = moved (DLowDuck, fx.lowDuck);
+    fx.lowDrive = moved (DLowDrive, fx.lowDrive);
+    fx.eqMidGain = moved (DEqMid, fx.eqMidGain);
+    fx.eqMidFreq = moved (DEqMidFreq, fx.eqMidFreq);
 }
 
 // Arpeggiator: swallows incoming notes and plays them back as a pattern, locked to the host when it's playing.
@@ -1122,6 +1177,7 @@ const juce::String HypernovaAudioProcessor::getProgramName (int index)
 void HypernovaAudioProcessor::applyPresetValues (const std::vector<std::pair<const char*, float>>& values)
 {
     apvts.state.setProperty ("fxOrder", fxOrderText (defaultFxOrder()), &undoManager); // every sound starts from the standard rack
+    apvts.state.setProperty ("fxRack", "", &undoManager);                               // showing just the effects it uses
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             rp->setValueNotifyingHost (rp->getDefaultValue());
@@ -1165,6 +1221,80 @@ void HypernovaAudioProcessor::setFxOrder (const FxOrder& order)
     if (order == getFxOrder()) return;
     undoManager.beginNewTransaction ("Reorder effects");
     apvts.state.setProperty ("fxOrder", fxOrderText (order), &undoManager);
+}
+
+const char* HypernovaAudioProcessor::fxOnParam (int id)
+{
+    static const char* ids[] = { "distOn", "tapeOn", "ottOn", "shiftOn", "chorusOn", "flangOn", "fxFltOn", "gateOn", "dlyOn", "verbOn", "eqOn" };
+    return ids[juce::jlimit (0, NumFx - 1, id)];
+}
+
+bool HypernovaAudioProcessor::fxAudible (int id) const
+{
+    auto v = [this] (const char* p) { return apvts.getRawParameterValue (p)->load(); };
+    if (v (fxOnParam (id)) < 0.5f) return false;
+    switch (id)
+    {
+        case FxDist:    return v ("distMix") > 0.001f;
+        case FxTape:    return v ("tapeWow") > 0.001f || v ("tapeNoise") > 0.001f || v ("tapeSat") > 0.001f;
+        case FxOtt:     return v ("ott") > 0.001f;
+        case FxPitch:   return v ("shiftMix") > 0.001f;
+        case FxChorus:  return v ("chorusMix") > 0.001f;
+        case FxFlanger: return v ("flangMix") > 0.001f;
+        case FxFilter:  return v ("fxFltFreq") < 19000.0f || v ("fxFltDepth") > 0.001f || (int) v ("fxFltType") != 0;
+        case FxGate:    return v ("gateDepth") > 0.001f || v ("panDepth") > 0.001f;
+        case FxDelay:   return v ("dlyMix") > 0.001f;
+        case FxReverb:  return v ("verbMix") > 0.001f;
+        case FxEq:      return std::abs (v ("eqLow")) > 0.05f || std::abs (v ("eqHigh")) > 0.05f || std::abs (v ("eqMidGain")) > 0.05f
+                               || v ("eqLowCut") > 21.0f || v ("eqHighCut") < 19900.0f;
+        default:        return false;
+    }
+}
+
+std::vector<int> HypernovaAudioProcessor::rackEffects() const
+{
+    const auto added = juce::StringArray::fromTokens (apvts.state.getProperty ("fxRack").toString(), ",", {});
+    std::vector<int> out;
+    for (auto id : getFxOrder())
+        if (fxAudible (id) || (added.contains (juce::String ((int) id)) && apvts.getRawParameterValue (fxOnParam (id))->load() > 0.5f))
+            out.push_back (id);
+    return out;
+}
+
+void HypernovaAudioProcessor::addToRack (int id)
+{
+    undoManager.beginNewTransaction ("Add effect");
+    auto added = juce::StringArray::fromTokens (apvts.state.getProperty ("fxRack").toString(), ",", {});
+    added.removeEmptyStrings();
+    added.addIfNotAlreadyThere (juce::String (id));
+    apvts.state.setProperty ("fxRack", added.joinIntoString (","), &undoManager);
+    setParam (fxOnParam (id), 1.0f);
+    if (fxAudible (id)) return;
+    // Added effects start audible, at an amount that's clearly there without taking over.
+    switch (id)
+    {
+        case FxDist:    setParam ("distMix", 0.5f); break;
+        case FxTape:    setParam ("tapeWow", 0.25f); setParam ("tapeSat", 0.3f); break;
+        case FxOtt:     setParam ("ott", 0.35f); break;
+        case FxPitch:   setParam ("shiftMix", 0.35f); if (std::abs (apvts.getRawParameterValue ("shiftSemis")->load()) < 0.5f) setParam ("shiftSemis", 12.0f); break;
+        case FxChorus:  setParam ("chorusMix", 0.4f); break;
+        case FxFlanger: setParam ("flangMix", 0.4f); break;
+        case FxFilter:  setParam ("fxFltFreq", 2500.0f); break;
+        case FxGate:    setParam ("gateDepth", 0.7f); break;
+        case FxDelay:   setParam ("dlyMix", 0.3f); break;
+        case FxReverb:  setParam ("verbMix", 0.3f); break;
+        case FxEq:      setParam ("eqHigh", 3.0f); break;
+        default: break;
+    }
+}
+
+void HypernovaAudioProcessor::removeFromRack (int id)
+{
+    undoManager.beginNewTransaction ("Remove effect");
+    auto added = juce::StringArray::fromTokens (apvts.state.getProperty ("fxRack").toString(), ",", {});
+    added.removeString (juce::String (id));
+    apvts.state.setProperty ("fxRack", added.joinIntoString (","), &undoManager);
+    setParam (fxOnParam (id), 0.0f);
 }
 
 bool HypernovaAudioProcessor::isFxParam (const juce::String& id)
