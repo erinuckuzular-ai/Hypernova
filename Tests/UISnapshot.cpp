@@ -91,6 +91,33 @@ int main (int argc, char** argv)
             check (t2.allWidgets() == juce::StringArray { "e" }, "tree: round-trips through its saved form");
         }
 
+        // Motion: springs that settle without overshoot, redirect without jumping, and edges that give.
+        {
+            namespace m = ab::ui::motion;
+            m::Spring sp;
+            sp.snap (0.0f);
+            sp.target = 100.0f;
+            float peak = 0.0f, t = 0.0f;
+            while (sp.step (1.0f / 60.0f) && t < 3.0f) { peak = juce::jmax (peak, sp.value); t += 1.0f / 60.0f; }
+            check (peak <= 100.01f && sp.value == 100.0f && t < 0.9f, "a critically damped spring lands without overshoot (" + juce::String (t, 2) + " s)");
+            sp.snap (0.0f);
+            sp.target = 100.0f;
+            for (int i = 0; i < 6; ++i) sp.step (1.0f / 60.0f);
+            const float before = sp.value, speed = sp.velocity;
+            sp.target = -50.0f; // change of mind mid-flight
+            sp.step (1.0f / 60.0f);
+            check (std::abs (sp.value - before) < speed / 60.0f + 1.0f && sp.value > before - 1.0f, "redirecting mid-flight carries on from where it is, no jump");
+            m::Spring thrown;
+            thrown.snap (0.0f);
+            thrown.velocity = 2000.0f;
+            thrown.step (1.0f / 60.0f);
+            check (thrown.value > 20.0f, "a thrown spring keeps the speed it was let go at");
+            check (std::abs (m::project (1000.0f) - 499.0f) < 0.5f, "a flick projects to where it would come to rest");
+            check (m::rubberband (200.0f, 400.0f) < 200.0f && m::rubberband (400.0f, 400.0f) > m::rubberband (200.0f, 400.0f)
+                   && m::rubberband (400.0f, 400.0f) - m::rubberband (200.0f, 400.0f) < m::rubberband (200.0f, 400.0f),
+                   "past an edge it follows less and less");
+        }
+
         std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
         ed->loadWorkspace ("Sound Design", false);
@@ -98,7 +125,7 @@ int main (int argc, char** argv)
         const auto area = ed->layoutArea();
 
         // Structural changes slide into place; let them land before measuring.
-        auto settle = [] { juce::MessageManager::getInstance()->runDispatchLoopUntil (300); };
+        auto settle = [&] { juce::MessageManager::getInstance()->runDispatchLoopUntil (300); ed->finishMotion(); };
         // Every visible widget inside the area, and no two overlapping.
         auto tidy = [&] (const char* when)
         {
@@ -291,6 +318,28 @@ int main (int argc, char** argv)
             ed->moveWidget ("rack", "lowend", dock::Zone::Right);
             settle();
             check (rackView->isScrollable(), "a narrow rack scrolls (" + juce::String (rackView->getWidth()) + " px for " + juce::String (rackView->shownCount()) + " modules)");
+            {
+                // Pull the rack by its background: past the start it gives, less than the pointer moved, then springs back.
+                float downX = 100.0f;
+                auto rev = [&] (float x) { return juce::MouseEvent (src, { x, 20.0f }, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, rackView, rackView,
+                                                                    juce::Time::getCurrentTime(), { downX, 20.0f }, juce::Time::getCurrentTime(), 1, false); };
+                rackView->mouseDown (rev (100.0f));
+                for (float x = 110.0f; x <= 300.0f; x += 10.0f) rackView->mouseDrag (rev (x));
+                const float pulled = rackView->scrollPosition();
+                check (pulled < -5.0f && pulled > -200.0f, "pulling past the start gives a little (" + juce::String (pulled, 1) + " px for 200)");
+                rackView->mouseUp (rev (300.0f));
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (900);
+                check (std::abs (rackView->scrollPosition()) < 0.01f, "and springs back when let go");
+                // A flick along the rack carries on after letting go.
+                downX = 300.0f;
+                rackView->mouseDown (rev (300.0f));
+                for (float x = 290.0f; x >= 200.0f; x -= 15.0f) { rackView->mouseDrag (rev (x)); juce::Thread::sleep (8); }
+                const float atRelease = rackView->scrollPosition();
+                rackView->mouseUp (rev (200.0f));
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (900);
+                check (atRelease > 80.0f && rackView->scrollPosition() > atRelease + 20.0f && rackView->scrollPosition() <= rackView->scrollLimit() + 0.01f,
+                       "a flick carries the rack on and stops inside its ends (" + juce::String (atRelease, 0) + " -> " + juce::String (rackView->scrollPosition(), 0) + ")");
+            }
             ed->undoLayout();
             settle();
             stateBefore = proc.apvts.copyState().toXmlString(); // the rack test changed the sound on purpose

@@ -1166,15 +1166,17 @@ class PillToggle : public juce::ToggleButton
 {
 public:
     PillToggle (const juce::String& text, ThemeColour c) : juce::ToggleButton (text), colour (c) {}
-    void paintButton (juce::Graphics& g, bool over, bool) override
+    void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         auto r = getLocalBounds().toFloat().reduced (0.5f).withTrimmedBottom (2.0f);
         const bool on = getToggleState();
-        // Raised when off, pressed in when on: the travel sells it as a physical switch.
-        const float lift = on ? 0.5f : 2.0f;
-        g.setColour (juce::Colours::black.withAlpha (on ? 0.10f : 0.18f));
+        // Raised when off, pressed in when on: the travel sells it as a physical switch. It goes in the
+        // moment you press, before you let go, so the click never feels late.
+        const bool pressedIn = on || down;
+        const float lift = pressedIn ? 0.5f : 2.0f;
+        g.setColour (juce::Colours::black.withAlpha (pressedIn ? 0.10f : 0.18f));
         g.fillRoundedRectangle (r.translated (0, lift), r.getHeight() * 0.5f);
-        auto face = r.translated (0, on ? 1.5f : 0.0f);
+        auto face = r.translated (0, pressedIn ? 1.5f : 0.0f);
         g.setGradientFill (juce::ColourGradient (on ? colour.withAlpha (0.28f) : Colours::panelHi.brighter (0.04f), 0, face.getY(),
                                                  on ? colour.withAlpha (0.16f) : Colours::inset, 0, face.getBottom(), false));
         g.fillRoundedRectangle (face, face.getHeight() * 0.5f);
@@ -1182,9 +1184,10 @@ public:
         g.drawRoundedRectangle (face, face.getHeight() * 0.5f, 1.0f);
         r = face;
         auto dot = r.removeFromLeft (r.getHeight()).withSizeKeepingCentre (6, 6);
-        g.setColour (on ? colour : Colours::textFaint);
-        g.fillEllipse (dot);
-        g.setColour (on ? Colours::text : Colours::textDim);
+        // Off still reads as a live switch (a ring waiting to light), not as greyed out.
+        if (on) { g.setColour (colour); g.fillEllipse (dot); }
+        else { g.setColour (colour.withAlpha (over ? 0.8f : 0.55f)); g.drawEllipse (dot.reduced (0.5f), 1.2f); }
+        g.setColour (on ? Colours::text.get() : Colours::text.withAlpha (over ? 0.9f : 0.72f));
         g.setFont (font (9.5f, true).withExtraKerningFactor (0.12f));
         g.drawText (getButtonText(), r.withTrimmedRight (6), juce::Justification::centredLeft, false);
     }
@@ -1202,9 +1205,11 @@ public:
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         auto r = getLocalBounds().toFloat().reduced (0.5f);
-        panel (g, r, 9.0f, over ? Colours::panelHi.brighter (0.06f) : Colours::panelHi);
-        auto icon = r.withSizeKeepingCentre (r.getHeight() * 0.5f, r.getHeight() * 0.5f).translated (0, down ? 0.5f : 0.0f);
-        const auto c = colour.withAlpha (over ? 1.0f : 0.85f);
+        panel (g, r, 9.0f, down ? Colours::inset.brighter (0.08f) : over ? Colours::panelHi.brighter (0.06f) : Colours::panelHi.get());
+        // Pressed: the face sinks and the icon tucks in a touch, on the press itself.
+        const float k = down ? 0.44f : 0.5f;
+        auto icon = r.withSizeKeepingCentre (r.getHeight() * k, r.getHeight() * k).translated (0, down ? 0.5f : 0.0f);
+        const auto c = colour.withAlpha (over || down ? 1.0f : 0.85f);
         g.setColour (c);
         juce::Path p;
         switch (kind)

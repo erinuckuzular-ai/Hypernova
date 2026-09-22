@@ -476,7 +476,10 @@ public:
         g.drawRoundedRectangle (r, 8.0f, on ? 1.4f : 1.0f);
         if (down)
         {
-            g.setColour (juce::Colours::white.withAlpha (0.04f));
+            // Pressed in: darker face with a shadow along the top edge.
+            g.setColour (juce::Colours::black.withAlpha (0.18f));
+            g.fillRoundedRectangle (r, 8.0f);
+            g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.22f), 0, r.getY(), juce::Colours::transparentBlack, 0, r.getY() + 6.0f, false));
             g.fillRoundedRectangle (r, 8.0f);
         }
     }

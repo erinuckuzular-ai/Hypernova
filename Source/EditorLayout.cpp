@@ -154,7 +154,7 @@ void HypernovaAudioProcessorEditor::destroyTool (const juce::String& id)
     for (auto w = widgets.begin(); w != widgets.end(); ++w)
         if ((*w)->id == id)
         {
-            juce::Desktop::getInstance().getAnimator().cancelAnimation (w->get(), false);
+            springs.stop (**w);
             if (it != tools.end()) (*w)->content.removeChildComponent (it->second.get());
             widgets.erase (w);
             break;
@@ -291,14 +291,13 @@ void HypernovaAudioProcessorEditor::relayoutWidgets (bool animate)
     const auto area = layoutArea();
     if (maximisedId.isNotEmpty() && ! tree.contains (maximisedId)) maximisedId.clear();
     tree.layout (area, dockMinSize());
-    auto& animator = juce::Desktop::getInstance().getAnimator();
     for (auto& w : widgets)
     {
         auto* leaf = tree.findLeaf (w->id);
         const bool front = leaf != nullptr && leaf->activeId() == w->id && (maximisedId.isEmpty() || maximisedId == w->id);
         if (! front)
         {
-            animator.cancelAnimation (w.get(), false);
+            springs.stop (*w);
             w->setVisible (false);
             continue;
         }
@@ -316,18 +315,22 @@ void HypernovaAudioProcessorEditor::relayoutWidgets (bool animate)
         const auto target = maximised ? area : leaf->bounds;
         bool wasVisible = w->isVisible();
         w->setEditing (layoutEditing);
+        juce::Point<float> thrown;
         if (animate && w->id == landingId && ! landingFrom.isEmpty())
         {
-            // Just dropped: start from where the ghost was let go and glide into the slot.
+            // Just dropped: carry on from where the ghost was let go, at the speed it was moving, into the slot.
+            springs.stop (*w);
             w->setBounds (landingFrom);
+            thrown = landingVelocity;
             wasVisible = true;
         }
         w->setVisible (true);
-        if (animate && wasVisible && w->getBounds() != target)
-            animator.animateComponent (w.get(), target, 1.0f, 220, false, 0.2, 0.0);
+        // Springs start from wherever the panel is right now, so a new change mid-move just redirects it.
+        if (animate && wasVisible && (w->getBounds() != target || springs.isMoving (*w)))
+            springs.moveTo (*w, target, thrown);
         else
         {
-            animator.cancelAnimation (w.get(), false);
+            springs.stop (*w);
             w->setBounds (target);
         }
     }
@@ -533,6 +536,7 @@ void HypernovaAudioProcessorEditor::dockDrop (const juce::String& idOrType, bool
     tree.insert (id, drop.leaf, drop.zone, drop.leaf != nullptr ? 0.5f : 0.3f);
     landingId = id;
     landingFrom = from;
+    landingVelocity = overlay->releaseVelocity();
     relayoutWidgets (true);
     landingId.clear();
     destroyTool (id); // only acts if it somehow didn't make it into the tree

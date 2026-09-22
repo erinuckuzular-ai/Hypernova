@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Components.h"
+#include "Motion.h"
 #include "Dock.h"
 
 // Widgets: every panel of the synth is a widget that keeps its own look and contents. Widgets dock into the
@@ -589,7 +590,7 @@ public:
         }
         if (drag.ghost.isValid())
         {
-            auto r = ghostRect().toFloat();
+            auto r = drawnGhost();
             for (int i = 5; i >= 1; --i)
             {
                 g.setColour (juce::Colours::black.withAlpha (0.045f * (float) (6 - i)));
@@ -716,6 +717,10 @@ public:
         drag.ghost = ghost;
         drag.ghostSize = { ghost.getWidth() / 2, ghost.getHeight() / 2 };
         drag.grab = { drag.ghostSize.x / 2, 18 };
+        drag.lift.value = 0.9f; // from the library card: it grows a little as it comes off
+        drag.lift.target = 1.0f;
+        tracker.reset();
+        lastFrame = juce::Time::getMillisecondCounterHiRes();
         startTimerHz (60);
         moveDrag (pos);
     }
@@ -724,9 +729,15 @@ public:
     {
         if (! drag.active) return;
         drag.pos = pos;
+        tracker.add (pos.toFloat());
         auto drop = host.dockTree().dropAt (pos + getPosition(), host.dockArea(), drag.isNew ? juce::String() : drag.id);
         drop.preview = drop.preview - getPosition();
-        if (shownPreview.isEmpty() && drop.zone != dock::Zone::None) shownPreview = drop.preview.toFloat().withSizeKeepingCentre (40, 40);
+        if (shownPreview.isEmpty() && drop.zone != dock::Zone::None)
+        {
+            shownPreview = drop.preview.toFloat().withSizeKeepingCentre (40, 40);
+            previewX.snap (shownPreview.getX()); previewY.snap (shownPreview.getY());
+            previewW.snap (shownPreview.getWidth()); previewH.snap (shownPreview.getHeight());
+        }
         drag.drop = drop;
         repaint();
     }
@@ -735,7 +746,8 @@ public:
     {
         if (! drag.active) return;
         auto d = drag;
-        const auto from = ghostRect() + getPosition();
+        const auto from = drawnGhost().toNearestInt() + getPosition();
+        released = tracker.velocity();
         cancelDrag();
         if (d.drop.zone != dock::Zone::None)
         {
@@ -745,6 +757,8 @@ public:
     }
 
     bool isDragging() const { return drag.active; }
+    // How fast the pointer was going when a dragged widget was let go (px/s), so it lands with that speed.
+    juce::Point<float> releaseVelocity() const { return released; }
 
 private:
     Host& host;
@@ -757,6 +771,10 @@ private:
     Widget* pressed = nullptr;
     int pressedTab = -1, pressedButton = -1;
     juce::Rectangle<float> shownPreview;
+    motion::Spring previewX, previewY, previewW, previewH;
+    motion::VelocityTracker tracker;
+    juce::Point<float> released;
+    double lastFrame = 0;
 
     struct Drag
     {
@@ -765,21 +783,44 @@ private:
         juce::Image ghost;
         juce::Point<int> ghostSize, grab, pos;
         dock::Drop drop;
+        motion::Spring lift { 1.0f, 0.0f, 1.0f, 0.001f }; // ghost size relative to its final size
     } drag;
 
     juce::Rectangle<int> ghostRect() const
     {
         return juce::Rectangle<int> (drag.ghostSize.x, drag.ghostSize.y).withPosition (drag.pos - drag.grab);
     }
+    // Picked up, it shrinks from full size into a ghost around the point you hold, rather than jumping.
+    juce::Rectangle<float> drawnGhost() const
+    {
+        const float k = drag.lift.value;
+        return juce::Rectangle<float> ((float) drag.ghostSize.x * k, (float) drag.ghostSize.y * k)
+                   .withPosition (drag.pos.toFloat() - drag.grab.toFloat() * k);
+    }
 
     void timerCallback() override
     {
-        // The landing slot glides towards its target.
+        // The landing slot springs towards its target, redirecting smoothly as you move between targets.
         if (! drag.active) { stopTimer(); return; }
-        const auto target = drag.drop.zone == dock::Zone::None ? shownPreview : drag.drop.preview.toFloat();
-        auto lerp = [] (float a, float b) { return a + (b - a) * 0.32f; };
-        shownPreview = { lerp (shownPreview.getX(), target.getX()), lerp (shownPreview.getY(), target.getY()),
-                         lerp (shownPreview.getWidth(), target.getWidth()), lerp (shownPreview.getHeight(), target.getHeight()) };
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const float dt = (float) juce::jlimit (0.001, 0.05, (now - lastFrame) / 1000.0);
+        lastFrame = now;
+        const bool still = motion::systemReducesMotion();
+        if (drag.drop.zone != dock::Zone::None)
+        {
+            const auto target = drag.drop.preview.toFloat();
+            if (shownPreview.isEmpty() || still)
+            {
+                if (still) shownPreview = target;
+                previewX.snap (shownPreview.getX()); previewY.snap (shownPreview.getY());
+                previewW.snap (shownPreview.getWidth()); previewH.snap (shownPreview.getHeight());
+            }
+            previewX.target = target.getX(); previewY.target = target.getY();
+            previewW.target = target.getWidth(); previewH.target = target.getHeight();
+            for (auto* sp : { &previewX, &previewY, &previewW, &previewH }) sp->step (dt, 0.26f, 1.0f);
+            shownPreview = { previewX.value, previewY.value, previewW.value, previewH.value };
+        }
+        if (still) drag.lift.snap (1.0f); else drag.lift.step (dt, 0.24f, 1.0f);
         repaint();
     }
 
@@ -798,6 +839,11 @@ private:
         drag.grab = { juce::jlimit (8, drag.ghostSize.x - 8, juce::roundToInt ((float) grabInWidget.x * k)),
                       juce::jlimit (8, drag.ghostSize.y - 8, juce::roundToInt ((float) grabInWidget.y * k)) };
         drag.pos = pos;
+        drag.lift.value = 1.0f / juce::jmax (0.05f, k);
+        drag.lift.target = 1.0f;
+        tracker.reset();
+        tracker.add (pos.toFloat());
+        lastFrame = juce::Time::getMillisecondCounterHiRes();
         shownPreview = {};
         w.lifted = true;
         w.repaint();

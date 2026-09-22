@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Components.h"
+#include "Motion.h"
 #include <map>
 #include <complex>
 
@@ -734,6 +735,8 @@ public:
              + " scroll " + juce::String (scroll) + " shown " + juce::String ((int) shown.size());
     }
     bool isScrollable() const { return maxScroll() > 0.5f; }
+    float scrollPosition() const { return scroll; }
+    float scrollLimit() const { return maxScroll(); }
 
     void resized() override { layout (false); }
 
@@ -772,14 +775,14 @@ public:
             g.fillRect (r);
         };
         const float right = (float) scrollRight();
-        if (scroll > 0.5f) fade ({ 0.0f, 0.0f, 24.0f, (float) getHeight() }, true);
+        if (scroll > 0.5f) fade ({ 0.0f, 0.0f, 24.0f, (float) getHeight() }, true); // nothing to fade in while pulled past the start
         if (scroll < maxScroll() - 0.5f) fade ({ right - 24.0f, 0.0f, 24.0f, (float) getHeight() }, false);
         const float frac = right / (right + maxScroll());
         auto track = juce::Rectangle<float> (4.0f, (float) getHeight() - 3.0f, right - 8.0f, 2.5f);
         g.setColour (Colours::line);
         g.fillRoundedRectangle (track, 1.2f);
         g.setColour (Colours::textDim);
-        g.fillRoundedRectangle (track.withWidth (track.getWidth() * frac).withX (track.getX() + track.getWidth() * (1.0f - frac) * (scroll / maxScroll())), 1.2f);
+        g.fillRoundedRectangle (track.withWidth (track.getWidth() * frac).withX (track.getX() + track.getWidth() * (1.0f - frac) * juce::jlimit (0.0f, 1.0f, scroll / maxScroll())), 1.2f);
     }
 
     void mouseMove (const juce::MouseEvent& e) override
@@ -789,15 +792,54 @@ public:
         setMouseCursor (over ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
     void mouseExit (const juce::MouseEvent&) override { if (addHover) { addHover = false; strip.repaint (addSlot()); } }
+
+    // Grab the rack anywhere between modules and pull it along; let go and it carries on, then settles.
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        panning = false;
+        panStart = scroll;
+        scrollSpring.velocity = 0.0f;
+        settling = false; // grabbing it stops it where it is
+        panTracker.reset();
+        panTracker.add (e.position);
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! isScrollable() && ! panning) return;
+        if (! panning && std::abs (e.getDistanceFromDragStartX()) < 4) return;
+        panning = true;
+        panTracker.add (e.position);
+        setScrollRubber (panStart - (float) e.getDistanceFromDragStartX());
+    }
     void mouseUp (const juce::MouseEvent& e) override
     {
+        if (panning)
+        {
+            panning = false;
+            // Flick: aim for where it would come to rest, keeping the speed it was let go at.
+            const float v = -panTracker.velocity().x;
+            settleScroll (scroll + motion::project (v), v);
+            return;
+        }
         if (addSlot().contains (e.getPosition()) && onAdd) onAdd (e.getScreenPosition());
     }
     void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
     {
         if (! isScrollable()) { juce::Component::mouseWheelMove (e, w); return; }
-        const float delta = std::abs (w.deltaX) > std::abs (w.deltaY) ? w.deltaX : w.deltaY;
-        setScroll (scroll - delta * (w.isReversed ? -1.0f : 1.0f) * 260.0f);
+        const float delta = (std::abs (w.deltaX) > std::abs (w.deltaY) ? w.deltaX : w.deltaY) * (w.isReversed ? -1.0f : 1.0f);
+        if (! w.isSmooth)
+        {
+            // A mouse wheel's clicks glide rather than step.
+            settleScroll ((settling ? scrollSpring.target : scroll) - delta * 260.0f, scrollSpring.velocity);
+            return;
+        }
+        // Trackpad: follow the fingers 1:1, give a little at the ends, spring back once they let go.
+        if (! wheeling) { rawScroll = scroll; wheeling = true; }
+        settling = false;
+        rawScroll -= delta * 260.0f * (w.isInertial && (rawScroll < 0.0f || rawScroll > maxScroll()) ? 0.35f : 1.0f);
+        setScrollRubber (rawScroll);
+        lastWheel = juce::Time::getMillisecondCounterHiRes();
+        if (! isTimerRunning()) startMotion();
     }
 
     // Brings a module into view (e.g. one just added).
@@ -807,8 +849,8 @@ public:
         if (it == shown.end()) return;
         const float x = slotX ((int) (it - shown.begin())) + scroll;
         const float w = (float) module (id).getWidth();
-        if (x - scroll < 0.0f) setScroll (x - gap);
-        else if (x - scroll + w > (float) scrollRight()) setScroll (x + w - (float) scrollRight() + gap);
+        if (x - scroll < 0.0f) settleScroll (x - gap, 0.0f);
+        else if (x - scroll + w > (float) scrollRight()) settleScroll (x + w - (float) scrollRight() + gap, 0.0f);
     }
 
 private:
@@ -827,10 +869,16 @@ private:
     std::array<float, fftSize * 2> fftData {};
     std::array<float, fftSize> scopeL {}, scopeR {};
     int quietFrames = 0;
-    std::map<int, float> shownX; // where each module is drawn now (glides to its slot)
+    std::map<int, motion::Spring> shownX, shownY; // where each module is drawn now (springs to its slot)
     int lastChanges = -1, dragId = -1;
     float scroll = 0, grabOffset = 0, dragX = 0, lastMouseX = 0;
     bool addHover = false;
+    // Scrolling: 'scroll' is what's on screen and can run a little past either end while you pull.
+    motion::Spring scrollSpring;
+    motion::VelocityTracker panTracker, dragTracker;
+    float panStart = 0, rawScroll = 0;
+    bool panning = false, wheeling = false, settling = false;
+    double lastWheel = 0, lastFrame = 0;
     static constexpr float gap = 12.0f;
 
     float moduleHeight() const { return (float) getHeight() - 8.0f; }
@@ -853,13 +901,37 @@ private:
         return juce::Rectangle<float> (slotX ((int) shown.size()), 4.0f, 120.0f, moduleHeight()).toNearestInt();
     }
 
-    void setScroll (float s)
+    // Moves what's on screen to 's' exactly (modules keep their own motion relative to the rack).
+    void applyScroll (float s)
     {
-        const float clamped = juce::jlimit (0.0f, maxScroll(), s);
-        if (std::abs (clamped - scroll) < 0.01f) return;
-        for (auto& [id, x] : shownX) x += scroll - clamped;
-        scroll = clamped;
+        if (std::abs (s - scroll) < 0.01f) return;
+        for (auto& [id, x] : shownX) { x.value += scroll - s; x.target += scroll - s; }
+        scroll = s;
         layout (false);
+    }
+    void setScroll (float s) { applyScroll (juce::jlimit (0.0f, maxScroll(), s)); }
+    // Past either end the rack follows less and less, so the end feels soft rather than a wall.
+    void setScrollRubber (float s)
+    {
+        const float top = maxScroll(), dim = (float) juce::jmax (1, scrollRight());
+        if (s < 0.0f) s = -motion::rubberband (-s, dim);
+        else if (s > top) s = top + motion::rubberband (s - top, dim);
+        applyScroll (s);
+    }
+    // Springs the scroll to 'target' (kept in range) starting at the current speed.
+    void settleScroll (float target, float velocity)
+    {
+        if (motion::systemReducesMotion()) { setScroll (target); return; }
+        scrollSpring.value = scroll;
+        scrollSpring.velocity = velocity;
+        scrollSpring.target = juce::jlimit (0.0f, maxScroll(), target);
+        settling = true;
+        wheeling = false;
+        startMotion();
+    }
+    void startMotion()
+    {
+        if (! isTimerRunning()) { lastFrame = juce::Time::getMillisecondCounterHiRes(); startTimerHz (60); }
     }
 
     void layout (bool animate)
@@ -867,24 +939,31 @@ private:
         const int outW = widthOf (-1);
         outputModule->setBounds (getWidth() - outW - 4, 4, outW, (int) moduleHeight());
         strip.setBounds (0, 0, scrollRight(), getHeight());
-        scroll = juce::jlimit (0.0f, maxScroll(), scroll);
+        if (! panning && ! wheeling && ! settling) scroll = juce::jlimit (0.0f, maxScroll(), scroll);
+        const bool still = motion::systemReducesMotion();
         for (auto& m : modules)
         {
             const auto it = std::find (shown.begin(), shown.end(), m->fxId);
-            if (it == shown.end()) { m->setVisible (false); shownX.erase (m->fxId); continue; }
+            if (it == shown.end()) { m->setVisible (false); shownX.erase (m->fxId); shownY.erase (m->fxId); continue; }
             const float target = slotX ((int) (it - shown.begin()));
             if (m->fxId == dragId) continue;
-            if (! animate || shownX.find (m->fxId) == shownX.end() || ! m->isVisible()) shownX[m->fxId] = target;
+            auto& x = shownX[m->fxId];
+            auto& y = shownY[m->fxId];
+            if (! animate || still || ! m->isVisible()) { x.snap (target); y.snap (4.0f); }
+            else x.target = target;
             m->setVisible (true);
-            m->setBounds (juce::roundToInt (shownX[m->fxId]), 4, widthOf (m->fxId), (int) moduleHeight());
+            m->setBounds (juce::roundToInt (x.value), juce::roundToInt (y.value), widthOf (m->fxId), (int) moduleHeight());
         }
-        if (animate) startTimerHz (60);
+        if (animate) startMotion();
         repaint();
         strip.repaint();
     }
 
     void timerCallback() override
     {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const float dt = (float) juce::jlimit (0.001, 0.05, (now - lastFrame) / 1000.0);
+        lastFrame = now;
         bool moving = false;
         if (dragId >= 0 && isScrollable())
         {
@@ -895,18 +974,35 @@ private:
             else if (lastMouseX > (float) scrollRight() - edge) step = (lastMouseX - ((float) scrollRight() - edge)) * 0.3f;
             if (step != 0.0f) { setScroll (scroll + step); updateTarget(); moving = true; }
         }
+        // Trackpad let go past an end: spring back once the fingers (and their momentum) stop.
+        if (wheeling && now - lastWheel > 70.0)
+        {
+            wheeling = false;
+            if (scroll < 0.0f || scroll > maxScroll()) settleScroll (scroll, 0.0f);
+        }
+        if (wheeling) moving = true;
+        if (settling)
+        {
+            settling = scrollSpring.step (dt, 0.42f, 1.0f);
+            applyScroll (scrollSpring.value);
+            moving |= settling;
+        }
         for (size_t i = 0; i < shown.size(); ++i)
         {
             const int id = shown[i];
             if (id == dragId) continue;
             auto& x = shownX[id];
-            const float target = slotX ((int) i);
-            x += (target - x) * 0.3f;
-            if (std::abs (target - x) > 0.4f) moving = true; else x = target;
-            module (id).setTopLeftPosition (juce::roundToInt (x), 4);
+            auto& y = shownY[id];
+            x.target = slotX ((int) i);
+            y.target = 4.0f;
+            const bool thrown = std::abs (x.velocity) > 600.0f;
+            moving |= x.step (dt, 0.3f, thrown ? 0.84f : 1.0f);
+            moving |= y.step (dt, 0.22f, 1.0f);
+            module (id).setTopLeftPosition (juce::roundToInt (x.value), juce::roundToInt (y.value));
         }
         repaint();
-        if (! moving && dragId < 0) stopTimer();
+        strip.repaint();
+        if (! moving && dragId < 0 && ! panning) stopTimer();
     }
 
     void beginDrag (FxModule& m, const juce::MouseEvent& e)
@@ -914,17 +1010,23 @@ private:
         dragId = m.fxId;
         grabOffset = (float) e.getEventRelativeTo (&strip).x - (float) m.getX();
         dragX = (float) m.getX();
+        dragTracker.reset();
+        dragTracker.add ({ dragX, 0.0f });
         m.lifted = true;
         m.toFront (false);
         outputModule->toFront (false);
-        startTimerHz (60);
+        startMotion();
     }
 
     void dragTo (FxModule& m, const juce::MouseEvent& e)
     {
         if (dragId != m.fxId) return;
         lastMouseX = (float) e.getEventRelativeTo (&strip).x;
-        dragX = juce::jlimit (0.0f, (float) scrollRight() - (float) m.getWidth(), lastMouseX - grabOffset);
+        // 1:1 with the pointer; past either end it gives a little rather than stopping dead.
+        const float free = lastMouseX - grabOffset, top = (float) scrollRight() - (float) m.getWidth();
+        dragX = free < 0.0f ? -motion::rubberband (-free, (float) m.getWidth())
+              : free > top ? top + motion::rubberband (free - top, (float) m.getWidth()) : free;
+        dragTracker.add ({ dragX, 0.0f });
         m.setTopLeftPosition (juce::roundToInt (dragX), 0);
         updateTarget();
         m.repaint();
@@ -946,14 +1048,19 @@ private:
             x += w + gap;
         }
         order.insert (order.begin() + index, dragId);
-        if (order != shown) { shown = order; startTimerHz (60); }
+        if (order != shown) { shown = order; startMotion(); }
     }
 
     void endDrag (FxModule& m)
     {
         if (dragId != m.fxId) return;
         m.lifted = false;
-        shownX[dragId] = dragX;
+        // Let go: it carries on at the speed it was moving into its slot, and settles back down.
+        auto& x = shownX[dragId];
+        x.value = dragX;
+        x.velocity = motion::systemReducesMotion() ? 0.0f : dragTracker.velocity().x;
+        shownY[dragId].value = 0.0f;
+        shownY[dragId].velocity = 0.0f;
         dragId = -1;
         // Write the new order back: the shown effects in their new order, the others keep their places.
         auto full = proc.getFxOrder();
@@ -962,7 +1069,7 @@ private:
             if (std::find (shown.begin(), shown.end(), (int) full[(size_t) i]) != shown.end()) slots.push_back (i);
         for (size_t k = 0; k < slots.size() && k < shown.size(); ++k) full[(size_t) slots[k]] = (juce::uint8) shown[k];
         proc.setFxOrder (full);
-        startTimerHz (60);
+        startMotion();
         m.repaint();
     }
 };
