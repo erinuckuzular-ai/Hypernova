@@ -773,6 +773,8 @@ int main (int argc, char** argv)
             // Just the crusher in the rack, so its display can be looked at.
             ed->loadWorkspace ("Effects", false);
             proc.addToRack (ab::FxCrush);
+            proc.addToRack (ab::FxSpeaker);
+            proc.setParam ("spkType", (float) ab::dsp::Speaker::Phone);
             proc.setParam ("crushBits", 4.0f);
             proc.setParam ("crushRate", 4000.0f);
             proc.setParam ("crushMix", 0.9f);

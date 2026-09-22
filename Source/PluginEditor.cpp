@@ -1685,6 +1685,8 @@ void HypernovaAudioProcessorEditor::buildRackModules()
     kn (ab::FxEq, "eqLow", "LOW", 10);           kn (ab::FxEq, "eqMidGain", "MID", 68);      kn (ab::FxEq, "eqMidFreq", "FREQ", 126);
     kn (ab::FxEq, "eqMidQ", "WIDTH", 184);       kn (ab::FxEq, "eqHigh", "HIGH", 242);
     kn (ab::FxCrush, "crushBits", "BITS", 10);   kn (ab::FxCrush, "crushRate", "RATE", 68);  kn (ab::FxCrush, "crushMix", "MIX", 126);
+    kn (ab::FxSpeaker, "spkDrive", "GRIT", 30);  kn (ab::FxSpeaker, "spkMix", "MIX", 112);
+    cb (ab::FxSpeaker, "spkType", ab::dsp::Speaker::typeNames(), { 10, by, 190, 24 });
     kn (-1, "fxMix", "MIX", 42);   // how much of the rack you hear at all
     kn (-1, "width", "WIDTH", 106);
     toggle (std::make_unique<PillToggle> ("MONO BASS", ab::ui::fxColour (-1)), "monoBass", { 10, by + 1, 188, 22 },

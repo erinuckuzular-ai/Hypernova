@@ -23,10 +23,10 @@ inline double delayTimeBeats (int i)
 
 // The rack: the effects that can be put in any order. Width and mono bass stay last (they're the output stage).
 // Append only: saved orders store these numbers.
-enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, FxCrush, NumFx }; // append only
+enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, FxCrush, FxSpeaker, NumFx }; // append only
 inline juce::StringArray fxRackNames()
 {
-    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ", "CRUSH" };
+    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ", "CRUSH", "SPEAKER" };
 }
 using FxOrder = std::array<juce::uint8, NumFx>;
 inline FxOrder defaultFxOrder() { FxOrder o {}; for (int i = 0; i < NumFx; ++i) o[(size_t) i] = (juce::uint8) i; return o; }
@@ -78,6 +78,10 @@ struct FxSettings
     // Crush (appended): sample-rate and bit reduction, the old sampler sound.
     bool crushOn = true;
     float crushBits = 16.0f, crushRate = 24000.0f, crushMix = 0;
+    // Speaker (appended): what it sounds like out of a phone, a laptop, a car, a boombox or a club rig.
+    bool speakerOn = true;
+    int speakerType = 0;
+    float speakerDrive = 0.3f, speakerMix = 0;
 
     // Movement, character and pitch (the second effects page). All default to silent/neutral.
     int chorusMode = 0;                                    // classic / ensemble / dimension
@@ -374,6 +378,7 @@ public:
         gate.prepare (sampleRate);
         fxFilter.prepare (sampleRate);
         shifter.prepare (sampleRate);
+        speaker.prepare (sampleRate);
 
         scratch.setSize (2, blockSize);
         for (auto& f : eqBands) f.reset();
@@ -559,6 +564,9 @@ private:
             case FxCrush:
                 if (s.crushOn && s.crushMix > 0.001f) crush (L, R, n, s);
                 break;
+            case FxSpeaker:
+                if (s.speakerOn && s.speakerMix > 0.001f) speaker.process (L, R, n, s.speakerType, s.speakerDrive, s.speakerMix);
+                break;
             case FxPitch:
                 if (s.pitchOn && s.pitchMix > 0.001f) shifter.process (L, R, n, s.pitchSemis, s.pitchMix);
                 break;
@@ -611,6 +619,7 @@ private:
     ab::dsp::GateAndPan gate;
     ab::dsp::FxFilter fxFilter;
     ab::dsp::PitchShifter shifter;
+    ab::dsp::Speaker speaker;
     int grainWrite = 0;
     std::array<float, 4> grainPos {}, grainRate {};
     std::array<int, 4> grainLeft {};

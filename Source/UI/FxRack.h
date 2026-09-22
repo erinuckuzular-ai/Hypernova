@@ -44,6 +44,7 @@ inline ThemeColour fxColour (int fxId)
         case FxReverb:  return Palette::mod;
         case FxEq:      return Palette::env;
         case FxCrush:   return ThemeColour { SlotWarm };
+        case FxSpeaker: return Palette::oscB;
         default:        return ThemeColour { SlotText };
     }
 }
@@ -528,6 +529,41 @@ private:
         switch (fxId)
         {
             case FxEq: paintEq (g, r); return;
+            case FxSpeaker:
+            {
+                // The band this box passes, with its honk: the response curve over the live spectrum.
+                const auto voicing = dsp::Speaker::voicingFor ((int) v ("spkType"));
+                const float mix = v ("spkMix");
+                if (live != nullptr)
+                {
+                    g.setColour (c.withAlpha (0.16f));
+                    for (int b = 0; b < RackLive::bands; ++b)
+                    {
+                        const float x = r.getX() + r.getWidth() * (float) b / (float) (RackLive::bands - 1);
+                        const float h = r.getHeight() * juce::jlimit (0.0f, 1.0f, live->spectrum[(size_t) b]);
+                        g.fillRect (x - 1.0f, r.getBottom() - h, 2.0f, h);
+                    }
+                }
+                auto xOf = [&] (float hz) { return r.getX() + r.getWidth() * std::log (juce::jmax (20.0f, hz) / 20.0f) / std::log (20000.0f / 20.0f); };
+                juce::Path curve;
+                for (int i = 0; i <= 64; ++i)
+                {
+                    const float hz = 20.0f * std::pow (1000.0f, (float) i / 64.0f);
+                    // Roughly what the filters do: a band between the cuts, with the bump on top.
+                    const float hp = hz / std::sqrt (hz * hz + voicing.hp * voicing.hp);
+                    const float lp = voicing.lp / std::sqrt (hz * hz + voicing.lp * voicing.lp);
+                    const float bump = 1.0f + (std::pow (10.0f, voicing.bumpDb / 20.0f) - 1.0f)
+                                              / (1.0f + std::pow ((hz - voicing.bumpHz) / juce::jmax (30.0f, voicing.bumpHz / (2.0f * voicing.bumpQ)), 2.0f));
+                    const float gain = 1.0f + (hp * lp * bump - 1.0f) * mix;
+                    const float y = r.getBottom() - r.getHeight() * juce::jlimit (0.05f, 1.0f, 0.5f + 0.7f * std::log10 (juce::jmax (0.02f, gain)));
+                    if (i == 0) curve.startNewSubPath (xOf (hz), y); else curve.lineTo (xOf (hz), y);
+                }
+                glowStroke (g, curve, c, 1.6f, 0.8f);
+                g.setColour (Colours::textDim);
+                g.setFont (mono (9.0f));
+                g.drawText (dsp::Speaker::typeNames()[(int) v ("spkType")].toUpperCase(), r.reduced (3, 2), juce::Justification::topLeft, false);
+                return;
+            }
             case FxCrush:
             {
                 // The sound as the crusher leaves it: the live wave held in steps and rounded to fewer levels.
@@ -706,6 +742,7 @@ public:
             case FxDist: return 200;   case FxTape: return 200;    case FxOtt: return 130;   case FxPitch: return 150;
             case FxChorus: return 190; case FxFlanger: return 250; case FxFilter: return 250; case FxGate: return 250;
             case FxDelay: return 250;  case FxReverb: return 210;  case FxEq: return 310;    case FxCrush: return 200;
+            case FxSpeaker: return 210;
             default: return 208; // the output stage
         }
     }

@@ -244,6 +244,105 @@ private:
 };
 
 //==============================================================================
+// Speaker: what the sound would be like coming out of something small and cheap (or something huge).
+// A band of the spectrum, a resonant bump where that box honks, and a little grit from its amp.
+class Speaker
+{
+public:
+    enum Type { Phone, Laptop, Car, Boombox, Club, NumTypes };
+    static juce::StringArray typeNames() { return { "Phone", "Laptop", "Car", "Boombox", "Club" }; }
+
+    struct Voicing { float hp, lp, bumpHz, bumpDb, bumpQ, grit; };
+    static Voicing voicingFor (int type)
+    {
+        switch (juce::jlimit (0, NumTypes - 1, type))
+        {
+            case Phone:   return { 520.0f, 4200.0f, 1900.0f, 7.0f, 1.3f, 0.35f };
+            case Laptop:  return { 320.0f, 8000.0f, 3000.0f, 5.0f, 1.0f, 0.2f };
+            case Car:     return { 70.0f, 12000.0f, 95.0f, 6.0f, 0.9f, 0.12f };
+            case Boombox: return { 130.0f, 6500.0f, 800.0f, 5.0f, 0.9f, 0.28f };
+            default:      return { 38.0f, 16000.0f, 62.0f, 4.0f, 0.8f, 0.08f }; // a club rig: big and mostly clean
+        }
+    }
+
+    void prepare (double sampleRate)
+    {
+        sr = sampleRate;
+        reset();
+    }
+    void reset() { for (auto& f : filters) f.reset(); }
+
+    void process (float* L, float* R, int n, int type, float drive, float mix)
+    {
+        const auto v = voicingFor (type);
+        if (type != lastType || std::abs (drive - lastDrive) > 0.001f)
+        {
+            lastType = type;
+            lastDrive = drive;
+            for (int c = 0; c < 2; ++c)
+            {
+                filters[(size_t) (c * 3)].setHighPass (sr, v.hp, 0.707f);
+                filters[(size_t) (c * 3 + 1)].setLowPass (sr, juce::jmin ((float) sr * 0.45f, v.lp), 0.707f);
+                filters[(size_t) (c * 3 + 2)].setPeak (sr, v.bumpHz, v.bumpQ, v.bumpDb);
+            }
+        }
+        const float grit = v.grit * (0.4f + drive * 1.6f);
+        for (int i = 0; i < n; ++i)
+            for (int c = 0; c < 2; ++c)
+            {
+                float* x = c == 0 ? &L[i] : &R[i];
+                float y = *x;
+                for (int f = 0; f < 3; ++f) y = filters[(size_t) (c * 3 + f)].process (y);
+                if (grit > 0.001f) y = std::tanh (y * (1.0f + grit * 4.0f)) / (1.0f + grit * 1.2f);
+                *x += (y - *x) * mix;
+            }
+    }
+
+private:
+    // A small biquad, the same shape as the EQ's.
+    struct Biquad
+    {
+        double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        float z1 = 0, z2 = 0;
+        void reset() { z1 = z2 = 0; }
+        float process (float x)
+        {
+            const double y = b0 * x + z1;
+            z1 = (float) (b1 * x - a1 * y + z2);
+            z2 = (float) (b2 * x - a2 * y);
+            return (float) y;
+        }
+        void setFrom (double b0n, double b1n, double b2n, double a0, double a1n, double a2n)
+        {
+            b0 = b0n / a0; b1 = b1n / a0; b2 = b2n / a0; a1 = a1n / a0; a2 = a2n / a0;
+        }
+        void setHighPass (double sr, double f, double q)
+        {
+            const double w = juce::MathConstants<double>::twoPi * juce::jlimit (10.0, sr * 0.45, f) / sr;
+            const double c = std::cos (w), s = std::sin (w), al = s / (2.0 * q);
+            setFrom ((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + al, -2 * c, 1 - al);
+        }
+        void setLowPass (double sr, double f, double q)
+        {
+            const double w = juce::MathConstants<double>::twoPi * juce::jlimit (10.0, sr * 0.45, f) / sr;
+            const double c = std::cos (w), s = std::sin (w), al = s / (2.0 * q);
+            setFrom ((1 - c) / 2, 1 - c, (1 - c) / 2, 1 + al, -2 * c, 1 - al);
+        }
+        void setPeak (double sr, double f, double q, double db)
+        {
+            const double A = std::pow (10.0, db / 40.0);
+            const double w = juce::MathConstants<double>::twoPi * juce::jlimit (10.0, sr * 0.45, f) / sr;
+            const double c = std::cos (w), s = std::sin (w), al = s / (2.0 * q);
+            setFrom (1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A);
+        }
+    };
+    std::array<Biquad, 6> filters {};
+    double sr = 44100.0;
+    int lastType = -1;
+    float lastDrive = -1.0f;
+};
+
+//==============================================================================
 // Pitch shifter: two taps running through a delay line half a window apart, crossfaded so the seam is hidden.
 // Cheap and stable, the classic way to transpose without a phase vocoder.
 class PitchShifter

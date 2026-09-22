@@ -1019,8 +1019,38 @@ int main (int argc, char** argv)
             // A chain saved before CRUSH existed keeps its order, with the new effect on the end.
             const auto oldText = juce::String ("10,9,8,7,6,5,4,3,2,1,0");
             const auto parsed = ab::parseFxOrder (oldText);
-            check (parsed[0] == 10 && parsed[1] == 9 && parsed[(size_t) ab::NumFx - 1] == ab::FxCrush,
-                   "a chain saved before an effect existed keeps its order and the new one follows (" + ab::fxOrderText (parsed) + ")");
+            bool kept = parsed[0] == 10 && parsed[1] == 9 && parsed[10] == 0;
+            for (int i = 11; i < ab::NumFx; ++i) kept &= parsed[(size_t) i] == (juce::uint8) i; // the newer effects follow, in order
+            check (kept, "a chain saved before an effect existed keeps its order and the newer ones follow (" + ab::fxOrderText (parsed) + ")");
+        }
+
+        // SPEAKER: a phone keeps almost none of the low end; a club rig keeps it.
+        {
+            auto lowEnergy = [&] (int type, float mix)
+            {
+                HypernovaAudioProcessor p;
+                p.prepareToPlay (rate48, 256);
+                p.setParam ("aPos", 0.0f); p.setParam ("ampS", 1.0f); p.setParam ("fltOn", 0.0f);
+                p.setParam ("spkOn", 1.0f); p.setParam ("spkType", (float) type); p.setParam ("spkMix", mix); p.setParam ("spkDrive", 0.0f);
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (1, 33, 1.0f), 0); // a low A: mostly under 200 Hz
+                double sum = 0;
+                int n = 0;
+                for (int b = 0; b < 60; ++b)
+                {
+                    juce::AudioBuffer<float> buf (2, 256);
+                    buf.clear();
+                    p.processBlock (buf, midi);
+                    midi.clear();
+                    if (b > 30) for (int i = 0; i < 256; ++i) { sum += (double) buf.getSample (0, i) * buf.getSample (0, i); ++n; }
+                }
+                return (float) std::sqrt (sum / juce::jmax (1, n));
+            };
+            const float clean = lowEnergy (ab::dsp::Speaker::Phone, 0.0f);
+            const float phone = lowEnergy (ab::dsp::Speaker::Phone, 1.0f);
+            const float club = lowEnergy (ab::dsp::Speaker::Club, 1.0f);
+            check (phone < clean * 0.35f, "speaker: a phone loses the low end (" + juce::String (clean, 3) + " -> " + juce::String (phone, 3) + ")");
+            check (club > phone * 2.0f, "and a club rig keeps it (" + juce::String (club, 3) + ")");
         }
 
         // The rack's dry/wet: at 0 you hear the sound going in, at 1 the effects, and it doesn't click.
