@@ -283,11 +283,16 @@ public:
 
     void setStack (const juce::StringArray& titles, int index)
     {
+        // Called on every relayout: only lay out again when the tabs or the folded state actually changed
+        // (otherwise a resize in progress would be laid out at every step after all).
+        const auto sig = titles.joinIntoString ("|") + "#" + juce::String (index) + (collapsed ? "c" : "") + (sideways ? "s" : "") + (maximised ? "m" : "");
+        if (sig == stackSig) return;
+        stackSig = sig;
         stackTitles = titles;
         stackIndex = index;
         tabs.setVisible (titles.size() > 1 && ! collapsed);
         tabs.setTabs (titles, index, colour);
-        resized();
+        layoutContent();
         repaint();
     }
     bool stacked() const { return stackTitles.size() > 1; }
@@ -295,17 +300,51 @@ public:
 
     void setEditing (bool e)
     {
+        if (e == editing) return;
         editing = e;
         // In layout mode the controls are locked: the overlay above takes every click.
         content.setInterceptsMouseClicks (! e, ! e);
         tabs.setInterceptsMouseClicks (! e, false);
+        // Nothing inside moves in layout mode, so the contents are kept as a picture: a ghost or landing slot
+        // passing over a panel then costs a copy, not a full redraw of its knobs and 3D views.
+        content.setBufferedToImage (e);
         repaint();
     }
 
     void resized() override
     {
         const auto r = getLocalBounds();
-        if (r.getWidth() * 2 != panelCache.getWidth() || r.getHeight() * 2 != panelCache.getHeight()) lastResize = juce::Time::getMillisecondCounter();
+        const bool sizeChanged = r.getWidth() != laidOut.x || r.getHeight() != laidOut.y;
+        if (sizeChanged) lastResize = juce::Time::getMillisecondCounter();
+        // Being resized (a gap dragged, a spring settling): show a stretched picture of the contents and lay
+        // them out for real once the size stops changing. Laying out and redrawing every knob and 3D view at
+        // every intermediate size is what made dragging gaps lag.
+        if (sizeChanged && ! collapsed && laidOut.x > 0 && isVisible() && (frozen.isValid() || (content.isVisible() && content.getWidth() > 0)))
+        {
+            if (frozen.isNull())
+                frozen = content.createComponentSnapshot (content.getLocalBounds(), true, 2.0f * scaleNow);
+            content.setVisible (false);
+            tabs.setVisible (false);
+            scheduleThaw();
+            repaint();
+            return;
+        }
+        layoutContent();
+    }
+
+    // Lays the contents out at the current size now (tests call this through the editor to skip the wait).
+    void thaw()
+    {
+        if (frozen.isNull() && laidOut == juce::Point<int> (getWidth(), getHeight())) return;
+        frozen = {};
+        layoutContent();
+    }
+
+    void layoutContent()
+    {
+        const auto r = getLocalBounds();
+        laidOut = { r.getWidth(), r.getHeight() };
+        frozen = {};
         if (collapsed)
         {
             content.setVisible (false);
@@ -372,6 +411,11 @@ public:
             cachedTheme = themeVersion;
         }
         g.drawImage (panelCache, r);
+        if (frozen.isValid() && ! collapsed)
+        {
+            g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+            g.drawImage (frozen, r.withTrimmedTop ((float) tabStripHeight()));
+        }
         if (collapsed) paintFolded (g, r);
         else if (stacked() && ! tabsInHeader())
         {
@@ -512,7 +556,23 @@ private:
     juce::Image panelCache;
     int cachedTheme = -1;
     juce::uint32 lastResize = 0;
-    bool crispPending = false;
+    bool crispPending = false, thawPending = false;
+    juce::String stackSig;
+    juce::Image frozen;            // the contents as they looked when a resize began
+    juce::Point<int> laidOut;      // the size the contents were last laid out for
+
+    void scheduleThaw()
+    {
+        if (thawPending) return;
+        thawPending = true;
+        juce::Timer::callAfterDelay (150, [safe = juce::Component::SafePointer<Widget> (this)]
+        {
+            if (safe == nullptr) return;
+            safe->thawPending = false;
+            if (juce::Time::getMillisecondCounter() - safe->lastResize < 120u) safe->scheduleThaw();
+            else safe->thaw();
+        });
+    }
     juce::StringArray stackTitles;
     int stackIndex = 0;
 
@@ -612,7 +672,7 @@ public:
 
     explicit DockOverlay (Host& h) : host (h) { setWantsKeyboardFocus (false); }
 
-    void setEditing (bool e) { editing = e; cancelDrag(); repaint(); }
+    void setEditing (bool e) { editing = e; cancelDrag(); repaint(); lastExtent = {}; }
     bool isEditing() const { return editing; }
 
     bool hitTest (int x, int y) override
@@ -674,7 +734,7 @@ public:
     {
         refreshDividers();
         const int d = dividerAt (e.getPosition());
-        if (d != hoverDivider) { hoverDivider = d; repaint(); }
+        if (d != hoverDivider) { hoverDivider = d; refreshOverlay(); }
         if (d >= 0)
         {
             const auto a = dividers[(size_t) d].area;
@@ -690,7 +750,7 @@ public:
                                  : w->collapsed ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::DraggingHandCursor);
     }
 
-    void mouseExit (const juce::MouseEvent&) override { if (hoverDivider >= 0) { hoverDivider = -1; repaint(); } }
+    void mouseExit (const juce::MouseEvent&) override { if (hoverDivider >= 0) { hoverDivider = -1; refreshOverlay(); } }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -703,7 +763,7 @@ public:
             dividerSplit = d.split;
             dividerStart = dock::Tree::childSizes (*d.split);
             dividerIndex = d.index;
-            repaint();
+            refreshOverlay();
             return;
         }
         pressed = editing ? widgetAt (e.getPosition()) : grabbedAt (e.getPosition());
@@ -732,7 +792,7 @@ public:
                 host.dockTree().dragDivider (*dividerSplit, dividerIndex, dividerStart, delta, host.dockMinSize());
                 host.dockRelayout (false);
                 refreshDividers();
-                repaint();
+                refreshOverlay();
             }
             return;
         }
@@ -756,7 +816,7 @@ public:
             activeDivider = -1;
             dividerSplit = nullptr;
             if (e.getPosition() != downPos) host.dockCommit ("resize");
-            repaint();
+            refreshOverlay();
             return;
         }
         if (drag.active) { endDrag(); return; }
@@ -808,7 +868,7 @@ public:
             previewW.snap (shownPreview.getWidth()); previewH.snap (shownPreview.getHeight());
         }
         drag.drop = drop;
-        repaint();
+        refreshOverlay();
     }
 
     void endDrag()
@@ -829,8 +889,39 @@ public:
     // How fast the pointer was going when a dragged widget was let go (px/s), so it lands with that speed.
     juce::Point<float> releaseVelocity() const { return released; }
 
+    // Everything the overlay repainted since the last call (for the edit benchmark).
+    juce::Rectangle<int> takeDirty() { auto d = dirtySinceQuery; dirtySinceQuery = {}; return d; }
+
 private:
     Host& host;
+    juce::Rectangle<int> lastExtent, dirtySinceQuery;
+
+    // Only the parts the overlay draws are repainted (the ghost, the landing slot, a divider's bar), old
+    // place and new. Repainting the whole overlay redrew every panel underneath on every frame of a drag.
+    juce::Rectangle<int> drawnExtent() const
+    {
+        juce::Rectangle<float> r;
+        auto add = [&] (juce::Rectangle<float> x) { r = r.getUnion (x); };
+        const int d = activeDivider >= 0 ? activeDivider : hoverDivider;
+        if (juce::isPositiveAndBelow (d, (int) dividers.size())) add (dividers[(size_t) d].area.toFloat().expanded (2.0f));
+        if (drag.active)
+        {
+            if (! shownPreview.isEmpty()) add (shownPreview.expanded (3.0f));
+            if (drag.ghost.isValid()) { const auto g = drawnGhost(); add (g.expanded (14.0f).withBottom (g.getBottom() + 36.0f)); }
+        }
+        return r.getSmallestIntegerContainer();
+    }
+    void refreshOverlay()
+    {
+        const auto now = drawnExtent();
+        const auto dirty = lastExtent.getUnion (now);
+        if (! dirty.isEmpty())
+        {
+            repaint (dirty);
+            dirtySinceQuery = dirtySinceQuery.getUnion (dirty);
+        }
+        lastExtent = now;
+    }
     bool editing = false;
     std::vector<dock::Divider> dividers;
     int hoverDivider = -1, activeDivider = -1, dividerIndex = 0;
@@ -890,7 +981,7 @@ private:
             shownPreview = { previewX.value, previewY.value, previewW.value, previewH.value };
         }
         if (still) drag.lift.snap (1.0f); else drag.lift.step (dt, 0.24f, 1.0f);
-        repaint();
+        refreshOverlay();
     }
 
     void startDrag (Widget& w, juce::Point<int> pos, const juce::String& id)
@@ -931,7 +1022,7 @@ private:
         drag = {};
         shownPreview = {};
         stopTimer();
-        repaint();
+        refreshOverlay();
     }
 
     void refreshDividers()

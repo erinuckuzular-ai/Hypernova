@@ -48,6 +48,8 @@ int main (int argc, char** argv)
         if (editing) editor->setLibraryOpen (true);
         if (prepare) prepare (*editor);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (prepare ? 400 : 80);
+        editor->finishMotion();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (60);
         auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
         auto f = outDir.getChildFile (name);
         f.deleteFile();
@@ -171,10 +173,18 @@ int main (int argc, char** argv)
             auto src = juce::Desktop::getInstance().getMainMouseSource();
             auto ev = [&] (juce::Point<int> p) { return juce::MouseEvent (src, p.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, overlay, overlay,
                                                                          juce::Time::getCurrentTime(), gutterPoint.toFloat(), juce::Time::getCurrentTime(), 1, false); };
+            auto* dockOverlay = dynamic_cast<DockOverlay*> (overlay);
+            dockOverlay->takeDirty();
             overlay->mouseDown (ev (gutterPoint));
             overlay->mouseDrag (ev (gutterPoint + juce::Point<int> (60, 0)));
+            const auto dirty = dockOverlay->takeDirty();
+            check (dirty.getWidth() * dirty.getHeight() < overlay->getWidth() * overlay->getHeight() / 10,
+                   "dragging a gap repaints only its bar, not the whole overlay (" + dirty.toString() + ")");
+            check (! oscA->content.isVisible(), "while it's being resized, a panel shows a picture instead of laying out its contents at every step");
             overlay->mouseUp (ev (gutterPoint + juce::Point<int> (60, 0)));
             check (std::abs (oscA->getWidth() - (before + 60)) <= 1, "dragging a gap resizes the neighbours (" + juce::String (before) + " -> " + juce::String (oscA->getWidth()) + ")");
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (500);
+            check (oscA->content.isVisible() && oscA->content.getWidth() > 0, "and lays them out once it stops");
             tidy ("after a resize");
         }
 
@@ -470,6 +480,7 @@ int main (int argc, char** argv)
                 ed->setLayoutEditing (editing);
                 if (editing) ed->setLibraryOpen (true);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil (320);
+                ed->finishMotion();
                 walk (*ed, juce::String (ws) + (editing ? " (layout mode)" : ""));
                 ed->setLayoutEditing (false);
             }
@@ -478,6 +489,143 @@ int main (int argc, char** argv)
         for (auto& i : issues) std::printf ("ISSUE  %s\n", i.toRawUTF8());
         std::printf ("%d layout issues\n", issues.size());
         return issues.isEmpty() ? 0 : 1;
+    }
+
+    // --editbench: what a frame costs while you edit the layout: dragging a panel across the others, and
+    // dragging the gap between two panels. Reports the area repainted per frame and the time to draw it.
+    if (argc > 2 && juce::String (argv[2]) == "--editbench")
+    {
+        using namespace ab::ui;
+        for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Hypernova") proc.setCurrentProgram (i);
+        std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
+        ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        ed->loadWorkspace ("Sound Design", false);
+        DockOverlay* overlay = nullptr;
+        std::function<void (juce::Component&)> findOverlay = [&] (juce::Component& c)
+        {
+            for (auto* ch : c.getChildren()) { if (auto* o = dynamic_cast<DockOverlay*> (ch)) overlay = o; findOverlay (*ch); }
+        };
+        findOverlay (*ed);
+        auto src = juce::Desktop::getInstance().getMainMouseSource();
+        juce::Image frame (juce::Image::ARGB, ed->getWidth() * 2, ed->getHeight() * 2, true);
+        auto paintCost = [&] (juce::Rectangle<int> dirty)
+        {
+            if (dirty.isEmpty()) return 0.0;
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            juce::Graphics g (frame);
+            g.addTransform (juce::AffineTransform::scale (2.0f));
+            g.reduceClipRegion (dirty);
+            ed->paintEntireComponent (g, true);
+            return juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0;
+        };
+        const double full = paintCost (overlay->getBounds());
+        std::printf ("whole layout area redrawn: %.1f ms (what every frame of a drag used to cost)\n", full);
+        for (bool editing : { true, false })
+        {
+            ed->setLayoutEditing (editing);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            ed->finishMotion();
+            paintCost (overlay->getBounds()); // warm the caches
+            overlay->takeDirty();
+            // Drag osc A's title across the panels to the far side.
+            auto* oscA = ed->findWidget ("oscA");
+            const auto grab = oscA->getPosition() + (editing ? juce::Point<int> (oscA->getWidth() / 2, 60) : oscA->grabZone().getCentre()) - overlay->getPosition();
+            auto ev = [&] (juce::Point<int> p) { return juce::MouseEvent (src, p.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, overlay, overlay,
+                                                                         juce::Time::getCurrentTime(), grab.toFloat(), juce::Time::getCurrentTime(), 1, false); };
+            overlay->mouseDown (ev (grab));
+            double worst = 0, total = 0;
+            int frames = 0;
+            juce::int64 area = 0;
+            for (int step = 1; step <= 40; ++step)
+            {
+                overlay->mouseDrag (ev (grab + juce::Point<int> (step * 20, step * 8)));
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (17);
+                const auto dirty = overlay->takeDirty();
+                const double ms = paintCost (dirty);
+                worst = juce::jmax (worst, ms); total += ms; ++frames;
+                area += (juce::int64) dirty.getWidth() * dirty.getHeight();
+            }
+            overlay->mouseUp (ev (grab + juce::Point<int> (820, 320)));
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            ed->finishMotion();
+            ed->undoLayout();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            ed->finishMotion();
+            std::printf ("%s, dragging a panel: %.1f ms a frame on average, %.1f ms at worst, %.0f%% of the area repainted\n",
+                         editing ? "layout mode" : "normal use", total / frames, worst,
+                         100.0 * (double) area / frames / ((double) overlay->getWidth() * overlay->getHeight()));
+        }
+        // Dragging the gap between osc A and osc B (the neighbours resize every frame).
+        {
+            ed->setLayoutEditing (true);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+            ed->finishMotion();
+            auto* oscA = ed->findWidget ("oscA");
+            const int widthBefore = oscA->getWidth();
+            const auto gap = juce::Point<int> (oscA->getRight() + dock::gutter / 2, oscA->getBounds().getCentreY()) - overlay->getPosition();
+            auto ev = [&] (juce::Point<int> p) { return juce::MouseEvent (src, p.toFloat(), {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, overlay, overlay,
+                                                                         juce::Time::getCurrentTime(), gap.toFloat(), juce::Time::getCurrentTime(), 1, false); };
+            overlay->mouseDown (ev (gap));
+            double worst = 0, total = 0, layoutTotal = 0;
+            const int steps = juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_EDIT_LOOP", {}).isNotEmpty() ? 400 : 30;
+            for (int step = 1; step <= steps; ++step)
+            {
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                overlay->mouseDrag (ev (gap + juce::Point<int> ((step % 2 == 0 ? 1 : -1) * 3 + (step % 30) * 3, 0)));
+                const double layoutMs = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0;
+                const auto a = ed->findWidget ("oscA")->getBounds(), b = ed->findWidget ("oscB")->getBounds();
+                const double ms = layoutMs + paintCost (a.getUnion (b));
+                worst = juce::jmax (worst, ms); total += ms; layoutTotal += layoutMs;
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (17);
+            }
+            const int widthAfter = oscA->getWidth();
+            overlay->mouseUp (ev (gap));
+            std::printf ("layout mode, dragging a gap: %.1f ms a frame on average (%.1f ms laying out), %.1f ms at worst (osc A %d -> %d px)\n",
+                         total / steps, layoutTotal / steps, worst, widthBefore, widthAfter);
+            if (juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_EDIT_PROFILE", {}).isNotEmpty())
+            {
+                // Which components cost the most to draw at the size they were just given.
+                std::vector<std::pair<double, juce::String>> costs;
+                std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+                {
+                    for (auto* child : c.getChildren())
+                    {
+                        if (! child->isVisible() || child->getWidth() == 0) continue;
+                        juce::Image ci (juce::Image::ARGB, child->getWidth() * 2, child->getHeight() * 2, true);
+                        const auto c0 = juce::Time::getHighResolutionTicks();
+                        { juce::Graphics g (ci); g.addTransform (juce::AffineTransform::scale (2.0f)); child->paint (g); }
+                        costs.push_back ({ juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - c0) * 1000.0,
+                                           juce::String (typeid (*child).name()) + " " + child->getBounds().toString() });
+                        walk (*child);
+                    }
+                };
+                overlay->mouseDown (ev (gap));
+                overlay->mouseDrag (ev (gap + juce::Point<int> (40, 0)));
+                walk (*ed->findWidget ("oscA"));
+                overlay->mouseUp (ev (gap));
+                std::printf ("  (drag %s)\n", overlay->isDragging() ? "is a panel drag" : "did not start a panel drag");
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                { juce::Graphics g (frame); g.addTransform (juce::AffineTransform::scale (2.0f)); ed->paint (g); }
+                std::printf ("  %6.2f ms  the editor's own paint (backdrop and header)\n", juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0);
+                for (auto id : { "oscA", "oscB", "space" })
+                {
+                    auto* w = ed->findWidget (id);
+                    const auto w0 = juce::Time::getHighResolutionTicks();
+                    for (int k = 0; k < 5; ++k) { juce::Graphics g (frame); g.addTransform (juce::AffineTransform::scale (2.0f)); w->paintEntireComponent (g, true); }
+                    std::printf ("  %6.2f ms  whole widget %s (buffered: %s)\n", juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - w0) * 200.0, id,
+                                 w->content.getCachedComponentImage() != nullptr ? "yes" : "no");
+                    const auto p0 = juce::Time::getHighResolutionTicks();
+                    for (int k = 0; k < 5; ++k) { juce::Graphics g (frame); g.addTransform (juce::AffineTransform::scale (2.0f)); w->paint (g); w->paintOverChildren (g); }
+                    std::printf ("  %6.2f ms    its face and veil\n", juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - p0) * 200.0);
+                }
+                const auto e0 = juce::Time::getHighResolutionTicks();
+                paintCost (ed->findWidget ("oscA")->getBounds().withWidth (8).translated (-10, 0));
+                std::printf ("  %6.2f ms  an 8 px strip of backdrop\n", juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - e0) * 1000.0);
+                std::sort (costs.rbegin(), costs.rend());
+                for (size_t i = 0; i < std::min<size_t> (8, costs.size()); ++i) std::printf ("  %6.2f ms  %s\n", costs[i].first, costs[i].second.toRawUTF8());
+            }
+        }
+        return 0;
     }
 
     // --paintbench: how long one full editor frame takes to draw at retina scale, and what the 30 fps timer costs.

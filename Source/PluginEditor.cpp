@@ -764,6 +764,13 @@ void HypernovaAudioProcessorEditor::timerCallback()
     for (auto* v : { static_cast<ab::ui::OrbitView*> (&viewA), static_cast<ab::ui::OrbitView*> (&viewB), static_cast<ab::ui::OrbitView*> (&space) })
         v->setLevel (outLevel);
     for (auto& k : knobs) k->ageTrail();
+    if (message.isNotEmpty() && juce::Time::currentTimeMillis() >= messageUntil)
+    {
+        message.clear();
+        canvas.repaint (messageArea);
+    }
+    // In layout mode the panels are under a veil and kept as pictures: the live views wait until you're done.
+    if (layoutEditing) return;
     // The 3D views run at 20 fps (two ticks in three): smooth to the eye, a third less drawing than 30.
     if ((++viewTick % 3) != 0)
     {
@@ -807,11 +814,6 @@ void HypernovaAudioProcessorEditor::timerCallback()
     {
         lastReadout = readout;
         if (spaceWidget != nullptr) spaceWidget->content.repaint (110 + spaceWidget->spread.width() - spacePanel.getWidth(), 8, 110, 28);
-    }
-    if (message.isNotEmpty() && juce::Time::currentTimeMillis() >= messageUntil)
-    {
-        message.clear();
-        canvas.repaint (messageArea);
     }
 }
 
