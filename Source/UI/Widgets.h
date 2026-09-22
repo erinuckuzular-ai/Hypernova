@@ -322,11 +322,15 @@ public:
     {
         const auto r = getLocalBounds();
         const bool sizeChanged = r.getWidth() != laidOut.x || r.getHeight() != laidOut.y;
-        if (sizeChanged) lastResize = juce::Time::getMillisecondCounter();
+        // A burst means the size is still changing (a gap being dragged, a spring settling). A single change
+        // is laid out straight away: taking a picture for it would cost more than the layout it saves.
+        const auto now = juce::Time::getMillisecondCounter();
+        const bool burst = sizeChanged && now - lastResize < 60u;
+        if (sizeChanged) lastResize = now;
         // Being resized (a gap dragged, a spring settling): show a stretched picture of the contents and lay
         // them out for real once the size stops changing. Laying out and redrawing every knob and 3D view at
         // every intermediate size is what made dragging gaps lag.
-        if (sizeChanged && ! collapsed && laidOut.x > 0 && isVisible() && (frozen.isValid() || (content.isVisible() && content.getWidth() > 0)))
+        if (sizeChanged && burst && ! collapsed && laidOut.x > 0 && isVisible() && (frozen.isValid() || (content.isVisible() && content.getWidth() > 0)))
         {
             if (frozen.isNull())
                 frozen = content.createComponentSnapshot (content.getLocalBounds(), true, 2.0f * scaleNow);

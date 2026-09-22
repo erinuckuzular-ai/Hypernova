@@ -679,6 +679,102 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    // --stalls: how long each everyday action blocks the interface (the work plus the frame it forces).
+    // Anything much over 30 ms is felt as a stutter, and over ~100 ms as a freeze.
+    if (argc > 2 && juce::String (argv[2]) == "--stalls")
+    {
+        using namespace ab::ui;
+        for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Hypernova") proc.setCurrentProgram (i);
+        std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
+        ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        ed->loadWorkspace ("Sound Design", false);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (500);
+        ed->finishMotion();
+        juce::Image frame (juce::Image::ARGB, ed->getWidth() * 2, ed->getHeight() * 2, true);
+        auto paintAll = [&]
+        {
+            juce::Graphics g (frame);
+            g.addTransform (juce::AffineTransform::scale (2.0f));
+            ed->paintEntireComponent (g, true);
+        };
+        paintAll(); // warm every cache
+        std::vector<std::pair<double, juce::String>> results;
+        auto time = [&] (const juce::String& what, std::function<void()> action)
+        {
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            action();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (1);
+            const auto t1 = juce::Time::getHighResolutionTicks();
+            paintAll();
+            const auto t2 = juce::Time::getHighResolutionTicks();
+            const double work = juce::Time::highResolutionTicksToSeconds (t1 - t0) * 1000.0;
+            const double draw = juce::Time::highResolutionTicksToSeconds (t2 - t1) * 1000.0;
+            results.push_back ({ work + draw, what + "   (" + juce::String (work, 1) + " ms of work, " + juce::String (draw, 1) + " ms to draw the frame)" });
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (500);
+            ed->finishMotion();
+            paintAll();
+        };
+        for (auto ws : { "Sampling", "Effects", "Analysis", "Sound Design" })
+            time (juce::String ("switch to the ") + ws + " workspace", [&] { ed->loadWorkspace (ws, false); });
+        time ("turn layout mode on", [&] { ed->setLayoutEditing (true); });
+        time ("open the widget library", [&] { ed->setLibraryOpen (true); });
+        time ("close the library", [&] { ed->setLibraryOpen (false); });
+        time ("turn layout mode off", [&] { ed->setLayoutEditing (false); });
+        time ("add a scope from the library", [&] { ed->addWidgetType ("scope"); });
+        time ("hide it again", [&] { ed->hideWidget ("scope-1"); });
+        time ("fill the window with one panel", [&] { ed->toggleMaximise ("oscA"); });
+        time ("put it back", [&] { ed->toggleMaximise ("oscA"); });
+        for (int page = 1; page <= 3; ++page) time ("switch the deck to page " + juce::String (page), [&] { ed->setDeckPage (page); });
+        time ("open the sound browser", [&] { ed->setBrowserOpen (true); });
+        time ("close it", [&] { ed->setBrowserOpen (false); });
+        time ("load a preset", [&] { for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Reese Wide") proc.setCurrentProgram (i); });
+        time ("switch theme", [&] { auto& t = ThemeState::get(); t.base = builtInThemes()[(size_t) 1]; ++t.version; ed->applyTheme(); });
+        time ("switch theme back", [&] { auto& t = ThemeState::get(); t.base = builtInThemes()[(size_t) 0]; ++t.version; ed->applyTheme(); });
+        time ("add an effect to the rack", [&] { proc.addToRack (ab::FxDelay); });
+        time ("take it out", [&] { proc.removeFromRack (ab::FxDelay); });
+        time ("add an oscillator", [&] { ed->addOscillator(); });
+        time ("remove it", [&] { ed->removeOscillator (2); });
+        time ("turn a knob", [&] { proc.setParam ("cutoff", 900.0f); });
+        if (juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_WS_LOOP", {}).isNotEmpty())
+            for (int round = 0; round < 600; ++round)
+                for (auto ws : { "Sampling", "Effects", "Analysis", "Sound Design" }) ed->loadWorkspace (ws, false);
+        if (juce::SystemStats::getEnvironmentVariable ("HYPERNOVA_STALL_LOOP", {}).isNotEmpty())
+            for (int round = 0; round < 40; ++round)
+            {
+                for (auto ws : { "Sampling", "Effects", "Analysis", "Sound Design" }) { ed->loadWorkspace (ws, false); juce::MessageManager::getInstance()->runDispatchLoopUntil (20); ed->finishMotion(); paintAll(); }
+                ed->setLibraryOpen (true); juce::MessageManager::getInstance()->runDispatchLoopUntil (20); paintAll();
+                ed->setLibraryOpen (false); juce::MessageManager::getInstance()->runDispatchLoopUntil (20); paintAll();
+            }
+        {
+            // Opening the editor from scratch: what you wait for when the plug-in window appears.
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            std::unique_ptr<HypernovaAudioProcessorEditor> fresh (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
+            fresh->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+            const auto t1 = juce::Time::getHighResolutionTicks();
+            {
+                juce::Image img (juce::Image::ARGB, fresh->getWidth() * 2, fresh->getHeight() * 2, true);
+                juce::Graphics g (img);
+                g.addTransform (juce::AffineTransform::scale (2.0f));
+                fresh->paintEntireComponent (g, true);
+            }
+            const auto t2 = juce::Time::getHighResolutionTicks();
+            results.push_back ({ juce::Time::highResolutionTicksToSeconds (t2 - t0) * 1000.0,
+                                 "open the plug-in window   (" + juce::String (juce::Time::highResolutionTicksToSeconds (t1 - t0) * 1000.0, 1) + " ms to build, "
+                                 + juce::String (juce::Time::highResolutionTicksToSeconds (t2 - t1) * 1000.0, 1) + " ms for the first frame)" });
+        }
+        {
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            auto img = ab::ui::renderCosmosFallback (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight, 2.0f, { 48.0f, 44.0f }, 0.0f);
+            results.push_back ({ juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0,
+                                 "(the backdrop picture on machines without OpenGL: " + juce::String (img.getWidth()) + "x" + juce::String (img.getHeight()) + ")" });
+        }
+        std::sort (results.rbegin(), results.rend());
+        for (auto& [ms, what] : results) std::printf ("%7.1f ms  %s\n", ms, what.toRawUTF8());
+        const double worst = results.empty() ? 0.0 : results.front().first;
+        std::printf ("worst: %.0f ms\n", worst);
+        return 0;
+    }
+
     // --paintbench: how long one full editor frame takes to draw at retina scale, and what the 30 fps timer costs.
     if (argc > 2 && juce::String (argv[2]) == "--paintbench")
     {

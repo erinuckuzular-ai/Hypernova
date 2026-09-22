@@ -687,7 +687,10 @@ void HypernovaAudioProcessorEditor::paintCanvas (juce::Graphics& g)
     if (! cosmosOnGpu())
     {
         if (! fallbackBackdrop.isValid())
-            fallbackBackdrop = renderCosmosFallback (baseWidth, baseHeight, 2.0f, logoHole, 0.0f);
+            // Without OpenGL the backdrop is drawn pixel by pixel on the CPU, so it's rendered at screen
+            // resolution rather than retina resolution and scaled up: it's a soft nebula, and this is four
+            // times faster to make (it's rebuilt whenever the theme changes).
+            fallbackBackdrop = renderCosmosFallback (baseWidth, baseHeight, 1.0f, logoHole, 0.0f);
         g.drawImage (fallbackBackdrop, juce::Rectangle<float> (0, 0, (float) baseWidth, (float) baseHeight));
     }
 
