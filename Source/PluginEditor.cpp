@@ -797,8 +797,8 @@ void HypernovaAudioProcessorEditor::timerCallback()
         message.clear();
         canvas.repaint (messageArea);
     }
-    // In layout mode the panels are under a veil and kept as pictures: the live views wait until you're done.
-    if (layoutEditing) return;
+    // In layout mode, and while something is being dragged, the panels are pictures: the live views wait.
+    if (layoutEditing || dragOverLayout) return;
     // The 3D views run at 20 fps (two ticks in three): smooth to the eye, a third less drawing than 30.
     if ((++viewTick % 3) != 0)
     {

@@ -305,10 +305,17 @@ public:
         // In layout mode the controls are locked: the overlay above takes every click.
         content.setInterceptsMouseClicks (! e, ! e);
         tabs.setInterceptsMouseClicks (! e, false);
-        // Nothing inside moves in layout mode, so the contents are kept as a picture: a ghost or landing slot
-        // passing over a panel then costs a copy, not a full redraw of its knobs and 3D views.
-        content.setBufferedToImage (e);
+        updatePicture();
         repaint();
+    }
+
+    // While something is being dragged over the layout, panels are kept as pictures too, so a ghost passing
+    // over one costs a copy instead of a redraw of its knobs and 3D views.
+    void setDragging (bool d)
+    {
+        if (d == draggingOver) return;
+        draggingOver = d;
+        updatePicture();
     }
 
     void resized() override
@@ -557,6 +564,8 @@ private:
     int cachedTheme = -1;
     juce::uint32 lastResize = 0;
     bool crispPending = false, thawPending = false;
+    bool draggingOver = false;
+    void updatePicture() { content.setBufferedToImage (editing || draggingOver); }
     juce::String stackSig;
     juce::Image frozen;            // the contents as they looked when a resize began
     juce::Point<int> laidOut;      // the size the contents were last laid out for
@@ -667,6 +676,7 @@ public:
         virtual void dockDrop (const juce::String& widgetOrType, bool isNewType, const dock::Drop&, juce::Rectangle<int> landingFrom) = 0;
         virtual void dockButton (Widget&, int button, juce::Point<int> screenPos) = 0;
         virtual void dockActivate (const juce::String& widgetId) = 0;
+        virtual void dockDragging (bool active) = 0;   // something is being dragged over the layout
         virtual void dockMaximise (const juce::String& widgetId) = 0;
     };
 
@@ -844,6 +854,7 @@ public:
         drag.ghostSize = { ghost.getWidth() / 2, ghost.getHeight() / 2 };
         drag.grab = { drag.ghostSize.x / 2, 18 };
         makeLiftedGhost();
+        host.dockDragging (true);
         drag.lift.value = 0.9f; // from the library card: it grows a little as it comes off
         drag.lift.target = 1.0f;
         tracker.reset();
@@ -1016,6 +1027,7 @@ private:
         drag.grab = { juce::jlimit (8, drag.ghostSize.x - 8, juce::roundToInt ((float) grabInWidget.x * k)),
                       juce::jlimit (8, drag.ghostSize.y - 8, juce::roundToInt ((float) grabInWidget.y * k)) };
         drag.pos = pos;
+        host.dockDragging (true);
         makeLiftedGhost();
         drag.lift.value = 1.0f / juce::jmax (0.05f, k);
         drag.lift.target = 1.0f;
@@ -1040,6 +1052,7 @@ private:
         drag = {};
         shownPreview = {};
         stopTimer();
+        host.dockDragging (false);
         refreshOverlay();
     }
 

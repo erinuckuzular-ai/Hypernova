@@ -151,6 +151,12 @@ private:
     void dockCommit (const juce::String& what) override;
     void dockDrop (const juce::String& widgetOrType, bool isNewType, const ab::ui::dock::Drop&, juce::Rectangle<int> landingFrom) override;
     void dockMaximise (const juce::String& widgetId) override { toggleMaximise (widgetId); }
+    void dockDragging (bool active) override
+    {
+        if (active == dragOverLayout) return;
+        dragOverLayout = active;                       // the live views wait while something is being dragged
+        for (auto& w : widgets) w->setDragging (active);
+    }
     void dockButton (ab::ui::Widget&, int button, juce::Point<int> screenPos) override;
     void dockActivate (const juce::String& widgetId) override;
 
@@ -216,6 +222,7 @@ private:
     juce::String landingId;             // a widget just dropped: it slides from where it was let go
     juce::Rectangle<int> landingFrom;
     juce::Point<float> landingVelocity;
+    bool dragOverLayout = false;
     ab::ui::motion::BoundsSprings springs; // every panel move: interruptible, velocity-aware, no fixed durations
     bool layoutEditing = false;
     juce::String workspaceName;
