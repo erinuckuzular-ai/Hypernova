@@ -268,6 +268,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     add<Choice> (l, pid ("lowDuckRate"), "Low End Duck Rate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, 0);
     addFloat (l, "lowDuckRelease", "Low End Duck Release", skewed (0.02f, 0.6f, 0.15f), 0.15f, timeText);
 
+    // The rack's own dry/wet (appended): 100% is the whole rack, lower blends the sound going in back over it.
+    addFloat (l, "fxMix", "Rack Mix", { 0.0f, 1.0f }, 1.0f, pctText);
+
     // LFO 3 and 4 (appended): the same controls as LFO 1 and 2. They run whether or not their widget is on screen.
     for (int i = 3; i <= NumLfo; ++i)
     {
@@ -537,6 +540,7 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.delayPing = param ("dlyPing") > 0.5f;
     f.delayTone = param ("dlyTone");
     f.width = param ("width");
+    f.rackMix = param ("fxMix");
     f.distOn = param ("distOn") > 0.5f;
     f.ottOn = param ("ottOn") > 0.5f;
     f.chorusOn = param ("chorusOn") > 0.5f;
@@ -1100,6 +1104,7 @@ void HypernovaAudioProcessor::applyGlobalModulation (FxSettings& fx)
     fx.eqLow = moved (DEqLow, fx.eqLow);
     fx.eqHigh = moved (DEqHigh, fx.eqHigh);
     fx.width = moved (DWidth, fx.width);
+    fx.rackMix = moved (DRackMix, fx.rackMix);
     fx.chorusRate = moved (DChorusRate, fx.chorusRate);
     fx.distMix = moved (DDistMix, fx.distMix);
     fx.lowLevelDb = moved (DLowLevel, fx.lowLevelDb);

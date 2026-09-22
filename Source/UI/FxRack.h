@@ -676,7 +676,7 @@ public:
         {
             case FxDist: return 200;   case FxTape: return 200;    case FxOtt: return 130;   case FxPitch: return 150;
             case FxChorus: return 190; case FxFlanger: return 250; case FxFilter: return 250; case FxGate: return 250;
-            case FxDelay: return 250;  case FxReverb: return 210;  case FxEq: return 310;    default: return 150;
+            case FxDelay: return 250;  case FxReverb: return 210;  case FxEq: return 310;    default: return 208; // the output stage
         }
     }
 

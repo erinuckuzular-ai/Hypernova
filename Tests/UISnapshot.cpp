@@ -784,6 +784,12 @@ int main (int argc, char** argv)
         for (int i = 0; i < proc.getNumPrograms(); ++i) if (proc.getProgramName (i) == "Hypernova") proc.setCurrentProgram (i);
         std::unique_ptr<HypernovaAudioProcessorEditor> editor (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
         editor->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        // Which workspace to measure (the effects rack is the busiest): --paintbench [workspace]
+        if (argc > 3) editor->loadWorkspace (juce::String (argv[3]), false);
+        if (juce::String (argv[3 <= argc - 1 ? 3 : 2]) == "Effects")
+            for (int fx : { ab::FxDist, ab::FxTape, ab::FxChorus, ab::FxFilter, ab::FxGate, ab::FxDelay, ab::FxReverb }) proc.addToRack (fx);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (400);
+        editor->finishMotion();
         juce::MidiBuffer midi;
         midi.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
         juce::AudioBuffer<float> buf (2, 512);
@@ -839,6 +845,29 @@ int main (int argc, char** argv)
             }
         };
         walk (*editor);
+        // What a live display costs on its own (that's what repaints 30 times a second).
+        std::function<void (juce::Component&)> displays = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* m = dynamic_cast<ab::ui::FxModule*> (child); m != nullptr && m->isVisible())
+                {
+                    juce::Image ci (juce::Image::ARGB, m->getWidth() * 2, m->getHeight() * 2, true);
+                    const auto c0 = juce::Time::getHighResolutionTicks();
+                    for (int f = 0; f < 10; ++f)
+                    {
+                        juce::Graphics g (ci);
+                        g.addTransform (juce::AffineTransform::scale (2.0f));
+                        g.reduceClipRegion (m->display());
+                        m->paintEntireComponent (g, true);
+                    }
+                    costs.push_back ({ juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - c0) * 100.0,
+                                       "rack unit " + ab::ui::FxModule::nameOf (m->fxId) + ", just its display" });
+                }
+                displays (*child);
+            }
+        };
+        displays (*editor);
         std::sort (costs.rbegin(), costs.rend());
         for (size_t i = 0; i < std::min<size_t> (12, costs.size()); ++i) std::printf ("%6.2f ms  %s\n", costs[i].first, costs[i].second.toRawUTF8());
         return 0;

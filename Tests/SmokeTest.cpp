@@ -801,6 +801,43 @@ int main (int argc, char** argv)
         check (std::abs (e.apvts.getRawParameterValue ("cutoff")->load() - 500.0f) < 1.0f, "and leaves the synth alone");
         file.deleteFile();
 
+        // The rack's dry/wet: at 0 you hear the sound going in, at 1 the effects, and it doesn't click.
+        {
+            auto render = [&] (float mix)
+            {
+                HypernovaAudioProcessor p;
+                p.prepareToPlay (rate, 256);
+                p.setParam ("aPos", 0.66f); p.setParam ("ampS", 1.0f);
+                p.setParam ("distMix", 1.0f); p.setParam ("distDrive", 1.0f); p.setParam ("distOn", 1.0f);
+                p.setParam ("fxMix", mix);
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::noteOn (1, 48, 1.0f), 0);
+                std::vector<float> out;
+                for (int b = 0; b < 120; ++b)
+                {
+                    juce::AudioBuffer<float> buf (2, 256);
+                    buf.clear();
+                    p.processBlock (buf, midi);
+                    midi.clear();
+                    for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+                }
+                return out;
+            };
+            auto rms = [] (const std::vector<float>& v, size_t from)
+            {
+                double sum = 0;
+                for (size_t i = from; i < v.size(); ++i) sum += (double) v[i] * v[i];
+                return (float) std::sqrt (sum / (double) (v.size() - from));
+            };
+            const auto dryOnly = render (0.0f), wetOnly = render (1.0f), half = render (0.5f);
+            const float d = rms (dryOnly, 20000), w = rms (wetOnly, 20000), h = rms (half, 20000);
+            check (std::abs (w - d) > 0.02f, "the rack's dry/wet: heavy distortion sounds different wet than dry (" + juce::String (d, 3) + " vs " + juce::String (w, 3) + ")");
+            check (h > juce::jmin (d, w) - 0.02f && h < juce::jmax (d, w) + 0.02f, "and halfway sits between them (" + juce::String (h, 3) + ")");
+            float jump = 0;
+            for (size_t i = 20001; i < half.size(); ++i) jump = juce::jmax (jump, std::abs (half[i] - half[i - 1]));
+            check (jump < 0.2f, "no steps in the blend (biggest jump " + juce::String (jump, 3) + ")");
+        }
+
         // Right-click menu on a unit: move it along the chain, reset its controls, replace it.
         {
             HypernovaAudioProcessor p;

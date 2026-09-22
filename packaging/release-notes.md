@@ -9,6 +9,7 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - **every effect is its own module**, with all its controls and a live 3D display (spectrum waterfalls, the delay's echoes, the reverb's tail, the gate's pattern, the stereo field). drag a module by its name to move it along the chain.
 - **each unit wears its own colour**, shows where it sits in the chain, and patch leads run between them.
 - **right-click a unit**: switch it off, move it earlier or later, reset its controls, replace it with another effect, or take it out.
+- **MIX** on the output: how much of the whole rack you hear against the sound going into it, so the effects can sit alongside the dry sound. it can be modulated like everything else.
 - **+ ADD** puts an effect in the rack, the x takes it out. the rack scrolls when it's squeezed: pull it by its background, flick it, and its ends give a little.
 - **eq**: five bands (low cut, low shelf, two bells, high shelf). drag the points on its curve.
 - **every effect control can be modulated**: drag an lfo, envelope or macro chip onto it.

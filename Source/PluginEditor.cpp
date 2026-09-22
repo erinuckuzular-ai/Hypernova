@@ -1628,8 +1628,9 @@ void HypernovaAudioProcessorEditor::buildRackModules()
     cb (ab::FxReverb, "verbMode", juce::StringArray { "Space", "Plate", "Spring", "Room" }, { 10, by, 190, 24 });
     kn (ab::FxEq, "eqLow", "LOW", 10);           kn (ab::FxEq, "eqMidGain", "MID", 68);      kn (ab::FxEq, "eqMidFreq", "FREQ", 126);
     kn (ab::FxEq, "eqMidQ", "WIDTH", 184);       kn (ab::FxEq, "eqHigh", "HIGH", 242);
-    kn (-1, "width", "WIDTH", 46);
-    toggle (std::make_unique<PillToggle> ("MONO BASS", ab::ui::fxColour (-1)), "monoBass", { 10, by + 1, 130, 22 },
+    kn (-1, "fxMix", "MIX", 42);   // how much of the rack you hear at all
+    kn (-1, "width", "WIDTH", 106);
+    toggle (std::make_unique<PillToggle> ("MONO BASS", ab::ui::fxColour (-1)), "monoBass", { 10, by + 1, 188, 22 },
             "Keeps everything under 120 Hz in mono so the bass hits hard on club systems", &rack.output());
 }
 

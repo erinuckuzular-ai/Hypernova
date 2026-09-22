@@ -64,6 +64,7 @@ struct FxSettings
     float delayFeedback = 0.35f, delayMix = 0;
     float reverbSize = 0.6f, reverbMix = 0, shimmer = 0;
     bool monoBass = true, delayPing = true;
+    float rackMix = 1.0f;   // how much of the rack you hear against the sound going into it
     float delayTone = 0.6f, width = 1.0f, eqLow = 0, eqHigh = 0;
     // EQ bands beyond the two shelves (defaults keep older sounds exactly as they were).
     float eqLowFreq = 120.0f, eqHighFreq = 5000.0f, eqMidFreq = 1000.0f, eqMidGain = 0, eqMidQ = 1.0f,
@@ -352,6 +353,7 @@ public:
         lowEnd.reset();
         lowXoverNow = 120.0f;
         lowBuf.setSize (2, blockSize);
+        dryBuf.setSize (2, blockSize);
         lowGainSmoothed = 1.0f;
         duckBeats = 0;
 
@@ -412,7 +414,29 @@ public:
         // A new order (or switching Low End) takes effect between blocks: this block fades out on the old setup
         // and the next fades in on the new one, so a change while playing dips for a moment instead of clicking.
         const bool reordering = s.order != applied || s.lowOn != appliedLowOn;
+        // Rack mix: keep what goes into the effects, so it can be blended back against what comes out.
+        const bool blend = s.rackMix < 0.999f || rackMixNow < 0.999f;
+        if (blend)
+        {
+            if (dryBuf.getNumSamples() < n) dryBuf.setSize (2, n, false, false, true);
+            juce::FloatVectorOperations::copy (dryBuf.getWritePointer (0), L, n);
+            juce::FloatVectorOperations::copy (dryBuf.getWritePointer (1), R, n);
+        }
         for (auto id : applied) runEffect (id, buffer, L, R, n, s);
+        if (blend)
+        {
+            const auto* dL = dryBuf.getReadPointer (0);
+            const auto* dR = dryBuf.getReadPointer (1);
+            for (int i = 0; i < n; ++i)
+            {
+                // Smoothed across the block, so turning the knob never steps.
+                rackMixNow += (s.rackMix - rackMixNow) * 0.002f;
+                const float wet = juce::jlimit (0.0f, 1.0f, rackMixNow), dry = 1.0f - wet;
+                L[i] = L[i] * wet + dL[i] * dry;
+                R[i] = R[i] * wet + dR[i] * dry;
+            }
+        }
+        else rackMixNow = s.rackMix;
         if (split) processLowBand (L, R, n, s);
         else lastLowRms = lastHighRms = 0.0f;
         if (reordering)
@@ -445,7 +469,8 @@ private:
     FxOrder applied = defaultFxOrder();
     bool fadeIn = false, appliedLowOn = false;
     juce::dsp::LinkwitzRileyFilter<float> lowEnd;
-    juce::AudioBuffer<float> lowBuf;
+    juce::AudioBuffer<float> lowBuf, dryBuf;
+    float rackMixNow = 1.0f;
     float lowXoverNow = 120.0f, lowGainSmoothed = 1.0f;
     double duckBeats = 0;
 
