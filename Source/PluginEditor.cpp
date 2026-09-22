@@ -21,7 +21,8 @@ namespace
     const juce::Rectangle<int> deckContent { 24, 760, 1232, 140 };
     const juce::Rectangle<int> keysArea    { 24, 918, 1232, 56 };
 
-    const juce::Rectangle<int> messageArea { 334, 72, 496, 16 };
+    constexpr int headerLeft = 250; // just clear of the wordmark
+    const juce::Rectangle<int> messageArea { headerLeft, 72, 838 - 12 - headerLeft, 16 };
 
     // Where a control sits inside its widget (widget-relative, in the widget's design size). Rows breathe: the
     // design heights are taller than the layouts they came from, so y is spread over the extra height.
@@ -216,7 +217,16 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     prevButton.onClick = [this] { processor.stepPreset (-1); };
     nextButton.setTooltip ("Next preset");
     nextButton.onClick = [this] { processor.stepPreset (1); };
-    diceButton.setTooltip ("Randomise: mutate this sound a little or a lot, or roll a new one");
+    compare.setTooltip ("Compare two versions of this sound. Click B to try changes on a copy, A to hear the original. Right-click to copy one over the other.");
+    compare.onPick = [this] (int slot)
+    {
+        const bool first = ! processor.compareHasOther();
+        processor.compareSwitch (slot);
+        showMessage (first ? "B is a copy of A: change it, then flip between them to compare"
+                           : juce::String ("Now hearing ") + (slot == 0 ? "A" : "B"));
+    };
+    compare.onMenu = [this] { showCompareMenu(); };
+    diceButton.setTooltip ("New sound: start from Init, roll a new one, or randomise this one");
     diceButton.onClick = [this] { showDiceMenu(); };
     undoButton.setTooltip ("Undo (Cmd+Z)");
     undoButton.onClick = [this] { if (! processor.undoManager.undo()) showMessage ("Nothing to undo"); };
@@ -228,7 +238,7 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     saveButton.onClick = [this] { showSaveDialog(); };
     layoutButton.setTooltip ("Arrange the panels: move, resize, stack, hide and add widgets, and switch workspaces");
     layoutButton.onClick = [this] { setLayoutEditing (! layoutEditing); };
-    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
+    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &compare, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
         canvas.addAndMakeVisible (b);
     setupEditBar();
     loadWorkspace (ab::ui::WorkspaceStore::current(), false);
@@ -285,16 +295,21 @@ void HypernovaAudioProcessorEditor::resized()
 void HypernovaAudioProcessorEditor::layoutCanvas()
 {
     // Header
-    prevButton.setBounds (334, 22, 32, 44);
-    presetPlate.setBounds (370, 22, 206, 44);
-    nextButton.setBounds (580, 22, 32, 44);
-    diceButton.setBounds (618, 22, 38, 44);
-    saveButton.setBounds (660, 22, 38, 44);
-    undoButton.setBounds (704, 22, 30, 44);
-    redoButton.setBounds (736, 22, 30, 44);
-    layoutButton.setBounds (770, 22, 32, 44);
-    gearButton.setBounds (804, 22, 30, 44);
-    editBar.setBounds (334, 22, macroTray().getX() - 12 - 334, 44); // ends before the macro tray
+    // Header, left to right in groups: browse | compare | new, save | undo, redo | layout, settings.
+    int hx = headerLeft;
+    auto place = [&] (juce::Component& c, int w, int gapAfter) { c.setBounds (hx, 22, w, 44); hx += w + gapAfter; };
+    place (prevButton, 32, 4);
+    place (presetPlate, 204, 4);
+    place (nextButton, 32, 8);
+    place (compare, 60, 8);
+    place (diceButton, 38, 4);
+    place (saveButton, 38, 8);
+    place (undoButton, 30, 2);
+    place (redoButton, 30, 8);
+    place (layoutButton, 32, 4);
+    place (gearButton, 30, 0);
+    jassert (hx <= macroTray().getX() - 12);
+    editBar.setBounds (headerLeft, 22, macroTray().getX() - 12 - headerLeft, 44); // ends before the macro tray
     for (int m = 0; m < 4; ++m)
         macroKnobs[(size_t) m] = &knob ("macro" + juce::String (m + 1), "MACRO " + juce::String (m + 1), Palette::fx,
                                         { 842 + m * 84, 12, 84, 68 }, 40);
@@ -682,6 +697,7 @@ void HypernovaAudioProcessorEditor::refreshPresetInfo()
 
 void HypernovaAudioProcessorEditor::timerCallback()
 {
+    compare.setState (processor.compareSlot(), processor.compareHasOther());
     // Backdrop: feed the shader and ask for a frame. When the GPU path comes up (or goes), redraw the canvas
     // so the CPU fallback picture isn't left underneath.
     {
@@ -1636,10 +1652,12 @@ void HypernovaAudioProcessorEditor::showChainMenu (juce::Component* target, juce
 void HypernovaAudioProcessorEditor::showDiceMenu()
 {
     juce::PopupMenu m;
-    m.addSectionHeader ("RANDOMISE");
-    m.addItem (1, "Nudge this sound (a little)");
-    m.addItem (2, "Mutate this sound (a lot)");
+    m.addSectionHeader ("NEW SOUND");
+    m.addItem (5, "Init (a clean starting point)");
     m.addItem (3, "Roll a brand new bass");
+    m.addSectionHeader ("RANDOMISE THIS SOUND");
+    m.addItem (1, "Nudge it (a little)");
+    m.addItem (2, "Mutate it (a lot)");
     m.addSeparator();
     m.addItem (4, "Undo", processor.undoManager.canUndo());
     m.setLookAndFeel (&lookAndFeel);
@@ -1649,6 +1667,24 @@ void HypernovaAudioProcessorEditor::showDiceMenu()
         else if (r == 2) processor.mutate (0.22f);
         else if (r == 3) processor.randomize();
         else if (r == 4) processor.undoManager.undo();
+        else if (r == 5)
+            for (int i = 0; i < processor.getNumPrograms(); ++i)
+                if (processor.getProgramName (i) == "Init") { processor.setCurrentProgram (i); showMessage ("Init: a clean start (Cmd+Z to go back)"); break; }
+    });
+}
+
+void HypernovaAudioProcessorEditor::showCompareMenu()
+{
+    juce::PopupMenu m;
+    const bool onA = processor.compareSlot() == 0;
+    m.addSectionHeader ("COMPARE");
+    m.addItem (1, onA ? "Copy A to B" : "Copy B to A");
+    m.addItem (2, onA ? "Switch to B" : "Switch to A");
+    m.setLookAndFeel (&lookAndFeel);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&compare), [this, onA] (int r)
+    {
+        if (r == 1) { processor.compareCopyToOther(); showMessage (onA ? "B is now a copy of A" : "A is now a copy of B"); }
+        else if (r == 2) compare.onPick (onA ? 1 : 0);
     });
 }
 

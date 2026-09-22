@@ -592,6 +592,44 @@ int main (int argc, char** argv)
     }
 
     // SmokeTest --fxorder: the effects rack can be reordered, saved, undone, and reordering while playing doesn't click.
+    if (argc == 2 && juce::String (argv[1]) == "--compare")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (48000.0, 256);
+        auto v = [&] (const char* id) { return p.apvts.getRawParameterValue (id)->load(); };
+        p.setParam ("cutoff", 800.0f);
+        check (p.compareSlot() == 0 && ! p.compareHasOther(), "a sound starts on A, with B empty");
+        p.compareSwitch (1);
+        check (p.compareSlot() == 1 && std::abs (v ("cutoff") - 800.0f) < 1.0f, "B starts as a copy of A");
+        p.setParam ("cutoff", 3000.0f);
+        p.compareSwitch (0);
+        check (p.compareSlot() == 0 && std::abs (v ("cutoff") - 800.0f) < 1.0f, "back on A: A's cutoff");
+        p.compareSwitch (1);
+        check (std::abs (v ("cutoff") - 3000.0f) < 1.0f, "and B kept its change");
+        p.undoManager.undo();
+        check (p.compareSlot() == 0 && std::abs (v ("cutoff") - 800.0f) < 1.0f,
+               "undoing a switch goes back to A, and says so (slot " + juce::String (p.compareSlot()) + ", cutoff " + juce::String (v ("cutoff")) + ", undo said "
+               + p.undoManager.getRedoDescription() + ")");
+        p.undoManager.redo();
+        check (p.compareSlot() == 1 && std::abs (v ("cutoff") - 3000.0f) < 1.0f, "redo returns to B");
+        for (int i = 0; i < p.getNumPrograms(); ++i) if (p.getProgramName (i) == "Reese Wide") p.setCurrentProgram (i);
+        check (p.compareSlot() == 1 && p.getProgramName (p.getCurrentProgram()) == "Reese Wide", "a preset loads into the slot you're on");
+        p.compareSwitch (0);
+        check (std::abs (v ("cutoff") - 800.0f) < 1.0f, "and A is still the sound from before");
+        p.compareCopyToOther();
+        p.compareSwitch (1);
+        check (std::abs (v ("cutoff") - 800.0f) < 1.0f, "copying A to B makes them the same");
+        juce::MemoryBlock saved;
+        p.getStateInformation (saved);
+        HypernovaAudioProcessor q;
+        q.setStateInformation (saved.getData(), (int) saved.getSize());
+        check (q.compareSlot() == 1, "a session remembers which slot it was on");
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc == 2 && juce::String (argv[1]) == "--fxorder")
     {
         int failures = 0;

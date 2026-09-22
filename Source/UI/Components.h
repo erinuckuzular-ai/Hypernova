@@ -1196,6 +1196,78 @@ private:
 };
 
 //==============================================================================
+// A/B compare: two lit segments. Click the other letter to flip to that version of the sound.
+class CompareSwitch : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    std::function<void (int slot)> onPick;
+    std::function<void()> onMenu;
+
+    void setState (int activeSlot, bool otherFilled)
+    {
+        if (activeSlot == active && otherFilled == filled) return;
+        active = activeSlot;
+        filled = otherFilled;
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        panel (g, r, 9.0f, Colours::panelHi);
+        auto inner = r.reduced (4.0f);
+        for (int i = 0; i < 2; ++i)
+        {
+            auto seg = inner.withWidth (inner.getWidth() * 0.5f).translated (inner.getWidth() * 0.5f * (float) i, 0).reduced (1.0f, 0);
+            const bool on = i == active, down = i == pressed;
+            if (on)
+            {
+                g.setColour (Colours::accent.withAlpha (0.2f));
+                g.fillRoundedRectangle (seg, 6.0f);
+                g.setColour (Colours::accent.withAlpha (0.8f));
+                g.drawRoundedRectangle (seg, 6.0f, 1.2f);
+            }
+            else if (down || hover == i)
+            {
+                g.setColour (juce::Colours::white.withAlpha (down ? 0.02f : 0.05f));
+                g.fillRoundedRectangle (seg, 6.0f);
+            }
+            // An empty B reads as waiting (outlined letter), a filled one as a real second version.
+            const bool empty = ! on && ! filled;
+            g.setColour (on ? Colours::text.get() : Colours::text.withAlpha (empty ? 0.45f : 0.75f));
+            g.setFont (font (15.0f, true));
+            g.drawText (i == 0 ? "A" : "B", seg.translated (0, down ? 0.5f : 0.0f), juce::Justification::centred, false);
+        }
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override { setHover (segmentAt (e.position)); }
+    void mouseExit (const juce::MouseEvent&) override { setHover (-1); }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu()) { if (onMenu) onMenu(); return; }
+        pressed = segmentAt (e.position); // shows on the press
+        repaint();
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int s = pressed;
+        pressed = -1;
+        repaint();
+        if (s >= 0 && s == segmentAt (e.position) && s != active && onPick) onPick (s);
+    }
+
+private:
+    int active = 0, hover = -1, pressed = -1;
+    bool filled = false;
+    int segmentAt (juce::Point<float> p) const
+    {
+        if (! getLocalBounds().toFloat().expanded (6.0f).contains (p)) return -1; // a little slack around it
+        return p.x < (float) getWidth() * 0.5f ? 0 : 1;
+    }
+    void setHover (int h) { if (h != hover) { hover = h; repaint(); } }
+};
+
+//==============================================================================
 class IconButton : public juce::Button
 {
 public:
@@ -1251,17 +1323,20 @@ public:
             case Gear:
             {
                 const auto ctr = icon.getCentre();
-                const float ro = icon.getWidth() * 0.46f, ri = icon.getWidth() * 0.32f;
+                // Eight square-shouldered teeth on a ring, and the axle hole: reads as a gear at any size.
+                const float ro = icon.getWidth() * 0.5f, ri = icon.getWidth() * 0.36f;
                 juce::Path cog;
-                for (int i = 0; i < 16; ++i)
+                for (int k = 0; k < 8; ++k)
                 {
-                    const float a = juce::MathConstants<float>::twoPi * i / 16.0f;
-                    const auto pt = ctr.getPointOnCircumference ((i / 2) % 2 == 0 ? ro : ri, a);
-                    if (i == 0) cog.startNewSubPath (pt); else cog.lineTo (pt);
+                    const float a = juce::MathConstants<float>::twoPi * (float) k / 8.0f;
+                    const juce::Point<float> pts[] = { ctr.getPointOnCircumference (ri, a - 0.30f), ctr.getPointOnCircumference (ro, a - 0.19f),
+                                                       ctr.getPointOnCircumference (ro, a + 0.19f), ctr.getPointOnCircumference (ri, a + 0.30f) };
+                    for (int j = 0; j < 4; ++j)
+                        if (k == 0 && j == 0) cog.startNewSubPath (pts[j]); else cog.lineTo (pts[j]);
                 }
                 cog.closeSubPath();
-                g.strokePath (cog, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-                g.drawEllipse (juce::Rectangle<float> (icon.getWidth() * 0.26f, icon.getWidth() * 0.26f).withCentre (ctr), 1.5f);
+                g.strokePath (cog, juce::PathStrokeType (1.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+                g.drawEllipse (juce::Rectangle<float> (icon.getWidth() * 0.3f, icon.getWidth() * 0.3f).withCentre (ctr), 1.5f);
                 return;
             }
             case Expand: // four corners pointing out

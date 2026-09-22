@@ -290,6 +290,8 @@ private:
     ab::ui::PresetBrowser browser { processor };
     ab::ui::Updater updater;
     ab::ui::UpdateBanner updateBanner;
+    ab::ui::CompareSwitch compare;
+    void showCompareMenu();
     ab::ui::IconButton prevButton { ab::ui::IconButton::Prev }, nextButton { ab::ui::IconButton::Next },
                        diceButton { ab::ui::IconButton::Dice, ab::ui::Colours::warm }, saveButton { ab::ui::IconButton::Save },
                        undoButton { ab::ui::IconButton::Undo }, redoButton { ab::ui::IconButton::Redo }, gearButton { ab::ui::IconButton::Gear };

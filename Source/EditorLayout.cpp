@@ -684,7 +684,7 @@ void HypernovaAudioProcessorEditor::setLayoutEditing (bool editing)
     overlay->setEditing (editing);
     for (auto& w : widgets) w->setEditing (editing);
     editBar.setVisible (editing);
-    for (auto* c : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &compare, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
         c->setVisible (! editing);
     layoutButton.setToggleState (editing, juce::dontSendNotification);
     if (editing) showMessage ("layout mode: drag a widget, drop it mid-panel to stack or near an edge to split; drag the gaps to resize");

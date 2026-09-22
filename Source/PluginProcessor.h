@@ -114,6 +114,13 @@ public:
     static juce::File packFolder();
     void stepPreset (int delta);
     void randomize();
+
+    // A/B compare: two versions of the sound to flip between. Loading a preset loads into the slot you're on.
+    // The slot you're on is part of the sound's state, so undoing a switch keeps the A/B light honest.
+    int compareSlot() const { return (int) apvts.state.getProperty ("abSlot", 0); }
+    bool compareHasOther() const { return compareStore[(size_t) (1 - compareSlot())].getSize() > 0; }
+    void compareSwitch (int slot);
+    void compareCopyToOther(); // the other slot becomes a copy of this one
     void panic() { panicRequested = true; }
 
     static juce::File userPresetFolder();
@@ -124,6 +131,7 @@ public:
     juce::String getMacroName (int i) const { const juce::ScopedLock sl (nameLock); return macroNames[(size_t) i]; }
     void setMacroName (int i, const juce::String& n);
     std::atomic<int> presetVersion { 0 };
+    std::array<juce::MemoryBlock, 2> compareStore;
 
     //==========================================================================
     // Imported wavetables. Tables load on the message thread into a cache that is never emptied while the

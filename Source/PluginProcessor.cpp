@@ -1541,6 +1541,7 @@ bool HypernovaAudioProcessor::loadUserPreset (const juce::File& file)
     if (! state.hasType (apvts.state.getType())) return false;
     applyPresetValues ({}); // anything the file doesn't mention (older versions) starts from Init
     takeSampleFrom (state, false);
+    state.setProperty ("abSlot", compareSlot(), nullptr); // a preset loads into the A/B slot you're on
     apvts.replaceState (state);
     {
         const juce::ScopedLock sl (nameLock);
@@ -1820,6 +1821,60 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         uiScalePercent = (int) state.getProperty ("uiScale", 100);
     }
     ++presetVersion;
+}
+
+//==============================================================================
+void HypernovaAudioProcessor::compareSwitch (int slot)
+{
+    const int from = compareSlot();
+    slot = juce::jlimit (0, 1, slot);
+    if (slot == from) return;
+    juce::MemoryBlock now;
+    getStateInformation (now);
+    compareStore[(size_t) from] = now;
+    auto& next = compareStore[(size_t) slot];
+    if (next.getSize() == 0) next = now; // the first time, B starts as a copy of A
+    auto xml = getXmlFromBinary (next.getData(), (int) next.getSize());
+    if (xml == nullptr) return;
+    auto target = juce::ValueTree::fromXml (*xml);
+    // Applied value by value (not by swapping the whole state) so the switch is one undoable step and
+    // the edits made before it stay undoable too.
+    undoManager.beginNewTransaction (slot == 0 ? "Compare: A" : "Compare: B");
+    takeSampleFrom (target, true);
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            const auto child = target.getChildWithProperty ("id", rp->paramID);
+            const float v = child.isValid() ? rp->convertTo0to1 ((float) child.getProperty ("value")) : rp->getDefaultValue();
+            if (std::abs (rp->getValue() - v) > 1.0e-7f) rp->setValueNotifyingHost (v);
+        }
+    static const juce::StringArray notSound { "presetName", "presetCategory", "program", "uiAnimation", "uiScale", "abSlot" };
+    for (int i = 0; i < target.getNumProperties(); ++i)
+    {
+        const auto name = target.getPropertyName (i);
+        if (notSound.contains (name.toString()) || name.toString().startsWith ("macro") || name.toString().endsWith ("UserTable")) continue;
+        apvts.state.setProperty (name, target.getProperty (name), &undoManager);
+    }
+    {
+        const juce::ScopedLock sl (nameLock);
+        presetName = target.getProperty ("presetName", "Init").toString();
+        presetCategory = target.getProperty ("presetCategory", "").toString();
+        for (int i = 0; i < 4; ++i)
+            macroNames[(size_t) i] = target.getProperty ("macro" + juce::String (i + 1) + "Name", "MACRO " + juce::String (i + 1)).toString();
+    }
+    currentProgram = target.getProperty ("program", 0);
+    for (int o = 0; o < NumOsc; ++o)
+        setUserTable (o, target.getProperty (oscPrefix (o) + "UserTable", "").toString());
+    apvts.state.setProperty ("abSlot", slot, &undoManager);
+    apvts.copyState(); // lands the parameter changes in this step's undo now, not on the next timer tick
+    ++presetVersion;
+}
+
+void HypernovaAudioProcessor::compareCopyToOther()
+{
+    juce::MemoryBlock now;
+    getStateInformation (now);
+    compareStore[(size_t) (1 - compareSlot())] = now;
 }
 
 //==============================================================================
