@@ -268,6 +268,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     add<Choice> (l, pid ("lowDuckRate"), "Low End Duck Rate", juce::StringArray { "1/4", "1/8", "1/2", "1 bar", "1/16" }, 0);
     addFloat (l, "lowDuckRelease", "Low End Duck Release", skewed (0.02f, 0.6f, 0.15f), 0.15f, timeText);
 
+    // Envelope follower (appended): how loud the synth itself is, as a modulation source.
+    addFloat (l, "folAtt", "Follower Attack", skewed (0.5f, 200.0f, 20.0f), 10.0f, [] (float v, int) { return juce::String (v, 1) + " ms"; });
+    addFloat (l, "folRel", "Follower Release", skewed (10.0f, 2000.0f, 250.0f), 200.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; });
+    addFloat (l, "folGain", "Follower Sensitivity", { 0.25f, 4.0f }, 1.0f, [] (float v, int) { return juce::String (v, 2) + "x"; });
+
     // One cycle per note for each LFO (appended): a drawn shape then works as an envelope.
     for (int i = 1; i <= NumLfo; ++i)
         add<Bool> (l, pid ("lfo" + juce::String (i) + "Once"), "LFO " + juce::String (i) + " Once", false);
@@ -915,6 +920,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     globalMod.bendSemis = (float) (pitchWheel - 8192) / 8192.0f * param ("bendRange");
     renderVoices (cursor, numSamples);
     midi.clear();
+    updateFollower (L, R, numSamples);
     if (os != nullptr) os->processSamplesDown (outBlock);
 
     // Master effects in chunks the effects were prepared for.
@@ -1049,7 +1055,28 @@ void HypernovaAudioProcessor::publishModSources (const float* lfo, float modEnv,
     shownModSource[5] = globalMod.modWheel;
     shownModSource[6] = note >= 0 ? juce::jlimit (-1.0f, 1.0f, (note - 60.0f) / 36.0f) : 0.0f;
     for (int m = 0; m < 4; ++m) shownModSource[(size_t) (7 + m)] = globalMod.macros[(size_t) m];
+    shownModSource[SrcFollow] = globalMod.follower;
     shownModSource[11] = 0.0f; // random is per note; its ring shows depth only
+}
+
+// The envelope follower: how loud the synth is right now, smoothed with its own attack and release.
+// It's taken from the voices (before the effects), so feeding it back into them can't run away.
+void HypernovaAudioProcessor::updateFollower (const float* L, const float* R, int n)
+{
+    const float att = juce::jmax (0.5f, param ("folAtt")) * 0.001f;
+    const float rel = juce::jmax (1.0f, param ("folRel")) * 0.001f;
+    const float gain = param ("folGain");
+    const float aC = std::exp (-1.0f / juce::jmax (1.0f, (float) (att * sampleRateNow)));
+    const float rC = std::exp (-1.0f / juce::jmax (1.0f, (float) (rel * sampleRateNow)));
+    float env = followerEnv;
+    for (int i = 0; i < n; ++i)
+    {
+        const float x = juce::jmax (std::abs (L[i]), std::abs (R[i])) * gain;
+        env = x > env ? x + (env - x) * aC : x + (env - x) * rC;
+    }
+    followerEnv = env;
+    globalMod.follower = juce::jlimit (0.0f, 1.0f, env);
+    shownFollower = globalMod.follower;
 }
 
 //==============================================================================

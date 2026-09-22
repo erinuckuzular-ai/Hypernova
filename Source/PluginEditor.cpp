@@ -432,6 +432,25 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (view, Spread::Stretch);
     }
 
+    // Envelope follower: how loud the synth is, as something to modulate with.
+    {
+        // Controls in a column on the left, the meter taking whatever room is left (as with the LFO widgets).
+        const juce::Rectangle<int> design { 0, 0, 330, 196 };
+        auto& w = makeWidget ("follower", "follower", "FOLLOWER", Palette::mod, design);
+        auto* W = &w.content;
+        modChips.push_back (std::make_unique<ModChip> ("DRAG FOLLOW", ab::SrcFollow, modSourceColour (ab::SrcFollow)));
+        modChips.back()->onHover = [this] (int s) { hoveredModSource = s; for (auto& k : knobs) k->repaint(); };
+        W->addAndMakeVisible (*modChips.back());
+        modChips.back()->setBounds (design.getWidth() - 116, 10, 104, 22);
+        knob ("folAtt", "ATTACK", Palette::mod, { 6, 44, 80, 68 }, 42, W);
+        knob ("folRel", "RELEASE", Palette::mod, { 86, 44, 80, 68 }, 42, W);
+        knob ("folGain", "SENS", Palette::mod, { 6, 118, 80, 68 }, 42, W);
+        W->addAndMakeVisible (followerMeter);
+        followerMeter.setBounds (172, 44, design.getWidth() - 184, 142);
+        w.finishBuilding();
+        w.spread.setFlags (followerMeter, Spread::Stretch);
+    }
+
     // Sound space
     {
         auto& w = makeWidget ("space", "space", "SOUND SPACE", Colours::text, spacePanel);
@@ -867,6 +886,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     // drawing, and two frames in three looks the same.
     if (rack.isVisible()) { rack.refresh(); if ((viewTick % 3) != 0) rack.tick (sounding); }
     if (sources.isVisible()) sources.refresh();
+    if (followerMeter.isVisible()) followerMeter.refresh();
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();

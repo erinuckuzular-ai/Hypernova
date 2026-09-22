@@ -153,6 +153,7 @@ public:
     std::shared_ptr<const ab::SampleData> sampleForUi() const { return sampleHeld; }
     std::atomic<int> sampleVersion { 0 };
     std::atomic<float> shownSample { -1.0f };
+    std::atomic<float> shownFollower { 0 };                 // the envelope follower, for its meter
     std::atomic<float> shownLowRms { 0 }, shownHighRms { 0 }; // Low End: energy below / above the crossover
     std::atomic<bool> speakerCheck { false };
     std::atomic<double> shownBeats { 0 };                   // song position in beats (free-running when stopped), for the displays
@@ -201,6 +202,8 @@ public:
     static bool paramInSection (const juce::String& id, int section);
     void mutateSection (int section, float amount);
     void publishModSources (const float* lfo, float modEnv, float velocity, float note);
+    void updateFollower (const float* L, const float* R, int n);
+    float followerEnv = 0;
     std::array<std::atomic<bool>, NumSections> sectionLocked {}; // nudge the current sound by up to `amount` of each control's range
     juce::MidiKeyboardState keyboardState;
 

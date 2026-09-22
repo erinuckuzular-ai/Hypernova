@@ -29,6 +29,7 @@ namespace
         { "mod",      "Modulation",     "MODULATION", "Two LFOs and the 8-slot mod matrix",                            false, SlotLfo },
         { "lfo3",     "LFO 3",          "MODULATION", "A third LFO: every shape, sync, fade in, and one you draw",      false, SlotLfo },
         { "lfo4",     "LFO 4",          "MODULATION", "A fourth LFO, the same as LFO 3",                                 false, SlotLfo },
+        { "follower", "Follower",       "MODULATION", "How loud the synth is, as something to modulate with",           false, SlotMod },
         { "macros",   "Macros",         "MODULATION", "The four macros, big: rename them, see what they move",         false, SlotFx },
         { "xy",       "XY Pad",         "MODULATION", "Two macros on one pad: drag to move both",                      true,  SlotMod },
         { "modmon",   "Mod Monitor",    "MODULATION", "Every active modulation source, live, and what it moves",       true,  SlotLfo },

@@ -30,10 +30,10 @@ enum VoiceMode { ModePoly, ModeMono, ModeLegato, NumModes };
 inline juce::StringArray voiceModeNames() { return { "Poly", "Mono", "Legato" }; }
 
 enum ModSrc { SrcNone, SrcLfo1, SrcLfo2, SrcEnv2, SrcVelocity, SrcModWheel, SrcNote, SrcMacro1, SrcMacro2, SrcMacro3, SrcMacro4, SrcRandom,
-              SrcLfo3, SrcLfo4, NumSrc }; // append only
+              SrcLfo3, SrcLfo4, SrcFollow, NumSrc }; // append only
 inline juce::StringArray modSrcNames()
 {
-    return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random", "LFO 3", "LFO 4" };
+    return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random", "LFO 3", "LFO 4", "Follower" };
 }
 
 // Append only (saved sessions store indices). Everything from DDistFx on is global: the processor applies it to the effects.
@@ -166,6 +166,7 @@ struct GlobalMod
     float modWheel = 0, bendSemis = 0;
     std::array<float, 4> macros {};
     std::array<double, NumLfo> lfoPhase {}; // free/host-locked phase at block start, used by non-retriggered LFOs
+    float follower = 0;                     // how loud the synth itself is right now (0 to 1), for self-ducking and the like
 };
 
 //==============================================================================
@@ -617,6 +618,7 @@ public:
             src[SrcRandom] = noteRandom;
             src[SrcLfo3] = lfoVal[2];
             src[SrcLfo4] = lfoVal[3];
+            src[SrcFollow] = g.follower;
 
             std::copy (std::begin (src), std::end (src), std::begin (lastSrc));
 

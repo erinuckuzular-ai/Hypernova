@@ -1726,6 +1726,65 @@ private:
 };
 
 //==============================================================================
+// The envelope follower's meter: how loud the synth is right now, with the recent history behind it.
+class FollowerMeter : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit FollowerMeter (HypernovaAudioProcessor& p) : proc (p)
+    {
+        setTooltip ("How loud the synth is right now. Drag FOLLOW onto a knob to have this move it.");
+        history.fill (0.0f);
+    }
+
+    void refresh()
+    {
+        const float v = proc.shownFollower.load();
+        head = (head + 1) % (int) history.size();
+        history[(size_t) head] = v;
+        if (v > 0.001f || v != last) { last = v; repaint(); }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (Colours::inset);
+        g.fillRoundedRectangle (r, 8.0f);
+        auto plot = r.reduced (8.0f, 7.0f);
+        // History, oldest on the left.
+        juce::Path fill;
+        const int n = (int) history.size();
+        fill.startNewSubPath (plot.getX(), plot.getBottom());
+        for (int i = 0; i < n; ++i)
+        {
+            const float v = history[(size_t) ((head + 1 + i) % n)];
+            fill.lineTo (plot.getX() + plot.getWidth() * (float) i / (float) (n - 1), plot.getBottom() - plot.getHeight() * juce::jlimit (0.0f, 1.0f, v));
+        }
+        fill.lineTo (plot.getRight(), plot.getBottom());
+        fill.closeSubPath();
+        g.setGradientFill (juce::ColourGradient (Palette::mod.withAlpha (0.35f), 0, plot.getY(), Palette::mod.withAlpha (0.0f), 0, plot.getBottom(), false));
+        g.fillPath (fill);
+        g.setColour (Palette::mod.withAlpha (0.8f));
+        g.strokePath (fill, juce::PathStrokeType (1.2f));
+        // The value now, as a bar on the right.
+        auto bar = juce::Rectangle<float> (plot.getRight() - 10.0f, plot.getY(), 8.0f, plot.getHeight());
+        g.setColour (Colours::bg0.withAlpha (0.5f));
+        g.fillRoundedRectangle (bar, 3.0f);
+        const float v = juce::jlimit (0.0f, 1.0f, last);
+        g.setColour (Palette::mod);
+        g.fillRoundedRectangle (bar.withTop (bar.getBottom() - bar.getHeight() * v), 3.0f);
+        g.setColour (Colours::textFaint);
+        g.setFont (mono (8.5f));
+        g.drawText (juce::String (juce::roundToInt (v * 100.0f)) + "%", plot.removeFromTop (12.0f).withTrimmedRight (14), juce::Justification::topRight, false);
+    }
+
+private:
+    HypernovaAudioProcessor& proc;
+    std::array<float, 96> history {};
+    int head = 0;
+    float last = 0;
+};
+
+//==============================================================================
 class EnvView : public juce::Component, public juce::SettableTooltipClient
 {
 public:

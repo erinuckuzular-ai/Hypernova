@@ -675,6 +675,32 @@ int main (int argc, char** argv)
             check (p.lfoCurve (2) == HypernovaAudioProcessor::defaultLfoCurve(), "loading a preset starts the drawings fresh");
             check (HypernovaAudioProcessor::parseLfoCurve ("nonsense").size() >= 2, "a broken drawing falls back to the default shape");
 
+            // The envelope follower: it follows the synth, and routed to the level it ducks the sound itself.
+            {
+                HypernovaAudioProcessor f;
+                setup (f);
+                f.setParam ("folAtt", 5.0f);
+                f.setParam ("folRel", 120.0f);
+                f.setParam ("ampD", 0.25f);
+                f.setParam ("ampS", 0.25f);
+                const auto plain = windows (f, 1.0);
+                HypernovaAudioProcessor d;
+                setup (d);
+                d.setParam ("folAtt", 5.0f);
+                d.setParam ("folRel", 120.0f);
+                d.setParam ("ampD", 0.25f);
+                d.setParam ("ampS", 0.25f);
+                d.setParam ("mod1Src", (float) ab::SrcFollow);
+                d.setParam ("mod1Dest", (float) ab::DALevel);
+                d.setParam ("mod1Amt", -0.9f);
+                const auto ducked = windows (d, 1.0);
+                check (d.shownFollower.load() > 0.01f, "the follower follows the synth (" + juce::String (d.shownFollower.load(), 3) + ")");
+                check (ducked[3] < plain[3] * 0.9f, "and routed to a level it pulls the loud part down (" + juce::String (plain[3], 3) + " -> " + juce::String (ducked[3], 3) + ")");
+                const float plainRange = plain[3] / juce::jmax (0.001f, plain[plain.size() - 5]);
+                const float duckRange = ducked[3] / juce::jmax (0.001f, ducked[ducked.size() - 5]);
+                check (duckRange < plainRange, "so the loud and quiet parts sit closer together (" + juce::String (plainRange, 2) + "x -> " + juce::String (duckRange, 2) + "x)");
+            }
+
             // "Once": the shape plays one pass for each note and holds the end, so a drawing works as an envelope.
             HypernovaAudioProcessor env;
             setup (env);

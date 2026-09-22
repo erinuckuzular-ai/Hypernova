@@ -417,6 +417,17 @@ int main (int argc, char** argv)
             for (int o = 2; o < ab::NumOsc; ++o) if (ed->layoutTree().contains ("osc" + ab::oscPrefix (o).toUpperCase())) ed->hideWidget ("osc" + ab::oscPrefix (o).toUpperCase());
             settle();
         }
+        // The follower widget can be added and carries its chip.
+        {
+            ed->addWidgetType ("follower");
+            settle();
+            auto* w = ed->findWidget ("follower");
+            check (w != nullptr && w->isVisible(), "the follower can be added from the library");
+            tidy ("with the follower");
+            ed->hideWidget ("follower");
+            settle();
+        }
+
         // Solo in the Sources mixer: everything else goes quiet, and clicking it again brings it all back.
         {
             proc.setParam ("aOn", 1.0f);
@@ -960,6 +971,14 @@ int main (int argc, char** argv)
         for (int o = 2; o < 4; ++o) proc.setParam (ab::oscPrefix (o) + "Level", 0.5f);
     });
     for (int o = 2; o < ab::NumOsc; ++o) proc.setParam (ab::oscPrefix (o) + "On", 0.0f);
+    snap ("ui_12_follower.png", "Rager 808", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        proc.setParam ("mod4Src", (float) ab::SrcFollow);
+        proc.setParam ("mod4Dest", (float) ab::DCutoff);
+        proc.setParam ("mod4Amt", 0.35f);
+        e.addWidgetType ("follower");
+    });
+    proc.setParam ("mod4Src", 0.0f);
     snap ("ui_11_lfo3.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
     {
         proc.setParam ("lfo3Shape", (float) ab::LDrawn);
