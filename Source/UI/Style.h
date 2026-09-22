@@ -2,6 +2,7 @@
 
 #include "BinaryData.h"
 #include <unordered_map>
+#include <tuple>
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -328,24 +329,52 @@ inline void panel (juce::Graphics& g, juce::Rectangle<float> r, float radius = 1
         return;
     }
     // Layered, neutral shadow that stays within 3 px below the face (a single hard offset looked cut off).
-    for (int i = 3; i >= 1; --i)
+    // The face covers the middle, so only the rim is painted.
     {
-        g.setColour (juce::Colours::black.withAlpha (0.07f * (float) (4 - i)));
-        g.fillRoundedRectangle (r.translated (0, (float) i).expanded (0.4f * (float) i, 0), radius + 0.5f * (float) i);
+        juce::Graphics::ScopedSaveState keep (g);
+        g.excludeClipRegion (r.reduced (radius + 1.0f, radius * 0.5f).toNearestInt());
+        for (int i = 3; i >= 1; --i)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.07f * (float) (4 - i)));
+            g.fillRoundedRectangle (r.translated (0, (float) i).expanded (0.4f * (float) i, 0), radius + 0.5f * (float) i);
+        }
     }
-    // Face: lit from above, a touch darker towards the bottom.
-    g.setGradientFill (juce::ColourGradient (base.brighter (0.07f), r.getX(), r.getY(), base.darker (0.28f), r.getX(), r.getBottom(), false));
-    g.fillRoundedRectangle (r, radius);
-    // Edge: catches light along the top, the accent glints off the top-left, and it falls into shadow below.
-    juce::ColourGradient edge (juce::Colours::white.withAlpha (0.16f), r.getX(), r.getY(), juce::Colours::black.withAlpha (0.35f), r.getX(), r.getBottom(), false);
-    edge.addColour (0.18, juce::Colours::white.withAlpha (0.05f));
-    g.setGradientFill (edge);
-    g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
-    juce::ColourGradient rim (Colours::accent2.withAlpha (0.38f), r.getX(), r.getY(),
-                              Colours::accent.withAlpha (0.0f), r.getX() + r.getWidth() * 0.55f, r.getY() + r.getHeight() * 0.6f, false);
-    rim.addColour (0.3, Colours::accent.withAlpha (0.1f));
-    g.setGradientFill (rim);
-    g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
+    // Face: lit from above, a touch darker towards the bottom. Drawn as fine solid bands inside the
+    // panel's shape: JUCE's gradient fills cost several times more, and faces redraw whenever a panel
+    // settles at a new size. The grain laid on top hides any stepping.
+    juce::Path shape;
+    shape.addRoundedRectangle (r, radius);
+    {
+        juce::Graphics::ScopedSaveState keep (g);
+        g.reduceClipRegion (shape);
+        const int bands = 32;
+        const auto top = base.brighter (0.07f), bottom = base.darker (0.28f);
+        // Edges on whole device pixels (the face is often translucent, so bands must meet without overlapping).
+        const float k = juce::jmax (1.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
+        auto snap = [k] (float v) { return std::round (v * k) / k; };
+        for (int i = 0; i < bands; ++i)
+        {
+            const float y0 = snap (r.getY() + r.getHeight() * (float) i / (float) bands);
+            const float y1 = i == bands - 1 ? r.getBottom() + 1.0f : snap (r.getY() + r.getHeight() * (float) (i + 1) / (float) bands);
+            g.setColour (top.interpolatedWith (bottom, ((float) i + 0.5f) / (float) bands));
+            g.fillRect (juce::Rectangle<float> (r.getX(), y0, r.getWidth(), y1 - y0));
+        }
+    }
+    // Edge: catches light along the top and falls into shadow below; the accent glints off the top-left.
+    auto strokeIn = [&] (juce::Rectangle<float> clip, juce::Colour c)
+    {
+        juce::Graphics::ScopedSaveState keep (g);
+        g.reduceClipRegion (clip.toNearestInt());
+        g.setColour (c);
+        g.drawRoundedRectangle (r.reduced (0.5f), radius, 1.0f);
+    };
+    const float lit = juce::jmin (r.getHeight() * 0.3f, radius + 10.0f);
+    strokeIn (r.withHeight (lit), juce::Colours::white.withAlpha (0.15f));
+    strokeIn (r.withTrimmedTop (lit).withHeight (r.getHeight() * 0.25f), juce::Colours::white.withAlpha (0.04f));
+    strokeIn (r.withTrimmedTop (lit + r.getHeight() * 0.25f), juce::Colours::black.withAlpha (0.3f));
+    // The glint fades out in overlapping steps, so it has no hard end.
+    for (auto [w, h, a] : { std::tuple<float, float, float> { 0.3f, 0.2f, 0.1f }, { 0.45f, 0.32f, 0.08f }, { 0.62f, 0.46f, 0.06f }, { 0.8f, 0.62f, 0.04f } })
+        strokeIn (r.withSize (r.getWidth() * w, r.getHeight() * h), Colours::accent2.withAlpha (a));
     // A fine specular line just inside the top edge, brightest left of centre.
     {
         juce::ColourGradient spec (juce::Colours::white.withAlpha (0.0f), r.getX() + radius, 0, juce::Colours::white.withAlpha (0.0f), r.getRight() - radius, 0, false);
@@ -410,6 +439,30 @@ inline void drawNovaMark (juce::Graphics& g, juce::Point<float> c, float R, juce
     }
     g.setColour (col);
     g.strokePath (front, ring);
+}
+
+// A whisper of grain on the face, so large panels read as a material rather than flat fill. One small
+// noise tile, made once, laid over the face in a single fill (panels re-render every frame while they move).
+inline void panelGrain (juce::Graphics& g, juce::Rectangle<float> r, float radius)
+{
+    const bool light = ThemeState::get().base.light;
+    static juce::Image tiles[2];
+    auto& tile = tiles[light ? 1 : 0];
+    if (! tile.isValid())
+    {
+        tile = juce::Image (juce::Image::ARGB, 96, 96, true);
+        juce::Image::BitmapData bd (tile, juce::Image::BitmapData::writeOnly);
+        juce::Random rnd (1234);
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 96; ++x)
+            {
+                const float n = rnd.nextFloat();
+                if (n < 0.12f) bd.setPixelColour (x, y, juce::Colours::black.withAlpha (light ? 0.04f : 0.08f));
+                else if (n > 0.95f) bd.setPixelColour (x, y, juce::Colours::white.withAlpha (light ? 0.04f : 0.03f));
+            }
+    }
+    g.setTiledImageFill (tile, 0, 0, 1.0f);
+    g.fillRoundedRectangle (r, radius);
 }
 
 inline void sectionLabel (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, juce::Colour c = Colours::textDim)

@@ -502,6 +502,23 @@ int main (int argc, char** argv)
         }
         const double ms = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0 / frames;
         std::printf ("full frame at 2x: %.1f ms  (at 30 fps that is %.0f%% of one core if everything repainted)\n", ms, ms * 30.0 / 10.0);
+        {
+            // What one panel face costs to redraw (it happens every frame while a panel is moving).
+            juce::Image face (juce::Image::ARGB, 800, 760, true);
+            for (int part = 0; part < 2; ++part)
+            {
+                const auto f0 = juce::Time::getHighResolutionTicks();
+                for (int i = 0; i < 20; ++i)
+                {
+                    juce::Graphics fg (face);
+                    fg.addTransform (juce::AffineTransform::scale (2.0f));
+                    if (part == 0) ab::ui::panel (fg, { 1, 0, 398, 377 }, 14.0f);
+                    else ab::ui::panelGrain (fg, { 1, 0, 398, 377 }, 14.0f);
+                }
+                std::printf ("one panel %s (400x380 at 2x): %.2f ms\n", part == 0 ? "face" : "grain",
+                             juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - f0) * 1000.0 / 20.0);
+            }
+        }
         // Per-component cost, heaviest first.
         std::vector<std::pair<double, juce::String>> costs;
         std::function<void (juce::Component&)> walk = [&] (juce::Component& c)

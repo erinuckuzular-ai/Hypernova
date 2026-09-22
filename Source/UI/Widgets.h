@@ -305,6 +305,7 @@ public:
     void resized() override
     {
         const auto r = getLocalBounds();
+        if (r.getWidth() * 2 != panelCache.getWidth() || r.getHeight() * 2 != panelCache.getHeight()) lastResize = juce::Time::getMillisecondCounter();
         if (collapsed)
         {
             content.setVisible (false);
@@ -346,13 +347,28 @@ public:
         auto r = getLocalBounds().toFloat();
         // The glass panel is the costly part of a repaint, so it's drawn once per size and theme and reused.
         const int themeVersion = ThemeState::get().version;
-        if (! panelCache.isValid() || panelCache.getWidth() != getWidth() * 2 || panelCache.getHeight() != getHeight() * 2 || cachedTheme != themeVersion)
+        const bool stale = ! panelCache.isValid() || panelCache.getWidth() != getWidth() * 2 || panelCache.getHeight() != getHeight() * 2 || cachedTheme != themeVersion;
+        // While it's springing to a new size, stretch the last face rather than redrawing it every frame;
+        // it's redrawn crisp a moment after it settles.
+        const bool resizing = juce::Time::getMillisecondCounter() - lastResize < 140u;
+        if (stale && resizing && panelCache.isValid() && cachedTheme == themeVersion)
+        {
+            if (! crispPending)
+            {
+                crispPending = true;
+                juce::Timer::callAfterDelay (180, [safe = juce::Component::SafePointer<Widget> (this)]
+                {
+                    if (safe != nullptr) { safe->crispPending = false; safe->repaint(); }
+                });
+            }
+        }
+        else if (stale)
         {
             panelCache = juce::Image (juce::Image::ARGB, juce::jmax (1, getWidth() * 2), juce::jmax (1, getHeight() * 2), true);
             juce::Graphics cg (panelCache);
             cg.addTransform (juce::AffineTransform::scale (2.0f));
             panel (cg, panelRect(), panelRadius());
-            grain (cg, panelRect(), panelRadius());
+            panelGrain (cg, panelRect(), panelRadius());
             cachedTheme = themeVersion;
         }
         g.drawImage (panelCache, r);
@@ -495,29 +511,13 @@ private:
     float scaleNow = 1.0f;
     juce::Image panelCache;
     int cachedTheme = -1;
+    juce::uint32 lastResize = 0;
+    bool crispPending = false;
     juce::StringArray stackTitles;
     int stackIndex = 0;
 
     bool tabsInHeader() const { return stacked() && headerFreeWidth >= 90 * stackTitles.size(); }
     int tabStripHeight() const { return stacked() && ! tabsInHeader() ? 36 : 0; }
-
-    // A whisper of grain on the face, so large panels read as a material rather than flat fill.
-    static void grain (juce::Graphics& g, juce::Rectangle<float> r, float radius)
-    {
-        juce::Graphics::ScopedSaveState keep (g);
-        juce::Path clip;
-        clip.addRoundedRectangle (r, radius);
-        g.reduceClipRegion (clip);
-        juce::Random rnd (1234);
-        const bool light = ThemeState::get().base.light;
-        const int n = (int) (r.getWidth() * r.getHeight() / 90.0f);
-        for (int i = 0; i < n; ++i)
-        {
-            const bool bright = rnd.nextBool();
-            g.setColour ((bright ? juce::Colours::white : juce::Colours::black).withAlpha (light ? 0.018f : (bright ? 0.022f : 0.035f)));
-            g.fillRect (r.getX() + rnd.nextFloat() * r.getWidth(), r.getY() + rnd.nextFloat() * r.getHeight(), 0.5f, 0.5f);
-        }
-    }
 
     void paintFolded (juce::Graphics& g, juce::Rectangle<float> r)
     {
