@@ -93,7 +93,7 @@ public:
     WavetableView (HypernovaAudioProcessor& p, int oscIndex, ThemeColour c)
         : OrbitView (-0.5f, 0.45f), proc (p), osc (oscIndex), colour (c)
     {
-        prefix = osc == 0 ? "a" : "b";
+        prefix = oscPrefix (osc);
         setTooltip ("Drag to spin the wavetable. Double-click to reset the view. Drop a WAV here (or right-click) to load your own wavetable.");
     }
 

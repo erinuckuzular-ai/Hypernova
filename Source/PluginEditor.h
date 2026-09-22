@@ -9,6 +9,7 @@
 #include "UI/ToolWidgets.h"
 #include "UI/SamplerView.h"
 #include "UI/FxRack.h"
+#include "UI/SourcesView.h"
 #include "UI/LowEndView.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -59,6 +60,9 @@ public:
     void relayoutWidgets (bool animate);
     juce::Rectangle<int> layoutArea() const;
     void setLibraryOpen (bool open);
+    void addOscillator();                                     // switches on the next free oscillator and shows its panel
+    void removeOscillator (int osc);                          // switches it off and hides its panel
+    ab::ui::SourcesView& sourcesView() { return sources; }
     ab::ui::ToolContent* toolFor (const juce::String& id) const { auto it = tools.find (id); return it != tools.end() ? it->second.get() : nullptr; }
 
     static constexpr int baseWidth = 1280, baseHeight = 986;
@@ -183,6 +187,9 @@ private:
     const juce::Point<float> logoHole { 48.0f, 44.0f };
 
     ab::ui::WavetableView viewA, viewB;
+    std::vector<std::unique_ptr<ab::ui::WavetableView>> extraViews; // oscillators C to H
+    ab::ui::SourcesView sources { processor };
+    juce::TextButton addOscButton { "+ OSC" };
     ab::ui::SoundSpace space;
     ab::ui::SamplerView samplerView;
     ab::ui::EffectsRack rack;

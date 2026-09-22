@@ -13,6 +13,14 @@ namespace
     const TypeInfo catalogue[] = {
         { "oscA",     "Osc A",          "SOUND",      "Wavetable oscillator with its 3D table view",                   false, SlotOscA },
         { "oscB",     "Osc B",          "SOUND",      "The second wavetable oscillator",                               false, SlotOscB },
+        { "oscC",     "Osc C",          "SOUND",      "Another wavetable oscillator",                                  false, SlotEnv },
+        { "oscD",     "Osc D",          "SOUND",      "Another wavetable oscillator",                                  false, SlotLfo },
+        { "oscE",     "Osc E",          "SOUND",      "Another wavetable oscillator",                                  false, SlotSub },
+        { "oscF",     "Osc F",          "SOUND",      "Another wavetable oscillator",                                  false, SlotFilter },
+        { "oscG",     "Osc G",          "SOUND",      "Another wavetable oscillator",                                  false, SlotMod },
+        { "oscH",     "Osc H",          "SOUND",      "Another wavetable oscillator",                                  false, SlotFx },
+        { "osc+",     "Add Oscillator", "SOUND",      "Another wavetable oscillator, up to 8 in one sound",            true,  SlotOscA },
+        { "sources",  "Sources",        "SOUND",      "Every source in one mixer: level, pan, on, filter routing",     false, SlotAccent },
         { "sampler",  "Sampler",        "SOUND",      "Play any recording: drop it in, trim it, loop it, tune it",     false, SlotOscA },
         { "sub",      "Sub + Noise",    "SOUND",      "Sub oscillator and the noise source",                           false, SlotSub },
         { "pitch",    "Pitch",          "SOUND",      "Drop, glide, bend, voice mode and velocity",                    false, SlotSub },
@@ -196,7 +204,7 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
     {
         // The sampler big, with what shapes it: filter, envelopes, pitch, and the effects underneath.
         root = split (false, 1.0f, {
-            split (true, 330, { leaf ({ "sampler" }, 740), leaf ({ "space" }, 480) }),
+            split (true, 330, { leaf ({ "sampler" }, 740), leaf ({ "sources", "space" }, 480) }),
             split (true, 212, { leaf ({ "filter" }, 332), leaf ({ "env" }, 368), leaf ({ "pitch" }, 256), leaf ({ "oscA" }, 280) }),
             leaf ({ "rack", "mod", "play" }, 190) });
     }
@@ -215,7 +223,7 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
     else
     {
         root = split (false, 1.0f, {
-            split (true, 378, { leaf ({ "oscA" }, 400), leaf ({ "oscB" }, 400), leaf ({ "space" }, 408) }),
+            split (true, 378, { leaf ({ "oscA" }, 400), leaf ({ "oscB" }, 400), leaf ({ "space", "sources" }, 408) }),
             split (true, 212, { leaf ({ "sub" }, 240), leaf ({ "pitch" }, 256), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }),
             leaf ({ "mod", "rack", "play" }, 190, juce::jlimit (0, 2, page == 3 ? 2 : page == 0 ? 0 : 1)) });
     }
@@ -348,6 +356,7 @@ dock::MinSize HypernovaAudioProcessorEditor::dockMinSize() const
 // Operations. Each one changes the arrangement, then records it for undo and saves the workspace.
 juce::String HypernovaAudioProcessorEditor::addWidgetType (const juce::String& type)
 {
+    if (type == "osc+") { addOscillator(); return {}; }
     if (infoFor (type) == nullptr) return {};
     juce::String id = type;
     if (isMultiType (type))
@@ -365,7 +374,13 @@ juce::String HypernovaAudioProcessorEditor::addWidgetType (const juce::String& t
     }
     maximisedId.clear();
     tree.layout (layoutArea(), dockMinSize());
-    tree.insertSomewhere (id);
+    // A new oscillator sits as a tab next to the last oscillator on screen, where you'd look for it.
+    juce::String besideOsc;
+    if (id.startsWith ("osc") && id.length() == 4)
+        for (int o = ab::NumOsc - 1; o >= 0 && besideOsc.isEmpty(); --o)
+            if (const auto other = "osc" + ab::oscPrefix (o).toUpperCase(); other != id && tree.contains (other)) besideOsc = other;
+    if (besideOsc.isNotEmpty()) tree.insert (id, tree.findLeaf (besideOsc), dock::Zone::Stack);
+    else tree.insertSomewhere (id, dockMinSize());
     relayoutWidgets (true);
     layoutChanged();
     showMessage ("Added " + juce::String (infoFor (type)->name) + (layoutEditing ? "" : ". Turn on layout mode to move it."));
@@ -489,9 +504,23 @@ void HypernovaAudioProcessorEditor::pinParameter (const juce::String& paramId, b
 // DockOverlay::Host
 void HypernovaAudioProcessorEditor::dockCommit (const juce::String&) { layoutChanged(); }
 
-void HypernovaAudioProcessorEditor::dockDrop (const juce::String& idOrType, bool isNewType, const dock::Drop& drop, juce::Rectangle<int> from)
+void HypernovaAudioProcessorEditor::dockDrop (const juce::String& idOrType, bool isNewTypeIn, const dock::Drop& drop, juce::Rectangle<int> from)
 {
     juce::String id = idOrType;
+    bool isNewType = isNewTypeIn;
+    if (isNewType && idOrType == "osc+")
+    {
+        // Dropped "Add Oscillator": switch the next one on and put its panel where it was dropped.
+        id = {};
+        for (int o = 0; o < NumOsc && id.isEmpty(); ++o)
+            if (processor.apvts.getRawParameterValue (oscPrefix (o) + "On")->load() < 0.5f)
+            {
+                processor.setParam (oscPrefix (o) + "On", 1.0f);
+                id = "osc" + oscPrefix (o).toUpperCase();
+            }
+        if (id.isEmpty()) { showMessage ("All 8 oscillators are already playing"); return; }
+        isNewType = false;
+    }
     if (isNewType)
     {
         if (isMultiType (idOrType)) { id = newToolId (idOrType); createTool (idOrType, id, {}); }
@@ -550,6 +579,8 @@ void HypernovaAudioProcessorEditor::showWidgetMenu (Widget& w, juce::Point<int> 
     }
     m.addSubMenu ("Replace with", replace);
     m.addItem (4, "Duplicate", isMultiType (typeOfId (id)));
+    const bool isOsc = id.startsWith ("osc") && id.length() == 4;
+    if (isOsc) m.addItem (7, "Remove oscillator (switch it off)");
     m.addItem (5, isMultiType (typeOfId (id)) ? "Remove" : "Hide (the sound keeps playing)");
     m.addSeparator();
     m.addSubMenu ("Add a widget", add);
@@ -566,6 +597,7 @@ void HypernovaAudioProcessorEditor::showWidgetMenu (Widget& w, juce::Point<int> 
         else if (r == 4) duplicateWidget (id);
         else if (r == 5) hideWidget (id);
         else if (r == 6) setLayoutEditing (! layoutEditing);
+        else if (r == 7) removeOscillator ((int) (id[3] - 'A'));
         else if (r >= 100 && r < 200) replaceWidget (id, types[(size_t) (r - 100)]);
         else if (r >= 200 && r < 300) addWidgetType (types[(size_t) (r - 200)]);
     });
@@ -576,6 +608,7 @@ std::vector<WidgetLibrary::Entry> HypernovaAudioProcessorEditor::libraryEntries(
     std::vector<WidgetLibrary::Entry> out;
     for (auto& t : catalogue)
     {
+        if (juce::String (t.type).startsWith ("osc") && juce::String (t.type).length() == 4 && juce::String (t.type)[3] > 'B') continue; // via "Add Oscillator"
         WidgetLibrary::Entry e;
         e.type = t.type; e.name = t.name; e.group = t.group; e.description = t.description; e.multi = t.multi;
         e.colour = ThemeColour { t.colourSlot };

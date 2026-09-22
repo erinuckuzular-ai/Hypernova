@@ -227,6 +227,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, "smpR", "Sampler Release", sDec, 0.25f, timeText);
     }
 
+    // Oscillators C to H (appended, off by default): the same controls as A and B.
+    for (int o = 2; o < NumOsc; ++o)
+    {
+        const juce::String p = oscPrefix (o);
+        const juce::String n = "Osc " + p.toUpperCase() + " ";
+        add<Bool> (l, pid (p + "On"), n + "On", false);
+        add<Choice> (l, pid (p + "Table"), n + "Wavetable", WavetableBank::names(), 0);
+        addFloat (l, p + "Pos", n + "Position", { 0.0f, 1.0f }, 0.66f, pctText);
+        add<Choice> (l, pid (p + "Warp"), n + "Warp Mode", warpNames(), 0);
+        addFloat (l, p + "WarpAmt", n + "Warp", { 0.0f, 1.0f }, 0.0f, pctText);
+        add<Int> (l, pid (p + "Uni"), n + "Unison", 1, MaxUnison, 1);
+        addFloat (l, p + "Detune", n + "Detune", { 0.0f, 1.0f }, 0.2f, pctText);
+        addFloat (l, p + "Blend", n + "Blend", { 0.0f, 1.0f }, 0.5f, pctText);
+        addFloat (l, p + "Level", n + "Level", { 0.0f, 1.0f }, 0.6f, pctText);
+        addFloat (l, p + "Pan", n + "Pan", { -1.0f, 1.0f }, 0.0f, bipolarPct);
+        add<Int> (l, pid (p + "Oct"), n + "Octave", -3, 3, 0);
+        add<Int> (l, pid (p + "Semi"), n + "Semitone", -12, 12, 0);
+        addFloat (l, p + "Fine", n + "Fine", { -100.0f, 100.0f }, 0.0f, [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ct"; });
+        addFloat (l, p + "Width", n + "Unison Width", { 0.0f, 1.0f }, 1.0f, pctText);
+        add<Bool> (l, pid (p + "Filter"), n + "To Filter", true);
+    }
+
     // EQ bands (appended; the defaults are the old fixed shelves, so older sounds don't change).
     addFloat (l, "eqLowFreq", "EQ Low Freq", skewed (30.0f, 600.0f, 140.0f), 120.0f, hzText);
     addFloat (l, "eqHighFreq", "EQ High Freq", skewed (1000.0f, 16000.0f, 5000.0f), 5000.0f, hzText);
@@ -340,9 +362,9 @@ void HypernovaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
 SynthSettings HypernovaAudioProcessor::readSynthSettings()
 {
     SynthSettings s;
-    for (int o = 0; o < 2; ++o)
+    for (int o = 0; o < NumOsc; ++o)
     {
-        const std::string p = o == 0 ? "a" : "b";
+        const std::string p = oscPrefix (o).toStdString();
         auto get = [&] (const char* suffix) { return param ((p + suffix).c_str()); };
         auto& os = s.osc[(size_t) o];
         os.on = get ("On") > 0.5f;
@@ -444,7 +466,7 @@ void HypernovaAudioProcessor::smoothSettings (SynthSettings& s, int numSamples)
     }
     const float a = 1.0f - std::exp (-(float) numSamples / (0.015f * (float) sampleRateNow));
     auto glide = [a] (float& cur, float target) { cur += (target - cur) * a; return cur; };
-    for (int o = 0; o < 2; ++o)
+    for (int o = 0; o < NumOsc; ++o)
     {
         auto& d = s.osc[(size_t) o];
         auto& m = smoothed.osc[(size_t) o];
@@ -961,9 +983,9 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     shownVoices = active;
     if (newest != nullptr)
     {
+        for (int o = 0; o < NumOsc; ++o) shownPos[o] = newest->shownPos[o];
         for (int o = 0; o < 2; ++o)
         {
-            shownPos[o] = newest->shownPos[o];
             shownLfo[o] = newest->shownLfo[o];
             shownLfoPhase[o] = (float) newest->shownLfoPhase[o];
         }
@@ -975,9 +997,9 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     }
     else
     {
+        for (int o = 0; o < NumOsc; ++o) shownPos[o] = settings.osc[(size_t) o].pos;
         for (int o = 0; o < 2; ++o)
         {
-            shownPos[o] = settings.osc[(size_t) o].pos;
             shownLfoPhase[o] = (float) globalMod.lfoPhase[(size_t) o];
             shownLfo[o] = dsp::lfoShape (settings.lfo[(size_t) o].shape, globalMod.lfoPhase[(size_t) o], 0, 0);
         }
@@ -1416,7 +1438,7 @@ juce::String HypernovaAudioProcessor::importWavetable (const juce::File& file, i
     }
 
     tableCache[name.toStdString()] = table;
-    if (juce::isPositiveAndBelow (osc, 2))
+    if (juce::isPositiveAndBelow (osc, NumOsc))
     {
         userTableSlot[(size_t) osc] = name;
         userTable[(size_t) osc].store (table.get());
@@ -1428,7 +1450,7 @@ juce::String HypernovaAudioProcessor::importWavetable (const juce::File& file, i
 // Points an oscillator at an imported table by name, loading it from the wavetable folder if needed.
 bool HypernovaAudioProcessor::setUserTable (int osc, const juce::String& name)
 {
-    if (! juce::isPositiveAndBelow (osc, 2)) return false;
+    if (! juce::isPositiveAndBelow (osc, NumOsc)) return false;
     if (name.isEmpty())
     {
         userTableSlot[(size_t) osc] = {};
@@ -1768,8 +1790,9 @@ void HypernovaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         for (int i = 0; i < 4; ++i) state.setProperty ("macro" + juce::String (i + 1) + "Name", macroNames[(size_t) i], nullptr);
     }
     state.setProperty ("program", currentProgram, nullptr);
-    for (int o = 0; o < 2; ++o)
-        state.setProperty (o == 0 ? "aUserTable" : "bUserTable", userTableSlot[(size_t) o], nullptr);
+    for (int o = 0; o < NumOsc; ++o)
+        if (o < 2 || userTableSlot[(size_t) o].isNotEmpty())
+            state.setProperty (oscPrefix (o) + "UserTable", userTableSlot[(size_t) o], nullptr);
     state.setProperty ("uiAnimation", uiAnimation.load(), nullptr);
     state.setProperty ("uiScale", uiScalePercent.load(), nullptr);
     addSampleTo (state);
@@ -1791,8 +1814,8 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         for (int i = 0; i < 4; ++i)
             macroNames[(size_t) i] = state.getProperty ("macro" + juce::String (i + 1) + "Name", "MACRO " + juce::String (i + 1)).toString();
         currentProgram = state.getProperty ("program", 0);
-        for (int o = 0; o < 2; ++o)
-            setUserTable (o, state.getProperty (o == 0 ? "aUserTable" : "bUserTable", "").toString());
+        for (int o = 0; o < NumOsc; ++o)
+            setUserTable (o, state.getProperty (oscPrefix (o) + "UserTable", "").toString());
         uiAnimation = (int) state.getProperty ("uiAnimation", 0);
         uiScalePercent = (int) state.getProperty ("uiScale", 100);
     }

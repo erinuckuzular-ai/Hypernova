@@ -15,7 +15,8 @@ int main (int argc, char** argv)
     proc.prepareToPlay (48000.0, 512);
 
     auto snap = [&] (const juce::String& name, const juce::String& preset, int mode, int page,
-                     const juce::String& workspace = "Sound Design", bool editing = false)
+                     const juce::String& workspace = "Sound Design", bool editing = false,
+                     std::function<void (HypernovaAudioProcessorEditor&)> prepare = {})
     {
         for (int i = 0; i < proc.getNumPrograms(); ++i)
             if (proc.getProgramName (i) == preset) proc.setCurrentProgram (i);
@@ -45,7 +46,8 @@ int main (int argc, char** argv)
         editor->setDeckPage (page);
         editor->setLayoutEditing (editing);
         if (editing) editor->setLibraryOpen (true);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (80);
+        if (prepare) prepare (*editor);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (prepare ? 400 : 80);
         auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
         auto f = outDir.getChildFile (name);
         f.deleteFile();
@@ -299,6 +301,40 @@ int main (int argc, char** argv)
         // Macros moved by the XY pad are real parameter changes, so compare the sound before any of that.
         check (proc.apvts.copyState().toXmlString() == stateBefore, "no layout change touched the sound");
 
+        // Oscillators: add up to eight, each gets its panel and a row in Sources; removing one switches it off.
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+            auto& srcView = ed->sourcesView();
+            proc.setParam ("aOn", 1.0f);
+            proc.setParam ("bOn", 1.0f); // "+ OSC" switches on A or B first when a patch has one off
+            srcView.refresh();
+            check (srcView.rowNames().contains ("OSC A") && srcView.rowNames().contains ("OSC B") && ! srcView.rowNames().contains ("OSC C"),
+                   "Sources lists the two oscillators a patch starts with (" + srcView.rowNames().joinIntoString (", ") + ")");
+            ed->addOscillator();
+            settle();
+            srcView.refresh();
+            check (proc.apvts.getRawParameterValue ("cOn")->load() > 0.5f, "adding an oscillator switches on Osc C");
+            check (ed->findWidget ("oscC") != nullptr && ed->findWidget ("oscC")->isVisible(), "and shows its panel");
+            check (srcView.rowNames().contains ("OSC C"), "and gives it a row in Sources");
+            tidy ("after adding Osc C");
+            for (int i = 0; i < 6; ++i) ed->addOscillator();
+            settle();
+            bool allOn = true;
+            for (int o = 0; o < ab::NumOsc; ++o) allOn &= o < 2 || proc.apvts.getRawParameterValue (ab::oscPrefix (o) + "On")->load() > 0.5f;
+            check (allOn, "eight oscillators can play at once");
+            tidy ("with eight oscillators");
+            ed->removeOscillator (2);
+            settle();
+            srcView.refresh();
+            check (proc.apvts.getRawParameterValue ("cOn")->load() < 0.5f && ! ed->layoutTree().contains ("oscC") && ! srcView.rowNames().contains ("OSC C"),
+                   "removing Osc C switches it off, hides its panel and its row");
+            proc.undoManager.undo();
+            check (proc.apvts.getRawParameterValue ("cOn")->load() > 0.5f, "and undo brings it back");
+            for (int o = 2; o < ab::NumOsc; ++o) proc.setParam (ab::oscPrefix (o) + "On", 0.0f);
+            for (int o = 2; o < ab::NumOsc; ++o) if (ed->layoutTree().contains ("osc" + ab::oscPrefix (o).toUpperCase())) ed->hideWidget ("osc" + ab::oscPrefix (o).toUpperCase());
+            settle();
+        }
         // Tiny window area: everything still fits (widgets shrink to their minimum, never overlap).
         std::printf ("%d failures\n", failures);
         return failures == 0 ? 0 : 1;
@@ -448,6 +484,14 @@ int main (int argc, char** argv)
     snap ("ui_6_layout_edit.png", "Reese Wide", 1, 0, "Sound Design", true);
     snap ("ui_7_effects_workspace.png", "Reese Wide", 0, 1, "Effects");
     snap ("ui_8_analysis.png", "Reese Wide", 0, 0, "Analysis");
+    snap ("ui_10_sources.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        e.addOscillator();
+        e.addOscillator();
+        e.activateWidget ("sources");
+        for (int o = 2; o < 4; ++o) proc.setParam (ab::oscPrefix (o) + "Level", 0.5f);
+    });
+    for (int o = 2; o < ab::NumOsc; ++o) proc.setParam (ab::oscPrefix (o) + "On", 0.0f);
     {
         // Sampling: a made-up recording (a plucked, slightly noisy tone) loaded and looping.
         const auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("Glass Pluck.wav");

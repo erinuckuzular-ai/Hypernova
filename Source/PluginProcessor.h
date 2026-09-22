@@ -186,7 +186,7 @@ public:
 
     // Visualiser taps.
     ab::ScopeRing scope;
-    std::atomic<float> shownPos[2] {}, shownLfo[2] {}, shownLfoPhase[2] {}, shownEnv { 0 }, shownCutoff { 1000 };
+    std::atomic<float> shownPos[ab::NumOsc] {}, shownLfo[2] {}, shownLfoPhase[2] {}, shownEnv { 0 }, shownCutoff { 1000 };
     // Live value of every modulation source (index matches modSrcNames), so the editor can animate mod rings.
     std::array<std::atomic<float>, 12> shownModSource {};
     std::atomic<int> shownVoices { 0 }, shownNote { -1 };
@@ -281,8 +281,8 @@ private:
     void installSample (std::shared_ptr<ab::SampleData>, juce::MemoryBlock flac);
     void addSampleTo (juce::ValueTree& state) const;
     void takeSampleFrom (juce::ValueTree& state, bool clearIfMissing);
-    std::array<std::atomic<const ab::Wavetable*>, 2> userTable { nullptr, nullptr };
-    std::array<juce::String, 2> userTableSlot;
+    std::array<std::atomic<const ab::Wavetable*>, ab::NumOsc> userTable {};
+    std::array<juce::String, ab::NumOsc> userTableSlot;
     juce::SmoothedValue<float> masterGain;
     int lastMode = -1;
 

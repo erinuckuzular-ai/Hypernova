@@ -124,7 +124,9 @@ public:
 
     // Puts a widget where it reads naturally when added without dragging: beside the biggest place,
     // along that place's longer side.
-    void insertSomewhere (const juce::String& id)
+    // Splits the biggest panel in two for the new widget. When halving it would squeeze either side below
+    // its minimum, the new widget joins that panel as a tab instead, so adding never pushes anything off screen.
+    void insertSomewhere (const juce::String& id, const MinSize& minSize = {})
     {
         if (empty()) { insert (id, nullptr, Zone::Left); return; }
         Node* best = nullptr;
@@ -134,7 +136,14 @@ public:
             if (best == nullptr || n.bounds.getWidth() * n.bounds.getHeight() > best->bounds.getWidth() * best->bounds.getHeight()) best = &n;
         });
         if (best == nullptr) { insert (id, nullptr, Zone::Right); return; }
-        insert (id, best, best->bounds.getWidth() >= best->bounds.getHeight() ? Zone::Right : Zone::Bottom);
+        const bool across = best->bounds.getWidth() >= best->bounds.getHeight();
+        if (minSize)
+        {
+            const auto mine = minSize (id), theirs = minimumOf (*best, minSize);
+            const int half = ((across ? best->bounds.getWidth() : best->bounds.getHeight()) - gutter) / 2;
+            if (half < (across ? juce::jmax (mine.x, theirs.x) : juce::jmax (mine.y, theirs.y))) { insert (id, best, Zone::Stack); return; }
+        }
+        insert (id, best, across ? Zone::Right : Zone::Bottom);
     }
 
     // Swaps one widget for another in the same place (same tab position).

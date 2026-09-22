@@ -38,10 +38,12 @@ enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DC
                // Every effect control (appended): applied to the effects once per block.
                DFxFltFreq, DFxFltRes, DFxFltSweep, DDelayFb, DDelayTone, DReverbSize, DFlangRate, DFlangDepth, DFlangFb, DFlangMix,
                DTapeWow, DTapeNoise, DTapeSat, DGateDepth, DGateShape, DPanDepth, DShiftMix, DEqLow, DEqHigh, DWidth, DChorusRate,
-               DDistMix, DLowLevel, DLowDuck, DLowDrive, DEqMid, DEqMidFreq, NumDest };
+               DDistMix, DLowLevel, DLowDuck, DLowDrive, DEqMid, DEqMidFreq,
+               // Oscillators C to H (appended).
+               DCPos, DDPos, DEPos, DFPos, DGPos, DHPos, DCLevel, DDLevel, DELevel, DFLevel, DGLevel, DHLevel, NumDest };
 constexpr int FirstGlobalDest = DDistFx;
 constexpr int FirstFxParamDest = DFxFltFreq;
-inline bool isGlobalDest (int d) { return (d >= FirstGlobalDest && d < DSmpLevel) || (d > DSmpLevel && d < NumDest); } // DSmpLevel is per voice
+inline bool isGlobalDest (int d) { return (d >= FirstGlobalDest && d < DSmpLevel) || (d > DSmpLevel && d < DCPos); } // sampler and osc C-H are per voice
 inline juce::StringArray modDestNames()
 {
     return { "-", "A Position", "B Position", "A Warp", "B Warp", "A Level", "B Level", "Pitch", "Cutoff", "Resonance",
@@ -51,7 +53,9 @@ inline juce::StringArray modDestNames()
              "FX Filter Freq", "FX Filter Res", "FX Filter Sweep", "Delay Feedback", "Delay Tone", "Reverb Size", "Flanger Rate",
              "Flanger Depth", "Flanger Feedback", "Flanger Mix", "Tape Wobble", "Tape Noise", "Tape Saturation", "Gate Depth",
              "Gate Shape", "Auto Pan", "Pitch Shift Mix", "EQ Low", "EQ High", "Stereo Width", "Chorus Rate", "Distortion Mix",
-             "Low End Level", "Low End Duck", "Low End Warmth", "EQ Mid", "EQ Mid Freq" };
+             "Low End Level", "Low End Duck", "Low End Warmth", "EQ Mid", "EQ Mid Freq",
+             "C Position", "D Position", "E Position", "F Position", "G Position", "H Position",
+             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level" };
 }
 
 // The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
@@ -65,7 +69,8 @@ inline juce::String modDestParam (int dest)
                                  "fxFltFreq", "fxFltRes", "fxFltDepth", "dlyFb", "dlyTone", "verbSize", "flangRate", "flangDepth", "flangFb",
                                  "flangMix", "tapeWow", "tapeNoise", "tapeSat", "gateDepth", "gateShape", "panDepth", "shiftMix", "eqLow",
                                  "eqHigh", "width", "chorusRate", "distMix", "lowLevel", "lowDuck", "lowDrive",
-                                 "eqMidGain", "eqMidFreq" };
+                                 "eqMidGain", "eqMidFreq",
+                                 "cPos", "dPos", "ePos", "fPos", "gPos", "hPos", "cLevel", "dLevel", "eLevel", "fLevel", "gLevel", "hLevel" };
     return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
 
@@ -85,6 +90,8 @@ inline int modDestForParam (const juce::String& paramId)
 
 constexpr int NumModSlots = 8;
 constexpr int MaxUnison = 7;
+constexpr int NumOsc = 8; // A and B, plus C to H that a sound can switch on
+inline juce::String oscPrefix (int o) { return juce::String::charToString ((juce::juce_wchar) ('a' + o)); }
 constexpr int MaxVoices = 20;   // 16 playable + spares so a stolen/retriggered voice can fade out instead of clicking
 constexpr int PolyLimit = 16;
 constexpr int SubBlock = 16;
@@ -106,7 +113,7 @@ struct ModSlot { int src = SrcNone, dest = DNone; float amount = 0; };
 
 struct SynthSettings
 {
-    std::array<OscSettings, 2> osc;
+    std::array<OscSettings, NumOsc> osc;
     bool subOn = false, subToFilter = false;
     int subShape = SubSine, subOct = -1;
     float subLevel = 0.6f;
@@ -433,7 +440,7 @@ public:
     float ampLevel() const { return ampEnv.value; }
 
     // Modulated values of the last rendered sub-block, for the UI.
-    float shownPos[2] {}, shownLfo[2] {}, shownCutoff = 0, shownModEnv = 0, shownVelocity = 0;
+    float shownPos[NumOsc] {}, shownLfo[2] {}, shownCutoff = 0, shownModEnv = 0, shownVelocity = 0;
     float shownSample = -1; // sampler playhead, 0..1 of the sample (-1 when it isn't playing)
     double shownLfoPhase[2] {};
     float lastSrc[NumSrc] {}; // per-voice mod sources of the last sub-block (drives global FX destinations)
@@ -479,7 +486,7 @@ public:
         noteAge = 0;
         if (s.phaseRetrig || ! wasActive)
         {
-            for (int o = 0; o < 2; ++o)
+            for (int o = 0; o < NumOsc; ++o)
                 for (int u = 0; u < MaxUnison; ++u)
                     phase[o][u] = s.phaseRetrig ? (u == 0 ? 0.0 : dsp::frac (u * 0.3819660113)) : dsp::frac (0.5 + 0.5 * rng.next());
             subPhase = 0;
@@ -605,23 +612,27 @@ public:
                 double xScale = 0;  // the same, for the cross-modulation knobs
                 double inc[MaxUnison] {};
                 float gl[MaxUnison] {}, gr[MaxUnison] {};
-            } run[2];
+            } run[NumOsc];
 
-            for (int o = 0; o < 2; ++o)
+            // Modulation destinations per oscillator (warp and detune exist for A and B only).
+            static constexpr int posDest[NumOsc] = { DAPos, DBPos, DCPos, DDPos, DEPos, DFPos, DGPos, DHPos };
+            static constexpr int levelDest[NumOsc] = { DALevel, DBLevel, DCLevel, DDLevel, DELevel, DFLevel, DGLevel, DHLevel };
+            for (int o = 0; o < NumOsc; ++o)
             {
                 const auto& os = s.osc[(size_t) o];
                 auto& r = run[o];
-                const float level = juce::jlimit (0.0f, 1.5f, os.level + dst[o == 0 ? DALevel : DBLevel]);
+                if (! os.on) { r.on = false; continue; }
+                const float level = juce::jlimit (0.0f, 1.5f, os.level + dst[levelDest[o]]);
                 r.on = os.on && level > 0.0001f;
                 if (! r.on) continue;
                 r.level = level;
-                const float pos = juce::jlimit (0.0f, 1.0f, os.pos + dst[o == 0 ? DAPos : DBPos]);
+                const float pos = juce::jlimit (0.0f, 1.0f, os.pos + dst[posDest[o]]);
                 shownPos[o] = pos;
                 r.warp = os.warp;
-                r.warpAmt = juce::jlimit (0.0f, 1.0f, os.warpAmt + dst[o == 0 ? DAWarp : DBWarp]);
+                r.warpAmt = juce::jlimit (0.0f, 1.0f, os.warpAmt + (o < 2 ? dst[o == 0 ? DAWarp : DBWarp] : 0.0f));
                 r.crush = std::exp2 (8.0f - r.warpAmt * 6.0f);
                 r.n = juce::jlimit (1, MaxUnison, os.unison);
-                const float det = juce::jlimit (0.0f, 1.0f, os.detune + dst[o == 0 ? DADetune : DBDetune]);
+                const float det = juce::jlimit (0.0f, 1.0f, os.detune + (o < 2 ? dst[o == 0 ? DADetune : DBDetune] : 0.0f));
                 const double freq = 440.0 * std::exp2 ((basePitch + os.pitch - 69.0) / 12.0);
                 const float spreadCents = det * 25.0f + det * det * 35.0f;
                 const float maxDetRatio = std::exp2 (spreadCents / 1200.0f);
@@ -646,9 +657,13 @@ public:
 
             // True FM like a DX: the other oscillator bends this one's frequency. Scaled by the modulator's
             // frequency so WARP maps to a constant FM index (100% = index ~9.4) across the keyboard.
-            for (int o = 0; o < 2; ++o)
+            // (A is modulated by B; B and the extra oscillators by A.)
+            for (int o = 0; o < NumOsc; ++o)
                 if (run[o].on && run[o].warp == WarpFm)
-                    run[o].fmScale = run[o].warpAmt * 1.5 * juce::MathConstants<double>::twoPi * (run[1 - o].on ? run[1 - o].inc[0] : 0.0);
+                {
+                    const int m = o == 0 ? 1 : 0;
+                    run[o].fmScale = run[o].warpAmt * 1.5 * juce::MathConstants<double>::twoPi * (run[m].on ? run[m].inc[0] : 0.0);
+                }
 
             // Cross modulation: the same index scaling as the warp, but on its own knobs so a patch can use
             // a warp and FM at once, in either direction.
@@ -657,6 +672,9 @@ public:
                 run[o].xScale = run[o].on && xFm[o] > 0.0001f
                                     ? xFm[o] * 1.5 * juce::MathConstants<double>::twoPi * (run[1 - o].on ? run[1 - o].inc[0] : 0.0)
                                     : 0.0;
+            // Only the oscillators that are on get visited per sample.
+            int active[NumOsc], numActive = 0;
+            for (int o = 0; o < NumOsc; ++o) if (run[o].on) active[numActive++] = o;
             const bool crossOn = s.xRing > 0.0001f || s.xAm > 0.0001f || s.xFltFm > 0.0001f
                                  || run[0].xScale != 0.0 || run[1].xScale != 0.0;
 
@@ -723,13 +741,13 @@ public:
             for (int i = 0; i < n; ++i)
             {
                 float fL = 0, fR = 0, dL = 0, dR = 0; // filtered bus / direct bus
-                float oscOut[2] = { 0, 0 };
+                float oscOut[NumOsc] {};
 
-                float oscL[2] {}, oscR[2] {};
-                for (int o = 0; o < 2; ++o)
+                float oscL[NumOsc] {}, oscR[NumOsc] {};
+                for (int ai = 0; ai < numActive; ++ai)
                 {
+                    const int o = active[ai];
                     auto& r = run[o];
-                    if (! r.on) continue;
                     const float fm = o == 0 ? fmPrev[1] : oscOut[0];
                     float sumL = 0, sumR = 0, mono = 0;
                     for (int u = 0; u < r.n; ++u)
@@ -773,9 +791,9 @@ public:
                     oscOut[0] *= m;
                 }
 
-                for (int o = 0; o < 2; ++o)
+                for (int ai = 0; ai < numActive; ++ai)
                 {
-                    if (! run[o].on) continue;
+                    const int o = active[ai];
                     if (s.osc[(size_t) o].toFilter) { fL += oscL[o]; fR += oscR[o]; }
                     else                            { dL += oscL[o]; dR += oscR[o]; }
                 }
@@ -923,9 +941,9 @@ public:
 
 private:
     double sr = 44100.0;
-    double phase[2][MaxUnison] {};
+    double phase[NumOsc][MaxUnison] {};
     double subPhase = 0;
-    double fmAcc[2][MaxUnison] {}, xAcc[2][MaxUnison] {};
+    double fmAcc[NumOsc][MaxUnison] {}, xAcc[NumOsc][MaxUnison] {};
     float fmPrev[2] {};
     float noiseState[2] {};
     dsp::NoiseGen noise[2];

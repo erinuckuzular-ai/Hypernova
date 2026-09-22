@@ -1,0 +1,213 @@
+#pragma once
+
+#include "Components.h"
+
+// Sources: every sound source in one place, like a mixer. Each row has its on light, its name (click to
+// open its panel), a level bar, pan, and whether it goes through the filter. "+ OSC" adds an oscillator.
+namespace ab::ui
+{
+
+class SourcesView : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit SourcesView (HypernovaAudioProcessor& p) : proc (p) { rebuild(); }
+
+    std::function<void (const juce::String& widgetId)> onShow;
+    std::function<void (int osc)> onRemoveOsc;
+
+    static ThemeColour colourFor (int o)
+    {
+        static const int slots[] = { SlotOscA, SlotOscB, SlotEnv, SlotLfo, SlotSub, SlotFilter, SlotMod, SlotFx };
+        return ThemeColour { slots[juce::jlimit (0, 7, o)] };
+    }
+
+    // Rows follow what's switched on; checked from the editor's timer.
+    void refresh()
+    {
+        if (signature() != lastSignature) rebuild();
+        else for (auto& r : rows) r->repaint();
+    }
+
+    void resized() override
+    {
+        int y = 0;
+        for (auto& r : rows) { r->setBounds (0, y, getWidth(), rowH); y += rowH + 4; }
+    }
+
+    int preferredHeight() const { return (int) rows.size() * (rowH + 4); }
+    juce::StringArray rowNames() const { juce::StringArray n; for (auto& r : rows) n.add (r->title()); return n; }
+
+private:
+    static constexpr int rowH = 34;
+    HypernovaAudioProcessor& proc;
+
+    class Row : public juce::Component
+    {
+    public:
+        Row (SourcesView& o, juce::AudioProcessorValueTreeState& state, const juce::String& title, const juce::String& widgetId, ThemeColour c,
+             const char* onParam, const char* levelParam, const char* panParam, const char* routeParam, int oscIndex)
+            : owner (o), name (title), widget (widgetId), colour (c), osc (oscIndex), level (c)
+        {
+            if (onParam != nullptr)
+            {
+                led = std::make_unique<PowerLed> (c);
+                addAndMakeVisible (*led);
+                attachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (state, onParam, *led));
+            }
+            addAndMakeVisible (level);
+            levelAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, levelParam, level);
+            level.setTooltip ("Level");
+            if (panParam != nullptr)
+            {
+                pan.setTooltip ("Pan (double-click for centre)");
+                addAndMakeVisible (pan);
+                panAttach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, panParam, pan);
+                pan.setDoubleClickReturnValue (true, 0.0);
+            }
+            if (routeParam != nullptr)
+            {
+                route = std::make_unique<PillToggle> ("FILTER", c);
+                route->setTooltip ("Send this source through the filter");
+                addAndMakeVisible (*route);
+                attachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (state, routeParam, *route));
+            }
+            if (osc >= 2)
+            {
+                addAndMakeVisible (remove);
+                remove.setTooltip ("Remove this oscillator");
+                remove.onClick = [this] { if (owner.onRemoveOsc) owner.onRemoveOsc (osc); };
+            }
+            setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (4, 3);
+            if (led != nullptr) led->setBounds (r.removeFromLeft (22).withSizeKeepingCentre (18, 18));
+            else r.removeFromLeft (22);
+            r.removeFromLeft (6);
+            nameArea = r.removeFromLeft (juce::jmin (96, r.getWidth() / 3));
+            r.removeFromLeft (6);
+            if (osc >= 2) remove.setBounds (r.removeFromRight (20).withSizeKeepingCentre (18, 18)); else r.removeFromRight (20);
+            r.removeFromRight (4);
+            if (route != nullptr) route->setBounds (r.removeFromRight (74).withSizeKeepingCentre (70, 20)); else r.removeFromRight (74);
+            r.removeFromRight (6);
+            if (panAttach != nullptr) pan.setBounds (r.removeFromRight (58)); else r.removeFromRight (58);
+            r.removeFromRight (6);
+            level.setBounds (r);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (0.5f);
+            g.setColour (isMouseOver (true) ? Colours::panelHi.brighter (0.04f) : Colours::panelHi.withAlpha (0.6f));
+            g.fillRoundedRectangle (r, 8.0f);
+            g.setColour (Colours::text);
+            g.setFont (mono (11.0f).boldened().withExtraKerningFactor (0.08f));
+            g.drawText (name, nameArea, juce::Justification::centredLeft, true);
+        }
+
+        const juce::String& title() const { return name; }
+        void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+        void mouseExit (const juce::MouseEvent&) override { repaint(); }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (nameArea.contains (e.getPosition()) && owner.onShow) owner.onShow (widget);
+        }
+
+    private:
+        SourcesView& owner;
+        juce::String name, widget;
+        ThemeColour colour;
+        int osc;
+        std::unique_ptr<PowerLed> led;
+        std::unique_ptr<PillToggle> route;
+        struct LevelBar : juce::Slider
+        {
+            explicit LevelBar (ThemeColour c) : colour (c)
+            {
+                setSliderStyle (juce::Slider::LinearBar);
+                setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            }
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat().reduced (0, 5);
+                g.setColour (Colours::inset);
+                g.fillRoundedRectangle (r, 4.0f);
+                const float v = (float) valueToProportionOfLength (getValue());
+                g.setColour (colour.withAlpha (0.85f));
+                g.fillRoundedRectangle (r.withWidth (r.getWidth() * v), 4.0f);
+                g.setColour (Colours::text.withAlpha (0.9f));
+                g.setFont (mono (9.5f));
+                g.drawText (juce::String (juce::roundToInt (getValue() * 100.0)) + "%", r.reduced (6, 0), juce::Justification::centredRight, false);
+            }
+            ThemeColour colour;
+        } level;
+        // Pan as a small bar that fills out from the centre, with L/C/R written on it.
+        struct PanBar : juce::Slider
+        {
+            explicit PanBar (ThemeColour c) : colour (c)
+            {
+                setSliderStyle (juce::Slider::LinearBar);
+                setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            }
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat().reduced (0, 5);
+                g.setColour (Colours::inset);
+                g.fillRoundedRectangle (r, 4.0f);
+                const float v = (float) valueToProportionOfLength (getValue()), mid = r.getCentreX();
+                const float x = r.getX() + r.getWidth() * v;
+                g.setColour (colour.withAlpha (0.75f));
+                g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmin (mid, x), r.getY(), std::abs (x - mid) + 1.0f, r.getHeight()), 3.0f);
+                g.setColour (Colours::textFaint);
+                g.fillRect (mid - 0.5f, r.getY(), 1.0f, 3.0f);
+                g.fillRect (mid - 0.5f, r.getBottom() - 3.0f, 1.0f, 3.0f);
+                const int p = juce::roundToInt (getValue() * 100.0);
+                g.setColour (Colours::text.withAlpha (0.9f));
+                g.setFont (mono (9.5f));
+                g.drawText (p == 0 ? "C" : (p < 0 ? "L" : "R") + juce::String (std::abs (p)), r, juce::Justification::centred, false);
+            }
+            ThemeColour colour;
+        } pan { colour };
+        juce::TextButton remove { "x" };
+        juce::Rectangle<int> nameArea;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> levelAttach, panAttach;
+        std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> attachments;
+    };
+
+    std::vector<std::unique_ptr<Row>> rows;
+    juce::String lastSignature;
+
+    juce::String signature() const
+    {
+        juce::String s;
+        for (int o = 2; o < NumOsc; ++o) s << (proc.apvts.getRawParameterValue (oscPrefix (o) + "On")->load() > 0.5f ? "1" : "0");
+        s << (proc.sampleForUi() != nullptr || proc.apvts.getRawParameterValue ("smpOn")->load() > 0.5f ? "S" : "-");
+        return s;
+    }
+
+    void rebuild()
+    {
+        lastSignature = signature();
+        rows.clear();
+        auto& st = proc.apvts;
+        for (int o = 0; o < NumOsc; ++o)
+        {
+            const auto p = oscPrefix (o);
+            if (o >= 2 && st.getRawParameterValue (p + "On")->load() < 0.5f) continue;
+            const juce::String on = p + "On", lvl = p + "Level", pn = p + "Pan", rt = p + "Filter";
+            rows.push_back (std::make_unique<Row> (*this, st, "OSC " + p.toUpperCase(), "osc" + p.toUpperCase(), colourFor (o),
+                                                   on.toRawUTF8(), lvl.toRawUTF8(), pn.toRawUTF8(), rt.toRawUTF8(), o));
+        }
+        rows.push_back (std::make_unique<Row> (*this, st, "SUB", "sub", Palette::sub, "subOn", "subLevel", nullptr, "subFilter", -1));
+        rows.push_back (std::make_unique<Row> (*this, st, "NOISE", "sub", Colours::textDim, nullptr, "noiseLevel", nullptr, "noiseFilter", -1));
+        if (lastSignature.endsWith ("S"))
+            rows.push_back (std::make_unique<Row> (*this, st, "SAMPLER", "sampler", Palette::oscA, "smpOn", "smpLevel", "smpPan", "smpFilter", -1));
+        for (auto& r : rows) addAndMakeVisible (*r);
+        resized();
+        repaint();
+    }
+};
+
+} // namespace ab::ui

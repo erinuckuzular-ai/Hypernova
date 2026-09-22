@@ -300,33 +300,53 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
                                         { 842 + m * 84, 12, 84, 68 }, 40);
     knob ("volume", "VOLUME", Colours::text, { 1188, 12, 68, 68 }, 40);
 
-    // Oscillators
-    for (int o = 0; o < 2; ++o)
+    // Oscillators A to H (C to H only show up once they're switched on)
+    for (int o = 2; o < NumOsc; ++o)
     {
-        const auto& P = o == 0 ? oscAPanel : oscBPanel;
-        const juce::String p = o == 0 ? "a" : "b";
-        const auto c = o == 0 ? Palette::oscA : Palette::oscB;
-        auto& w = makeWidget (o == 0 ? "oscA" : "oscB", o == 0 ? "oscA" : "oscB", o == 0 ? "OSC A" : "OSC B", c, P, 40);
+        extraViews.push_back (std::make_unique<WavetableView> (processor, o, SourcesView::colourFor (o)));
+        extraViews.back()->onMessage = [this] (const juce::String& m) { showMessage (m); };
+    }
+    for (int o = 0; o < NumOsc; ++o)
+    {
+        const auto& P = o == 1 ? oscBPanel : oscAPanel;
+        const juce::String p = oscPrefix (o);
+        const auto c = SourcesView::colourFor (o);
+        auto& w = makeWidget ("osc" + p.toUpperCase(), "osc" + p.toUpperCase(), "OSC " + p.toUpperCase(), c, P, 40);
         auto* W = &w.content;
         toggle (std::make_unique<PowerLed> (c), p + "On", at (P, 10, 10, 26, 26), "Oscillator on/off", W);
         combo (p + "Table", WavetableBank::names(), at (P, 92, 11, 138, 24), W);
         combo (p + "Warp", warpNames(), at (P, 236, 11, 80, 24), W);
         toggle (std::make_unique<PillToggle> ("FILTER", c), p + "Filter", at (P, 322, 12, 66, 22), "Send this oscillator through the filter", W);
-        auto& view = o == 0 ? viewA : viewB;
+        auto& view = o == 0 ? viewA : o == 1 ? viewB : *extraViews[(size_t) o - 2];
         W->addAndMakeVisible (view);
         view.setBounds (at (P, 12, 44, 376, 168));
 
-        const char* ids1[] = { "Pos", "WarpAmt", "Uni", "Detune", "Blend" };
-        const char* names1[] = { "POSITION", "WARP", "UNISON", "DETUNE", "BLEND" };
+        // Top row: the table and its unison (width lives here now, next to the voices it spreads).
+        const char* ids1[] = { "Pos", "WarpAmt", "Uni", "Detune", "Blend", "Width" };
+        const char* names1[] = { "POSITION", "WARP", "UNISON", "DETUNE", "BLEND", "WIDTH" };
         const char* ids2[] = { "Level", "Pan", "Oct", "Semi", "Fine" };
         const char* names2[] = { "LEVEL", "PAN", "OCTAVE", "SEMI", "FINE" };
-        for (int i = 0; i < 5; ++i)
-        {
-            knob (p + ids1[i], names1[i], c, at (P, 12 + i * 75, 212, 75, 68), 42, W);
-            knob (p + ids2[i], names2[i], c, at (P, 12 + i * 75, 280, 75, 68), 42, W);
-        }
+        for (int i = 0; i < 6; ++i) knob (p + ids1[i], names1[i], c, at (P, 12 + i * 62, 212, 62, 68), 40, W);
+        for (int i = 0; i < 5; ++i) knob (p + ids2[i], names2[i], c, at (P, 12 + i * 75, 280, 75, 68), 42, W);
         w.finishBuilding();
         w.spread.setFlags (view, Spread::Stretch);
+    }
+
+    // Sources: the mixer of everything that makes sound
+    {
+        const juce::Rectangle<int> design { 0, 0, 400, 378 };
+        auto& w = makeWidget ("sources", "sources", "SOURCES", Colours::text, design);
+        auto* W = &w.content;
+        W->addAndMakeVisible (addOscButton);
+        addOscButton.setBounds (design.getWidth() - 96, 11, 82, 24);
+        addOscButton.setTooltip ("Add another oscillator (up to 8)");
+        addOscButton.onClick = [this] { addOscillator(); };
+        W->addAndMakeVisible (sources);
+        sources.setBounds (12, 44, design.getWidth() - 24, design.getHeight() - 56);
+        sources.onShow = [this] (const juce::String& id) { if (layoutTree().contains (id)) activateWidget (id); else addWidgetType (id); };
+        sources.onRemoveOsc = [this] (int osc) { removeOscillator (osc); };
+        w.finishBuilding();
+        w.spread.setFlags (sources, Spread::Stretch);
     }
 
     // Sound space
@@ -722,12 +742,14 @@ void HypernovaAudioProcessorEditor::timerCallback()
     {
         viewA.refresh (sounding);
         viewB.refresh (sounding);
+        for (auto& v : extraViews) if (v->isShowing() || (! isShowing() && v->isVisible())) v->refresh (sounding);
         space.refresh (sounding);
     }
     if (spaceWindow != nullptr) spaceWindow->view().refresh (sounding);
     tickTools (sounding);
     if (samplerView.isVisible()) samplerView.refresh();
     if (rack.isVisible()) { rack.refresh(); rack.tick (sounding); }
+    if (sources.isVisible()) sources.refresh();
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
@@ -1047,23 +1069,18 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
     knob ("drift", "DRIFT", c, { 546 + 2 * cell, knobY, cell, 72 }, 42, pg);
     pg->captions.push_back ({ { 760, 6, 1, 122 }, {}, {}, true });
 
-    pg->captions.push_back ({ { 774, 4, 160, 24 }, "UNISON WIDTH", c, false });
-    knob ("aWidth", "OSC A", Palette::oscA, { 774, knobY, cell, 72 }, 42, pg);
-    knob ("bWidth", "OSC B", Palette::oscB, { 774 + cell, knobY, cell, 72 }, 42, pg);
-    pg->captions.push_back ({ { 924, 6, 1, 122 }, {}, {}, true });
-
     // Audio-rate cross modulation between the two oscillators.
-    pg->captions.push_back ({ { 938, 4, 280, 24 }, "CROSS MOD", Palette::oscB, false });
+    pg->captions.push_back ({ { 774, 4, 280, 24 }, "CROSS MOD  (OSC A AND B)", Palette::oscB, false });
     const int xw = 56;
-    knob ("xFmAB", "FM A>B", Palette::oscB, { 938, knobY, xw, 72 }, 40, pg)
+    knob ("xFmAB", "FM A>B", Palette::oscB, { 774, knobY, xw, 72 }, 40, pg)
         .slider.setTooltip ("Osc A bends osc B's pitch at audio rate: metallic, bell-like tones");
-    knob ("xFmBA", "FM B>A", Palette::oscA, { 938 + xw, knobY, xw, 72 }, 40, pg)
+    knob ("xFmBA", "FM B>A", Palette::oscA, { 774 + xw, knobY, xw, 72 }, 40, pg)
         .slider.setTooltip ("Osc B bends osc A's pitch at audio rate");
-    knob ("xRing", "RING", Palette::oscB, { 938 + 2 * xw, knobY, xw, 72 }, 40, pg)
+    knob ("xRing", "RING", Palette::oscB, { 774 + 2 * xw, knobY, xw, 72 }, 40, pg)
         .slider.setTooltip ("Ring modulation: the two oscillators multiplied, for clangy inharmonic tones");
-    knob ("xAm", "AM", Palette::oscB, { 938 + 3 * xw, knobY, xw, 72 }, 40, pg)
+    knob ("xAm", "AM", Palette::oscB, { 774 + 3 * xw, knobY, xw, 72 }, 40, pg)
         .slider.setTooltip ("Osc B chops osc A's level: tremolo at low pitches, sidebands at high ones");
-    knob ("xFltFm", "FLT FM", Palette::filter, { 938 + 4 * xw, knobY, xw, 72 }, 40, pg)
+    knob ("xFltFm", "FLT FM", Palette::filter, { 774 + 4 * xw, knobY, xw, 72 }, 40, pg)
         .slider.setTooltip ("Osc A shakes the filter cutoff at audio rate: growl and buzz");
 }
 
@@ -1548,6 +1565,31 @@ void HypernovaAudioProcessorEditor::showAddEffectMenu (juce::Component* target, 
         rack.reveal (fx);
         showMessage (ab::fxRackNames()[fx] + " added at the end of the chain. Drag its name to move it.");
     });
+}
+
+void HypernovaAudioProcessorEditor::addOscillator()
+{
+    for (int o = 0; o < NumOsc; ++o)
+    {
+        const auto p = oscPrefix (o);
+        if (processor.apvts.getRawParameterValue (p + "On")->load() > 0.5f) continue;
+        processor.undoManager.beginNewTransaction ("Add oscillator");
+        processor.setParam (p + "On", 1.0f);
+        const juce::String id = "osc" + p.toUpperCase();
+        if (layoutTree().contains (id)) activateWidget (id); else addWidgetType (id);
+        showMessage ("Osc " + p.toUpperCase() + " added: it plays with the others and has its own table, unison and filter switch");
+        return;
+    }
+    showMessage ("All 8 oscillators are already playing");
+}
+
+void HypernovaAudioProcessorEditor::removeOscillator (int osc)
+{
+    const auto p = oscPrefix (osc);
+    processor.undoManager.beginNewTransaction ("Remove oscillator");
+    processor.setParam (p + "On", 0.0f);
+    hideWidget ("osc" + p.toUpperCase());
+    showMessage ("Osc " + p.toUpperCase() + " removed (switched off)");
 }
 
 void HypernovaAudioProcessorEditor::showChainMenu (juce::Component* target, juce::Point<int> screenPos)
