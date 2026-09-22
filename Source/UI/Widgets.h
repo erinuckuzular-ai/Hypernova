@@ -269,6 +269,7 @@ public:
     bool fitHeight = false;   // scale by height only and lay out to any width (onLayout): for strips that scroll
     bool collapsed = false, sideways = false;           // sideways: collapsed into a vertical spine
     bool editing = false, lifted = false, maximised = false;
+    bool dimmed = false; // its source is switched off: the body fades back, the title and its power light don't
 
     // Called once the contents are built: remembers every control's design position.
     void finishBuilding (std::initializer_list<juce::Component*> skip = {}) { spread.capture (content, designW, designH, headerH, skip); }
@@ -369,6 +370,15 @@ public:
             // Being dragged: a quiet placeholder stays where it came from.
             g.setColour (Colours::bg0.withAlpha (0.6f));
             g.fillRoundedRectangle (getLocalBounds().toFloat(), 14.0f);
+        }
+        if (dimmed && ! editing && ! collapsed)
+        {
+            const float top = (float) tabStripHeight() + 40.0f * scaleNow;
+            juce::Path body;
+            const auto b = getLocalBounds().toFloat().reduced (1.0f).withTop (top);
+            body.addRoundedRectangle (b.getX(), b.getY(), b.getWidth(), b.getHeight(), 14.0f, 14.0f, false, false, true, true);
+            g.setColour (Colours::panel.withAlpha (0.55f));
+            g.fillPath (body);
         }
         if (! editing) return;
         auto r = getLocalBounds().toFloat().reduced (1.0f);

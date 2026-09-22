@@ -60,7 +60,7 @@ public:
                         juce::Justification::centred, false);
             return;
         }
-        buildPeaks (*sample, (int) plot.getWidth());
+        buildPeaks (*sample, (int) plot.getWidth() * 2);
 
         const float start = value ("smpStart"), end = value ("smpEnd");
         const float s0 = juce::jmin (start, end), s1 = juce::jmax (start, end);
@@ -75,15 +75,34 @@ public:
             g.fillRect (juce::Rectangle<float> (xOf (ls), plot.getY(), xOf (le) - xOf (ls), plot.getHeight()));
         }
 
-        // The waveform: bright inside the region that plays, dim outside it.
+        // The waveform as one smooth filled shape (peaks at twice the pixel density, so it stays crisp on
+        // retina screens): bright inside the region that plays, dim outside it.
         const float mid = plot.getCentreY(), half = plot.getHeight() * 0.48f;
-        for (int x = 0; x < (int) peaks.size(); ++x)
+        if (peaks.size() > 1)
         {
-            const float v = (float) x / (float) juce::jmax (1, (int) peaks.size() - 1);
-            const bool inside = v >= s0 && v <= s1;
-            g.setColour (inside ? Palette::oscA.withAlpha (0.9f) : Colours::textFaint.withAlpha (0.5f));
-            const auto [lo, hi] = peaks[(size_t) x];
-            g.drawVerticalLine ((int) plot.getX() + x, mid - hi * half, mid - lo * half + 1.0f);
+            juce::Path shape;
+            const float step = plot.getWidth() / (float) (peaks.size() - 1);
+            for (size_t i = 0; i < peaks.size(); ++i)
+            {
+                const juce::Point<float> p (plot.getX() + step * (float) i, mid - juce::jmax (peaks[i].second * half, 0.5f));
+                if (i == 0) shape.startNewSubPath (p); else shape.lineTo (p);
+            }
+            for (size_t i = peaks.size(); i-- > 0;)
+                shape.lineTo (plot.getX() + step * (float) i, mid - juce::jmin (peaks[i].first * half, -0.5f));
+            shape.closeSubPath();
+            const auto playing = juce::Rectangle<float> (xOf (s0), plot.getY(), xOf (s1) - xOf (s0), plot.getHeight());
+            {
+                juce::Graphics::ScopedSaveState keep (g);
+                g.excludeClipRegion (playing.toNearestInt());
+                g.setColour (Colours::textFaint.withAlpha (0.45f));
+                g.fillPath (shape);
+            }
+            {
+                juce::Graphics::ScopedSaveState keep (g);
+                g.reduceClipRegion (playing.toNearestInt());
+                g.setGradientFill (juce::ColourGradient (Palette::oscA.brighter (0.2f), 0, mid - half, Palette::oscA.withAlpha (0.7f), 0, mid, true));
+                g.fillPath (shape);
+            }
         }
         g.setColour (Colours::line);
         g.drawHorizontalLine ((int) mid, plot.getX(), plot.getRight());

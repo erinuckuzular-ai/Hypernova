@@ -1618,11 +1618,16 @@ public:
 
         if (showLive)
         {
+            // The envelope's level right now, as a small meter with its own track (so it reads as a meter,
+            // not a stray line at the end of the curve).
             const float lvl = proc.shownEnv.load();
+            const auto track = juce::Rectangle<float> (r.getRight() - 7.0f, sh.yb - sh.h, 3.0f, sh.h);
+            g.setColour (Colours::bg0.withAlpha (0.5f));
+            g.fillRoundedRectangle (track, 1.5f);
             if (lvl > 0.001f)
             {
-                g.setColour (colour.withAlpha (0.6f));
-                g.fillRect (juce::Rectangle<float> (sh.area.getRight() - 3, sh.yb - sh.h * lvl, 3, sh.h * lvl));
+                g.setColour (colour.withAlpha (0.85f));
+                g.fillRoundedRectangle (track.withTop (track.getBottom() - track.getHeight() * juce::jmin (1.0f, lvl)), 1.5f);
             }
         }
     }
@@ -1695,6 +1700,7 @@ private:
     Shape shape() const
     {
         auto area = getLocalBounds().toFloat().reduced (8, 7);
+        if (showLive) area.removeFromRight (8.0f); // room for the level meter
         const float a = value ("A"), d = value ("D"), s = value ("S"), rl = value ("R");
         auto tw = [] (float t) { return std::sqrt (juce::jmax (0.0f, t)); };
         const float total = tw (a) + tw (d) + 0.35f + tw (rl);

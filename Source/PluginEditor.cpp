@@ -698,6 +698,18 @@ void HypernovaAudioProcessorEditor::refreshPresetInfo()
 void HypernovaAudioProcessorEditor::timerCallback()
 {
     compare.setState (processor.compareSlot(), processor.compareHasOther());
+    // A panel whose source is switched off fades back, so what's playing stands out.
+    for (auto& w : widgets)
+    {
+        juce::String power;
+        if (w->id.startsWith ("osc") && w->id.length() == 4) power = w->id.substring (3).toLowerCase() + "On";
+        else if (w->id == "filter") power = "fltOn";
+        else if (w->id == "sampler") power = "smpOn";
+        else if (w->id == "lowend") power = "lowOn";
+        if (power.isEmpty() || ! w->isVisible()) continue;
+        const bool off = processor.apvts.getRawParameterValue (power)->load() < 0.5f;
+        if (off != w->dimmed) { w->dimmed = off; w->repaint(); }
+    }
     // Backdrop: feed the shader and ask for a frame. When the GPU path comes up (or goes), redraw the canvas
     // so the CPU fallback picture isn't left underneath.
     {
