@@ -62,6 +62,8 @@ public:
     juce::Rectangle<int> layoutArea() const;
     void setLibraryOpen (bool open);
     void finishMotion() { springs.finish(); for (auto& w : widgets) w->thaw(); } // lands every moving panel and lays it out now (tests)
+    bool layoutWithSound() const;      // this sound carries its own layout
+    void applyLayoutFromSound();       // switch to it (done automatically when a sound loads)
     void addOscillator();                                     // switches on the next free oscillator and shows its panel
     void removeOscillator (int osc);                          // switches it off and hides its panel
     ab::ui::SourcesView& sourcesView() { return sources; }

@@ -25,6 +25,9 @@ Download **Hypernova-0.10.0.dmg**, open it and double-click **Install Hypernova*
 - **shape any modulation**: right-click a row in the mod matrix for the curve it goes through (linear, exponential, logarithmic, s-curve, 4/8/16 steps) and how much it's smoothed. a small badge on the row shows when it isn't plain.
 - **follower**: a new widget that follows how loud the synth is, with attack, release and sensitivity. drag it onto any knob: duck the sound with itself, open a filter as you play harder, push an effect on the loud parts.
 
+## layouts that travel
+- **keep this layout with the sound**: in the workspace menu. the sound then opens with the arrangement you made it in, and carries it into exported presets.
+
 ## compare and start fresh
 - **a / b** in the header: click b to try changes on a copy, a to hear the original. right-click it to copy one over the other. presets load into the slot you're on, and undo works across a switch.
 - **init** is in the new-sound menu (the dice), with roll, nudge and mutate.

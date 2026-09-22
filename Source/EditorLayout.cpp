@@ -658,6 +658,8 @@ void HypernovaAudioProcessorEditor::layoutChanged()
     if (layoutHistory.size() > 80) layoutHistory.erase (layoutHistory.begin());
     layoutHistoryIndex = (int) layoutHistory.size() - 1;
     ab::ui::WorkspaceStore::save (workspaceName, now);
+    // Sounds can carry their own layout: while that's on, every change is kept with the sound too.
+    if (layoutWithSound()) processor.apvts.state.setProperty ("uiLayout", now.toXmlString(), nullptr);
     if (library->isVisible()) library->refresh();
 }
 
@@ -746,6 +748,23 @@ void HypernovaAudioProcessorEditor::setupEditBar()
     };
 }
 
+// A sound can carry the layout it was made with: it's a property of the state, so it travels in
+// sessions and in exported presets.
+bool HypernovaAudioProcessorEditor::layoutWithSound() const
+{
+    return processor.apvts.state.getProperty ("uiLayout").toString().isNotEmpty();
+}
+
+void HypernovaAudioProcessorEditor::applyLayoutFromSound()
+{
+    const auto xml = processor.apvts.state.getProperty ("uiLayout").toString();
+    if (xml.isEmpty()) return;
+    auto tree = juce::ValueTree::fromXml (xml);
+    if (! tree.isValid() || tree.isEquivalentTo (captureLayout())) return;
+    applyLayout (tree);
+    showMessage ("This sound brought its own layout");
+}
+
 void HypernovaAudioProcessorEditor::showWorkspaceMenu()
 {
     juce::PopupMenu m;
@@ -759,6 +778,8 @@ void HypernovaAudioProcessorEditor::showWorkspaceMenu()
     m.addItem (2, "Rename this workspace...", ! builtIn);
     m.addItem (3, "Duplicate this workspace");
     m.addItem (4, "Delete this workspace", ! builtIn);
+    m.addSeparator();
+    m.addItem (5, "Keep this layout with the sound", true, layoutWithSound());
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&editBar.workspace), [this, names] (int r)
     {
         auto ask = [this] (const juce::String& titleText, const juce::String& initial, std::function<void (juce::String)> then)
@@ -794,6 +815,14 @@ void HypernovaAudioProcessorEditor::showWorkspaceMenu()
             const auto copyName = workspaceName + " copy";
             ab::ui::WorkspaceStore::save (copyName, captureLayout());
             loadWorkspace (copyName, false);
+        }
+        if (r == 5)
+        {
+            const bool on = ! layoutWithSound();
+            if (on) processor.apvts.state.setProperty ("uiLayout", captureLayout().toXmlString(), nullptr);
+            else processor.apvts.state.removeProperty ("uiLayout", nullptr);
+            showMessage (on ? "This sound will open with this layout" : "This sound no longer carries a layout");
+            return;
         }
         if (r == 4)
         {

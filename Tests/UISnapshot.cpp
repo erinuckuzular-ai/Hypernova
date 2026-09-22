@@ -417,6 +417,30 @@ int main (int argc, char** argv)
             for (int o = 2; o < ab::NumOsc; ++o) if (ed->layoutTree().contains ("osc" + ab::oscPrefix (o).toUpperCase())) ed->hideWidget ("osc" + ab::oscPrefix (o).toUpperCase());
             settle();
         }
+        // A sound can carry its own layout: it's kept up to date while that's on, and applied when it loads.
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+            check (! ed->layoutWithSound(), "a sound carries no layout to start with");
+            const auto meterId = ed->addWidgetType ("meter");   // something certain to be there
+            settle();
+            const auto withMeter = ed->captureLayout();
+            proc.apvts.state.setProperty ("uiLayout", withMeter.toXmlString(), nullptr);
+            check (ed->layoutWithSound(), "it can be told to keep this one");
+            ed->hideWidget (meterId);
+            settle();
+            check (! proc.apvts.state.getProperty ("uiLayout").toString().contains (meterId),
+                   "and the sound's layout follows what you do next");
+            proc.apvts.state.setProperty ("uiLayout", withMeter.toXmlString(), nullptr); // as if that sound loaded
+            ed->applyLayoutFromSound();
+            settle();
+            check (ed->findWidget (meterId) != nullptr && ed->findWidget (meterId)->isVisible(), "loading a sound brings its layout back");
+            ed->hideWidget (meterId);
+            proc.apvts.state.removeProperty ("uiLayout", nullptr);
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+        }
+
         // The follower widget can be added and carries its chip.
         {
             ed->addWidgetType ("follower");

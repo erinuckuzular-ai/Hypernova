@@ -850,6 +850,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     {
         lastPresetVersion = v;
         refreshPresetInfo();
+        applyLayoutFromSound(); // if this sound carries a layout, switch to it
     }
 
     // Undo: once edits pause for ~0.4 s, close the step so the next change is a new undo.
