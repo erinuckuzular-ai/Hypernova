@@ -336,16 +336,18 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     // Header, left to right in groups: browse | compare | new, save | undo, redo | layout, settings.
     int hx = headerLeft;
     auto place = [&] (juce::Component& c, int w, int gapAfter) { c.setBounds (hx, 22, w, 44); hx += w + gapAfter; };
-    place (prevButton, 32, 4);
-    place (presetPlate, 204, 4);
-    place (nextButton, 32, 8);
-    place (compare, 60, 8);
-    place (diceButton, 38, 4);
-    place (saveButton, 38, 8);
-    place (undoButton, 30, 2);
-    place (redoButton, 30, 8);
-    place (layoutButton, 32, 4);
-    place (gearButton, 30, 0);
+    // Every icon button is the same size, with the same gaps inside a group and a wider one between groups.
+    constexpr int icon = 34, tight = 4, group = 9;
+    place (prevButton, icon, tight);
+    place (presetPlate, 194, tight);
+    place (nextButton, icon, group);
+    place (compare, 60, group);
+    place (diceButton, icon, tight);
+    place (saveButton, icon, group);
+    place (undoButton, icon, tight);
+    place (redoButton, icon, group);
+    place (layoutButton, icon, tight);
+    place (gearButton, icon, 0);
     jassert (hx <= macroTray().getX() - 12);
     editBar.setBounds (headerLeft, 22, macroTray().getX() - 12 - headerLeft, 44); // ends before the macro tray
     for (int m = 0; m < 4; ++m)

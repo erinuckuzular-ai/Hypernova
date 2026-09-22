@@ -870,13 +870,16 @@ public:
         slider.passThrough = [this] (juce::Point<int> p) { return onRing ((p + slider.getPosition()).toFloat()); };
     }
 
+    // The ring sits just inside the knob's edge: any further out and its handle lands on the label below.
+    static float ringRadius (juce::Rectangle<float> knobArea) { return juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f - 2.5f; }
+
     // The ring (and its handle) around a modulated knob.
     bool onRing (juce::Point<float> p) const
     {
         const auto info = modLookup ? modLookup (id) : ModInfo();
         if (std::abs (info.depth) < 0.001f || info.slot < 0) return false;
         const auto knobArea = slider.getBounds().toFloat().reduced (2.0f);
-        const float radius = juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f + 3.0f;
+        const float radius = ringRadius (knobArea);
         const float d = p.getDistanceFrom (knobArea.getCentre());
         return d > radius - 6.0f && d < radius + 7.0f;
     }
@@ -938,7 +941,7 @@ public:
         if (std::abs (info.depth) > 0.001f || dropHover)
         {
             const auto knobArea = slider.getBounds().toFloat().reduced (2.0f);
-            const float radius = juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f + 3.0f;
+            const float radius = ringRadius (knobArea);
             const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
             const float here = a0 + (a1 - a0) * (float) slider.valueToProportionOfLength (slider.getValue());
             const float to = juce::jlimit (a0, a1, here + (a1 - a0) * info.depth);
@@ -952,7 +955,7 @@ public:
             {
                 // The handle at the end of the ring: grab it (or anywhere on the ring) to set the depth.
                 const auto end = knobArea.getCentre().getPointOnCircumference (radius, to - juce::MathConstants<float>::halfPi);
-                const float hs = (ringHover || depthSlot >= 0) ? 8.0f : 5.5f;
+                const float hs = (ringHover || depthSlot >= 0) ? 7.0f : 5.0f;
                 g.setColour (Colours::bg0);
                 g.fillEllipse (juce::Rectangle<float> (hs + 2.0f, hs + 2.0f).withCentre (end));
                 g.setColour (info.colour);
