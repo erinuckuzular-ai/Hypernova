@@ -291,6 +291,94 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // --lint: layout checks over every workspace, in normal use and in layout mode. Fails on overlapping
+    // siblings, children poking out of their parent, anything in the header over the macro tray, and text that
+    // doesn't fit its button or knob.
+    if (argc > 2 && juce::String (argv[2]) == "--lint")
+    {
+        std::unique_ptr<HypernovaAudioProcessorEditor> ed (dynamic_cast<HypernovaAudioProcessorEditor*> (proc.createEditor()));
+        ed->setSize (HypernovaAudioProcessorEditor::baseWidth, HypernovaAudioProcessorEditor::baseHeight);
+        juce::StringArray issues;
+        auto nameOf = [] (juce::Component* c)
+        {
+            juce::String n = typeid (*c).name();
+            n = n.fromLastOccurrenceOf ("ui", false, false).isNotEmpty() ? n.fromLastOccurrenceOf ("ui", false, false) : n;
+            if (auto* b = dynamic_cast<juce::Button*> (c)) if (b->getButtonText().isNotEmpty()) n << " '" << b->getButtonText() << "'";
+            if (auto* k = dynamic_cast<ab::ui::Knob*> (c)) n << " '" << k->paramId() << "'";
+            if (auto* w = dynamic_cast<ab::ui::Widget*> (c)) n << " [" << w->id << "]";
+            return n;
+        };
+        auto pathOf = [&] (juce::Component* c)
+        {
+            juce::StringArray parts;
+            for (auto* p = c; p != nullptr && p != ed.get(); p = p->getParentComponent())
+                if (dynamic_cast<ab::ui::Widget*> (p) != nullptr) { parts.insert (0, nameOf (p)); break; }
+            parts.add (nameOf (c));
+            return parts.joinIntoString (" > ");
+        };
+        // Things that are meant to sit over other things.
+        auto layered = [] (juce::Component* c)
+        {
+            return dynamic_cast<ab::ui::DockOverlay*> (c) != nullptr || dynamic_cast<ab::ui::WidgetLibrary*> (c) != nullptr
+                || dynamic_cast<ab::ui::PresetBrowser*> (c) != nullptr || dynamic_cast<ab::ui::UpdateBanner*> (c) != nullptr
+                || dynamic_cast<ab::ui::InvisibleButton*> (c) != nullptr || dynamic_cast<ab::ui::StackTabs*> (c) != nullptr
+                || dynamic_cast<juce::TooltipWindow*> (c) != nullptr || dynamic_cast<juce::ResizableCornerComponent*> (c) != nullptr;
+        };
+        std::function<void (juce::Component&, const juce::String&)> walk = [&] (juce::Component& parent, const juce::String& state)
+        {
+            std::vector<juce::Component*> kids;
+            for (auto* c : parent.getChildren())
+                if (c->isVisible() && c->getWidth() > 0 && c->getHeight() > 0) kids.push_back (c);
+            for (size_t a = 0; a < kids.size(); ++a)
+            {
+                auto* c = kids[a];
+                const bool scrolled = dynamic_cast<juce::Viewport*> (parent.getParentComponent()) != nullptr; // a viewport's content
+                if (! layered (c) && ! scrolled && ! parent.getLocalBounds().expanded (1).contains (c->getBoundsInParent()))
+                    issues.add (state + ": " + pathOf (c) + " pokes outside its parent " + c->getBoundsInParent().toString());
+                for (size_t b = a + 1; b < kids.size(); ++b)
+                {
+                    auto* d = kids[b];
+                    if (layered (c) || layered (d)) continue;
+                    const auto overlap = c->getBoundsInParent().getIntersection (d->getBoundsInParent());
+                    if (overlap.getWidth() > 1 && overlap.getHeight() > 1)
+                        issues.add (state + ": " + pathOf (c) + " overlaps " + nameOf (d) + " by " + juce::String (overlap.getWidth()) + "x" + juce::String (overlap.getHeight()));
+                }
+                // Text that doesn't fit.
+                if (auto* tb = dynamic_cast<juce::TextButton*> (c))
+                {
+                    const float textW = juce::Font (juce::FontOptions (juce::jmin (15.0f, (float) tb->getHeight() * 0.6f))).getStringWidthFloat (tb->getButtonText());
+                    const int room = tb->getWidth() - 12;
+                    if (tb->getButtonText().isNotEmpty() && textW > (float) room * 1.12f)
+                        issues.add (state + ": " + pathOf (c) + " text is too long for it (" + juce::String (textW, 0) + " > " + juce::String (room) + ")");
+                }
+                if (auto* k = dynamic_cast<ab::ui::Knob*> (c))
+                    if (k->labelOverflow() > 1.15f)
+                        issues.add (state + ": " + pathOf (c) + " label squashed to fit (" + juce::String (k->labelOverflow(), 2) + "x)");
+                if (&parent == ed.get() || dynamic_cast<ab::ui::WidgetContent*> (&parent) == nullptr)
+                    if (c->getParentComponent() != nullptr && c->getParentComponent()->getParentComponent() == ed.get()
+                        && c->getBounds().intersects (HypernovaAudioProcessorEditor::macroTray()) && dynamic_cast<ab::ui::Knob*> (c) == nullptr && ! layered (c))
+                        issues.add (state + ": " + pathOf (c) + " sits over the macro tray");
+                walk (*c, state);
+            }
+        };
+        for (auto ws : { "Sound Design", "Sampling", "Effects", "Analysis" })
+        {
+            ed->loadWorkspace (ws, false);
+            for (bool editing : { false, true })
+            {
+                ed->setLayoutEditing (editing);
+                if (editing) ed->setLibraryOpen (true);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (320);
+                walk (*ed, juce::String (ws) + (editing ? " (layout mode)" : ""));
+                ed->setLayoutEditing (false);
+            }
+        }
+        issues.removeDuplicates (false);
+        for (auto& i : issues) std::printf ("ISSUE  %s\n", i.toRawUTF8());
+        std::printf ("%d layout issues\n", issues.size());
+        return issues.isEmpty() ? 0 : 1;
+    }
+
     // --paintbench: how long one full editor frame takes to draw at retina scale, and what the 30 fps timer costs.
     if (argc > 2 && juce::String (argv[2]) == "--paintbench")
     {

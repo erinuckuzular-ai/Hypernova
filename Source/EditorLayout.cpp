@@ -89,6 +89,7 @@ ToolServices HypernovaAudioProcessorEditor::toolServices()
         k->modLookup = [this] (const juce::String& p) { return modInfoFor (p); };
         k->onModDrop = [this] (const juce::String& src, const juce::String& p) { assignMod (src, p); };
         k->onModMenu = [this] (const juce::String& p) { showModMenu (p); };
+        wireModDepth (*k);
         return k;
     };
     s.makeChip = [this] (int source, const juce::String& label)
@@ -629,7 +630,7 @@ void HypernovaAudioProcessorEditor::loadWorkspace (const juce::String& name, boo
     applyLayout (layout);
     if (tree.empty()) applyLayout (defaultLayout ("Sound Design"));
     ab::ui::WorkspaceStore::setCurrent (workspaceName);
-    editBar.workspace.setButtonText (workspaceName.toUpperCase() + "  v");
+    editBar.workspace.setButtonText (workspaceName.toUpperCase());
     if (! recordHistory) { layoutHistory.clear(); layoutHistoryIndex = -1; }
     layoutChanged();
 }
@@ -664,7 +665,7 @@ void HypernovaAudioProcessorEditor::setupEditBar()
         showMessage ("layout reset");
     };
     editBar.done.onClick = [this] { setLayoutEditing (false); };
-    for (auto* b : { &editBar.add, &editBar.workspace, &editBar.undo, &editBar.redo, &editBar.reset, &editBar.done })
+    for (auto* b : { &editBar.add, &editBar.workspace, &editBar.reset, &editBar.done })
         b->setColour (juce::TextButton::buttonOnColourId, Colours::accent);
     // Done is the one obvious way out, so it's the filled one.
     editBar.done.setColour (juce::TextButton::buttonColourId, Colours::accent);

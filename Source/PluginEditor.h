@@ -62,6 +62,7 @@ public:
     ab::ui::ToolContent* toolFor (const juce::String& id) const { auto it = tools.find (id); return it != tools.end() ? it->second.get() : nullptr; }
 
     static constexpr int baseWidth = 1280, baseHeight = 986;
+    static juce::Rectangle<int> macroTray() { return { 838, 8, 342, 76 }; } // painted, so layout checks need to know it
 
 private:
     void timerCallback() override;
@@ -87,6 +88,7 @@ private:
     // Modulation by drag and drop: chips carry a source, knobs receive it.
     void assignMod (const juce::String& dragDescription, const juce::String& paramId);
     void showModMenu (const juce::String& paramId);
+    void wireModDepth (ab::ui::Knob&);
     ab::ui::Knob::ModInfo modInfoFor (const juce::String& paramId) const;
     void applyScale (int percent);
     bool keyPressed (const juce::KeyPress&) override;
@@ -211,17 +213,35 @@ private:
     class EditBar : public juce::Component
     {
     public:
-        juce::TextButton add { "+ ADD WIDGET" }, workspace { "WORKSPACE" }, undo { "UNDO" }, redo { "REDO" }, reset { "RESET" }, done { "DONE" };
-        EditBar() { for (auto* b : { &add, &workspace, &undo, &redo, &reset, &done }) addAndMakeVisible (b); }
+        juce::TextButton add { "+ ADD WIDGET" }, workspace { "WORKSPACE" }, reset { "RESET" }, done { "DONE" };
+        ab::ui::IconButton undo { ab::ui::IconButton::Undo }, redo { ab::ui::IconButton::Redo };
+        EditBar()
+        {
+            for (auto* b : std::initializer_list<juce::Component*> { &add, &workspace, &undo, &redo, &reset, &done }) addAndMakeVisible (b);
+            undo.setTooltip ("Undo the last layout change");
+            redo.setTooltip ("Redo");
+        }
         void resized() override
         {
             auto r = getLocalBounds().reduced (0, 6);
-            add.setBounds (r.removeFromLeft (110)); r.removeFromLeft (6);
+            add.setBounds (r.removeFromLeft (112)); r.removeFromLeft (6);
             workspace.setBounds (r.removeFromLeft (150)); r.removeFromLeft (6);
-            undo.setBounds (r.removeFromLeft (54)); r.removeFromLeft (4);
-            redo.setBounds (r.removeFromLeft (54)); r.removeFromLeft (6);
-            reset.setBounds (r.removeFromLeft (60)); r.removeFromLeft (6);
-            done.setBounds (r);
+            undo.setBounds (r.removeFromLeft (34)); r.removeFromLeft (4);
+            redo.setBounds (r.removeFromLeft (34)); r.removeFromLeft (6);
+            done.setBounds (r.removeFromRight (74)); r.removeFromRight (6);
+            reset.setBounds (r);
+        }
+        void paintOverChildren (juce::Graphics& g) override
+        {
+            // The workspace button's menu chevron, drawn rather than typed.
+            auto b = workspace.getBounds().toFloat();
+            const juce::Point<float> c (b.getRight() - 14.0f, b.getCentreY());
+            juce::Path p;
+            p.startNewSubPath (c.x - 4.0f, c.y - 2.0f);
+            p.lineTo (c.x, c.y + 2.0f);
+            p.lineTo (c.x + 4.0f, c.y - 2.0f);
+            g.setColour (findColour (juce::TextButton::textColourOffId));
+            g.strokePath (p, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
     };
     EditBar editBar;

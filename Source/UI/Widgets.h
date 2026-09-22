@@ -314,8 +314,9 @@ public:
         const float fit = fitHeight ? (float) (r.getHeight() - strip) / (float) designH
                                     : juce::jmin ((float) r.getWidth() / (float) designW, (float) (r.getHeight() - strip) / (float) designH);
         scaleNow = juce::jlimit (fitHeight ? 0.6f : 0.3f, maxScale, fit);
-        const int w = (int) std::ceil ((float) r.getWidth() / scaleNow);
-        const int h = (int) std::ceil ((float) (r.getHeight() - strip) / scaleNow);
+        // Floor, not ceil: scaled back up the content must never reach past the panel's edge.
+        const int w = (int) std::floor ((float) r.getWidth() / scaleNow);
+        const int h = (int) std::floor ((float) (r.getHeight() - strip) / scaleNow);
         content.setBounds (0, 0, w, h);
         content.setTransform (juce::AffineTransform::scale (scaleNow).translated (0.0f, (float) strip));
         if (fitHeight) { if (onLayout) onLayout (w, h); }

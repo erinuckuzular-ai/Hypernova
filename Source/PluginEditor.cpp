@@ -100,6 +100,7 @@ Knob& HypernovaAudioProcessorEditor::knob (const juce::String& id, const juce::S
     k.modLookup = [this] (const juce::String& p) { return modInfoFor (p); };
     k.onModDrop = [this] (const juce::String& src, const juce::String& p) { assignMod (src, p); };
     k.onModMenu = [this] (const juce::String& p) { showModMenu (p); };
+    wireModDepth (k);
     (parent != nullptr ? *parent : canvas).addAndMakeVisible (k);
     k.setBounds (bounds);
     return k;
@@ -293,7 +294,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     redoButton.setBounds (736, 22, 30, 44);
     layoutButton.setBounds (770, 22, 32, 44);
     gearButton.setBounds (804, 22, 30, 44);
-    editBar.setBounds (334, 22, 520, 44);
+    editBar.setBounds (334, 22, macroTray().getX() - 12 - 334, 44); // ends before the macro tray
     for (int m = 0; m < 4; ++m)
         macroKnobs[(size_t) m] = &knob ("macro" + juce::String (m + 1), "MACRO " + juce::String (m + 1), Palette::fx,
                                         { 842 + m * 84, 12, 84, 68 }, 40);
@@ -371,7 +372,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         knob ("subLevel", "LEVEL", Palette::sub, at (subPanel, 62, 72, 56, 68), 40, W);
         toggle (std::make_unique<PillToggle> ("FILTER", Palette::sub), "subFilter", at (subPanel, 12, 152, 104, 22), "Send the sub through the filter (off keeps the low end clean)", W);
         combo ("noiseType", ab::dsp::noiseNames(), at (subPanel, 126, 40, 110, 24), W);
-        knob ("noiseLevel", "NOISE", Colours::textDim, at (subPanel, 126, 72, 56, 68), 40, W);
+        knob ("noiseLevel", "NOISE", Colours::textDim, at (subPanel, 124, 72, 56, 68), 40, W);
         knob ("noiseTone", "TONE", Colours::textDim, at (subPanel, 180, 72, 56, 68), 40, W);
         toggle (std::make_unique<PillToggle> ("FILTER", Colours::textDim), "noiseFilter", at (subPanel, 128, 152, 104, 22), "Send the noise through the filter", W);
         w.extraPaint = [&w] (juce::Graphics& g)
@@ -1220,6 +1221,29 @@ Knob::ModInfo HypernovaAudioProcessorEditor::modInfoFor (const juce::String& par
     return info;
 }
 
+// A knob's modulation ring: drag it to set the depth of the slot that's reaching it.
+void HypernovaAudioProcessorEditor::wireModDepth (Knob& k)
+{
+    k.onModDepth = [this] (const juce::String&, int slot, float depth)
+    {
+        if (auto* p = processor.apvts.getParameter ("mod" + juce::String (slot + 1) + "Amt")) p->setValueNotifyingHost (p->convertTo0to1 (depth));
+        for (auto& kn : knobs) kn->repaint();
+    };
+    k.onModDepthGesture = [this] (int slot, bool starting)
+    {
+        if (auto* p = processor.apvts.getParameter ("mod" + juce::String (slot + 1) + "Amt"))
+        {
+            if (starting) { processor.undoManager.beginNewTransaction ("modulation depth"); p->beginChangeGesture(); }
+            else p->endChangeGesture();
+        }
+    };
+    k.modSourceName = [this] (int slot)
+    {
+        const int src = (int) processor.apvts.getRawParameterValue ("mod" + juce::String (slot + 1) + "Src")->load();
+        return modSrcNames()[juce::jlimit (0, modSrcNames().size() - 1, src)].toUpperCase();
+    };
+}
+
 // Dropping a source chip on a knob fills the first free modulation slot (or reuses the matching one).
 void HypernovaAudioProcessorEditor::assignMod (const juce::String& dragDescription, const juce::String& paramId)
 {
@@ -1251,31 +1275,113 @@ void HypernovaAudioProcessorEditor::assignMod (const juce::String& dragDescripti
     set (p + "Src", (float) src);
     set (p + "Dest", (float) dest);
     if (existing < 0) set (p + "Amt", 0.35f);
-    showMessage (modSrcNames()[src] + " > " + modDestNames()[dest] + "   (slot " + juce::String (slot + 1) + ")");
+    showMessage (modSrcNames()[src] + " > " + modDestNames()[dest] + ": drag the coloured ring on the knob to set how much");
     for (auto& k : knobs) k->repaint();
 }
 
 // Right-click a knob: change or clear what modulates it.
+namespace
+{
+    // One modulation reaching a knob, inside its right-click menu: the source, a depth slider, and remove.
+    class ModDepthItem : public juce::PopupMenu::CustomComponent
+    {
+    public:
+        ModDepthItem (juce::AudioProcessorValueTreeState& state, int slotIndex, const juce::String& source, juce::Colour c, std::function<void()> removed)
+            : juce::PopupMenu::CustomComponent (false), bar (ThemeColour { SlotMod }), slot (slotIndex), colour (c), onRemove (std::move (removed))
+        {
+            label = source;
+            addAndMakeVisible (bar);
+            attach = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, "mod" + juce::String (slot + 1) + "Amt", bar);
+            addAndMakeVisible (remove);
+            remove.setTooltip ("Remove this modulation");
+            remove.onClick = [this] { if (onRemove) onRemove(); };
+        }
+        void getIdealSize (int& w, int& h) override { w = 300; h = 30; }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (10, 3);
+            remove.setBounds (r.removeFromRight (22).withSizeKeepingCentre (20, 20));
+            r.removeFromRight (6);
+            r.removeFromLeft (92);
+            bar.setBounds (r);
+        }
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().reduced (10, 3);
+            g.setColour (colour);
+            g.fillEllipse (juce::Rectangle<float> (7, 7).withCentre ({ (float) r.getX() + 4.0f, (float) r.getCentreY() }));
+            g.setColour (Colours::text);
+            g.setFont (font (11.0f, true));
+            g.drawText (label, r.withTrimmedLeft (14).withWidth (78), juce::Justification::centredLeft, true);
+        }
+    private:
+        BipolarBar bar;
+        juce::TextButton remove { "x" };
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attach;
+        int slot;
+        juce::Colour colour;
+        juce::String label;
+        std::function<void()> onRemove;
+    };
+}
+
+// Typed values understand the units the knob shows: "250 ms", "1.2k", "35%", "-6 dB", "+7 st".
+static float typedValue (juce::RangedAudioParameter& p, const juce::String& typed)
+{
+    const auto shown = p.getCurrentValueAsText().toLowerCase();
+    auto t = typed.toLowerCase().trim();
+    double v = t.getDoubleValue();
+    if (shown.endsWith ("%")) v /= 100.0;                                            // shown as percent of 0..1
+    else if (shown.endsWith ("ms") || shown.endsWith (" s"))
+        v = (t.endsWith ("ms") || (! t.endsWith ("s") && shown.endsWith ("ms"))) ? v / 1000.0 : v; // seconds underneath
+    else if (shown.endsWith ("hz") && (t.endsWith ("k") || t.endsWith ("khz"))) v *= 1000.0;
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (&p))
+    {
+        const int idx = choice->choices.indexOf (typed.trim(), true);
+        if (idx >= 0) return p.convertTo0to1 ((float) idx);
+    }
+    return p.convertTo0to1 ((float) v);
+}
+
+// Right-click a knob: type a value, reset, see and set every modulation reaching it, add one, pin it.
 void HypernovaAudioProcessorEditor::showModMenu (const juce::String& paramId)
 {
     const int dest = ab::modDestForParam (paramId);
     juce::PopupMenu m;
     auto* param = processor.apvts.getParameter (paramId);
     m.addSectionHeader (param != nullptr ? param->getName (40).toUpperCase() : paramId.toUpperCase());
+    m.addItem (5, "Type a value...", param != nullptr);
+    m.addItem (3, "Reset to default", param != nullptr);
     if (dest == 0)
     {
         m.addItem (-1, "This control can't be modulated", false, false);
     }
     else
     {
+        // Every source reaching this knob, each with its own depth.
+        bool any = false;
+        for (int i = 0; i < ab::NumModSlots; ++i)
+        {
+            const juce::String p = "mod" + juce::String (i + 1);
+            const int src = (int) processor.apvts.getRawParameterValue (p + "Src")->load();
+            if (src == 0 || (int) processor.apvts.getRawParameterValue (p + "Dest")->load() != dest) continue;
+            if (! any) { m.addSeparator(); m.addSectionHeader ("MODULATED BY  (drag to set how much)"); any = true; }
+            m.addCustomItem (1000 + i, std::make_unique<ModDepthItem> (processor.apvts, i, modSrcNames()[src], modSourceColour (src), [this, p]
+            {
+                processor.undoManager.beginNewTransaction ("remove modulation");
+                for (auto* id : { "Src", "Dest" })
+                    if (auto* q = processor.apvts.getParameter (p + id)) q->setValueNotifyingHost (0.0f);
+                if (auto* q = processor.apvts.getParameter (p + "Amt")) q->setValueNotifyingHost (q->convertTo0to1 (0.0f));
+                for (auto& k : knobs) k->repaint();
+                juce::PopupMenu::dismissAllActiveMenus();
+            }), nullptr, modSrcNames()[src]);
+        }
+        m.addSeparator();
         juce::PopupMenu sources;
         const auto names = modSrcNames();
         for (int i = 1; i < names.size(); ++i) sources.addItem (100 + i, names[i]);
-        m.addSubMenu ("Modulate with", sources);
-        const auto info = modInfoFor (paramId);
-        m.addItem (2, "Clear modulation", info.slot >= 0);
+        m.addSubMenu (any ? "Add another source" : "Modulate with", sources);
     }
-    m.addItem (3, "Reset to default", param != nullptr);
     m.addSeparator();
     const bool pinned = isPinned (paramId);
     m.addItem (4, pinned ? "Unpin from pinboard" : "Pin to pinboard", param != nullptr);
@@ -1283,19 +1389,24 @@ void HypernovaAudioProcessorEditor::showModMenu (const juce::String& paramId)
     m.showMenuAsync (juce::PopupMenu::Options(), [this, paramId, param, pinned] (int r)
     {
         if (r == 4) { pinParameter (paramId, ! pinned); return; }
-        if (r >= 100) assignMod ("mod:" + juce::String (r - 100), paramId);
-        else if (r == 2)
-        {
-            const auto info = modInfoFor (paramId);
-            if (info.slot < 0) return;
-            processor.undoManager.beginNewTransaction ("clear modulation");
-            const juce::String p = "mod" + juce::String (info.slot + 1);
-            for (auto* id : { "Src", "Dest" })
-                if (auto* q = processor.apvts.getParameter (p + id)) q->setValueNotifyingHost (0.0f);
-            if (auto* q = processor.apvts.getParameter (p + "Amt")) q->setValueNotifyingHost (q->convertTo0to1 (0.0f));
-            for (auto& k : knobs) k->repaint();
-        }
+        if (r >= 100 && r < 1000) assignMod ("mod:" + juce::String (r - 100), paramId);
         else if (r == 3 && param != nullptr) param->setValueNotifyingHost (param->getDefaultValue());
+        else if (r == 5 && param != nullptr)
+        {
+            auto* box = new juce::AlertWindow (param->getName (40), "Type a value (units are optional).", juce::MessageBoxIconType::NoIcon, this);
+            box->addTextEditor ("value", param->getCurrentValueAsText());
+            box->addButton ("Set", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            box->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            box->enterModalState (true, juce::ModalCallbackFunction::create ([box, param] (int result)
+            {
+                if (result != 1) return;
+                const auto text = box->getTextEditorContents ("value").trim();
+                if (text.isEmpty()) return;
+                param->beginChangeGesture();
+                param->setValueNotifyingHost (typedValue (*param, text));
+                param->endChangeGesture();
+            }), true);
+        }
     });
 }
 

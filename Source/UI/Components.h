@@ -735,17 +735,48 @@ class KnobSlider : public juce::Slider
 {
 public:
     std::function<void()> onRightClick;
+    std::function<bool (juce::Point<int>)> passThrough; // points the knob itself handles (its modulation ring)
+
+    bool hitTest (int x, int y) override
+    {
+        if (passThrough && passThrough ({ x, y })) return false;
+        return juce::Slider::hitTest (x, y);
+    }
+
+    // Shift-drag: fine adjustment (five times slower), without a jump when shift is pressed.
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (e.mods.isPopupMenu()) { rightClicked = true; if (onRightClick) onRightClick(); return; }
         rightClicked = false;
+        fine = e.mods.isShiftDown();
+        lastY = e.position.y;
+        lastX = e.position.x;
+        if (fine) return; // the attachment wraps each fine step in its own gesture
         juce::Slider::mouseDown (e);
     }
-    void mouseDrag (const juce::MouseEvent& e) override { if (! rightClicked) juce::Slider::mouseDrag (e); }
-    void mouseUp (const juce::MouseEvent& e) override { if (! rightClicked) juce::Slider::mouseUp (e); rightClicked = false; }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (rightClicked) return;
+        if (fine)
+        {
+            const double delta = (double) ((lastY - e.position.y) + (e.position.x - lastX)) / 1100.0;
+            lastY = e.position.y;
+            lastX = e.position.x;
+            setValue (proportionOfLengthToValue (juce::jlimit (0.0, 1.0, valueToProportionOfLength (getValue()) + delta)));
+            return;
+        }
+        juce::Slider::mouseDrag (e);
+    }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (fine && ! rightClicked) { fine = false; return; }
+        if (! rightClicked) juce::Slider::mouseUp (e);
+        rightClicked = false;
+    }
 
 private:
-    bool rightClicked = false;
+    bool rightClicked = false, fine = false;
+    float lastY = 0, lastX = 0;
 };
 
 // A knob, and a drop target for modulation: drag an LFO or envelope chip onto it to modulate it. The ring
@@ -789,11 +820,34 @@ public:
     std::function<ModInfo (const juce::String& paramId)> modLookup;
     std::function<void (const juce::String& source, const juce::String& paramId)> onModDrop;
     std::function<void (const juce::String& paramId)> onModMenu;
+    // Dragging the modulation ring sets how much the source moves this knob.
+    std::function<void (const juce::String& paramId, int slot, float depth)> onModDepth;
+    std::function<void (int slot, bool starting)> onModDepthGesture;
+    std::function<juce::String (int slot)> modSourceName;
 
     void resized() override
     {
         auto r = getLocalBounds();
         slider.setBounds (r.removeFromTop (size).withSizeKeepingCentre (size, size));
+        slider.passThrough = [this] (juce::Point<int> p) { return onRing ((p + slider.getPosition()).toFloat()); };
+    }
+
+    // The ring (and its handle) around a modulated knob.
+    bool onRing (juce::Point<float> p) const
+    {
+        const auto info = modLookup ? modLookup (id) : ModInfo();
+        if (std::abs (info.depth) < 0.001f || info.slot < 0) return false;
+        const auto knobArea = slider.getBounds().toFloat().reduced (2.0f);
+        const float radius = juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f + 3.0f;
+        const float d = p.getDistanceFrom (knobArea.getCentre());
+        return d > radius - 6.0f && d < radius + 7.0f;
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        const bool ring = onRing (e.position);
+        setMouseCursor (ring ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+        if (ring != ringHover) { ringHover = ring; repaint(); }
     }
 
     void paint (juce::Graphics& g) override
@@ -803,10 +857,17 @@ public:
         auto r = full;
         r.removeFromTop ((float) size - 1.0f);
         const bool active = slider.isMouseOverOrDragging();
-        g.setColour (active ? Colours::text : Colours::textDim);
+        const auto modNow = modLookup ? modLookup (id) : ModInfo();
+        const bool showDepth = (depthSlot >= 0 || ringHover) && modNow.slot >= 0;
+        juce::String label = active && param != nullptr ? param->getCurrentValueAsText() : name;
+        if (showDepth)
+        {
+            const int pct = juce::roundToInt (modNow.depth * 100.0f);
+            label = (modSourceName ? modSourceName (modNow.slot) : juce::String ("MOD")) + " " + (pct > 0 ? "+" : "") + juce::String (pct) + "%";
+        }
+        g.setColour (showDepth ? modNow.colour : active ? Colours::text.get() : Colours::textDim.get());
         g.setFont (font (9.5f, true).withExtraKerningFactor (0.12f));
-        g.drawFittedText (active && param != nullptr ? param->getCurrentValueAsText() : name, r.removeFromTop (13).toNearestInt(),
-                          juce::Justification::centred, 1, 0.7f);
+        g.drawFittedText (label, r.removeFromTop (13).toNearestInt(), juce::Justification::centred, 1, 0.7f);
         if (showValue && ! active && ThemeState::get().alwaysShowValues)
         {
             g.setColour (Colours::text.withAlpha (0.85f));
@@ -851,6 +912,13 @@ public:
 
             if (std::abs (info.depth) > 0.001f)
             {
+                // The handle at the end of the ring: grab it (or anywhere on the ring) to set the depth.
+                const auto end = knobArea.getCentre().getPointOnCircumference (radius, to - juce::MathConstants<float>::halfPi);
+                const float hs = (ringHover || depthSlot >= 0) ? 8.0f : 5.5f;
+                g.setColour (Colours::bg0);
+                g.fillEllipse (juce::Rectangle<float> (hs + 2.0f, hs + 2.0f).withCentre (end));
+                g.setColour (info.colour);
+                g.fillEllipse (juce::Rectangle<float> (hs, hs).withCentre (end));
                 const float now = juce::jlimit (a0, a1, here + (a1 - a0) * info.depth * info.live);
                 const auto dot = juce::Point<float> (knobArea.getCentreX(), knobArea.getCentreY())
                                      .getPointOnCircumference (radius, now - juce::MathConstants<float>::halfPi);
@@ -872,10 +940,42 @@ public:
     }
 
     void mouseEnter (const juce::MouseEvent&) override { repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { ringHover = false; repaint(); }
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (e.mods.isPopupMenu() && onModMenu) onModMenu (id);
+        if (e.mods.isPopupMenu()) { if (onModMenu) onModMenu (id); return; }
+        if (onRing (e.position))
+        {
+            const auto info = modLookup ? modLookup (id) : ModInfo();
+            depthSlot = info.slot;
+            depthStart = info.depth;
+            if (onModDepthGesture) onModDepthGesture (depthSlot, true);
+        }
+    }
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (depthSlot < 0) return;
+        // Up is more, down is less (through zero to negative); shift for fine.
+        const float per = e.mods.isShiftDown() ? 600.0f : 140.0f;
+        const float depth = juce::jlimit (-1.0f, 1.0f, depthStart - (float) e.getDistanceFromDragStartY() / per);
+        if (onModDepth) onModDepth (id, depthSlot, depth);
+        repaint();
+    }
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (depthSlot >= 0 && onModDepthGesture) onModDepthGesture (depthSlot, false);
+        depthSlot = -1;
+        repaint();
+    }
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        // Double-click the ring: that modulation goes back to zero.
+        if (! onRing (e.position)) return;
+        const auto info = modLookup ? modLookup (id) : ModInfo();
+        if (info.slot < 0) return;
+        if (onModDepthGesture) onModDepthGesture (info.slot, true);
+        if (onModDepth) onModDepth (id, info.slot, 0.0f);
+        if (onModDepthGesture) onModDepthGesture (info.slot, false);
     }
 
     // Drag and drop: chips carry "mod:<source index>".
@@ -890,6 +990,12 @@ public:
     }
 
     void setShowValue (bool b) { showValue = b; }
+    // How much the name would have to squash to fit under the knob (1 = fits). For the layout checks.
+    float labelOverflow() const
+    {
+        const float w = font (9.5f, true).withExtraKerningFactor (0.12f).getStringWidthFloat (name);
+        return w / juce::jmax (1.0f, (float) getWidth());
+    }
     void setLabel (const juce::String& s) { if (s != name) { name = s; repaint(); } }
     const juce::String& paramId() const { return id; }
     KnobSlider slider;
@@ -899,7 +1005,9 @@ private:
     ThemeColour colour;
     int size;
     juce::String id;
-    bool showValue = true, dropHover = false;
+    bool showValue = true, dropHover = false, ringHover = false;
+    int depthSlot = -1;
+    float depthStart = 0;
     std::array<float, 10> trail { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
     int trailHead = 0, trailAge = 12;
     juce::RangedAudioParameter* param = nullptr;
