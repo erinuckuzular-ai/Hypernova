@@ -380,14 +380,16 @@ public:
         g.drawRoundedRectangle (r, 14.0f, 1.5f);
         if (collapsed) return;
         {
+            // The bar is as tall as the panel's own title row, so it covers the title and nothing else.
+            const float h = (float) barHeight();
             juce::Path bar;
-            bar.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), 40.0f, 14.0f, 14.0f, true, true, false, false);
+            bar.addRoundedRectangle (r.getX(), r.getY(), r.getWidth(), h, 14.0f, 14.0f, true, true, false, false);
             g.setColour (Colours::bg0.withAlpha (1.0f));
             g.fillPath (bar);
             g.setColour (Colours::panel.withAlpha (0.5f));
             g.fillPath (bar);
             g.setColour (Colours::line);
-            g.drawHorizontalLine ((int) r.getY() + 40, r.getX() + 1.0f, r.getRight() - 1.0f);
+            g.drawHorizontalLine ((int) (r.getY() + h), r.getX() + 1.0f, r.getRight() - 1.0f);
         }
         if (stacked())
         {
@@ -402,22 +404,51 @@ public:
 
     // Header chrome, in widget coordinates, for the overlay's hit-testing.
     enum Button { Close, Collapse, Menu, NumButtons };
+    // Layout-mode bar: the height of the title row as it's drawn now (scaled), never less than fits the buttons.
+    int barHeight() const
+    {
+        const int header = juce::roundToInt (40.0f * scaleNow) + 4;
+        return juce::jlimit (28, 40, juce::jmax (header, tabStripHeight()));
+    }
+    int chromeSize() const { return juce::jlimit (18, 24, barHeight() - 12); }
     juce::Rectangle<int> button (int b) const
     {
-        if (b == Close) return { 8, 8, 24, 24 };
-        return { getWidth() - 32 - (b == Menu ? 0 : 30), 8, 24, 24 };
+        const int d = chromeSize(), y = (barHeight() - d) / 2;
+        if (b == Close) return { 8, y, d, d };
+        return { getWidth() - 8 - d - (b == Menu ? 0 : d + 6), y, d, d };
+    }
+    // Room between the remove button and the fold/more buttons, where the title or tabs go.
+    juce::Range<int> titleRoom() const
+    {
+        return { button (Close).getRight() + 8, button (Collapse).getX() - 8 };
     }
     juce::Rectangle<int> handle() const
     {
-        const int w = juce::jmin (getWidth() - 110, juce::roundToInt (mono (11.0f).boldened().getStringWidthFloat (title)) + 44);
-        return { (getWidth() - w) / 2, 8, w, 24 };
+        const auto room = titleRoom();
+        const int w = juce::jmax (0, juce::jmin (room.getLength(), juce::roundToInt (mono (11.0f).boldened().getStringWidthFloat (title)) + 44));
+        // Centred on the panel when it fits, otherwise slid over into the free room.
+        const int x = juce::jlimit (room.getStart(), juce::jmax (room.getStart(), room.getEnd() - w), (getWidth() - w) / 2);
+        return { x, button (Close).getY(), w, chromeSize() };
     }
     juce::Rectangle<int> tabChip (int i) const
     {
+        const auto room = titleRoom();
         const int n = juce::jmax (1, stackTitles.size());
-        const int w = juce::jmin (130, (getWidth() - 110) / n - 6);
-        const int x0 = (getWidth() - (w + 6) * n + 6) / 2;
-        return { x0 + i * (w + 6), 8, w, 24 };
+        const int w = juce::jmax (24, juce::jmin (130, (room.getLength() - 6 * (n - 1)) / n));
+        const int total = w * n + 6 * (n - 1);
+        const int x0 = juce::jlimit (room.getStart(), juce::jmax (room.getStart(), room.getEnd() - total), (getWidth() - total) / 2);
+        return { x0 + i * (w + 6), button (Close).getY(), w, chromeSize() };
+    }
+    // For the layout checks: does the title (or a tab) in layout mode run into the round buttons?
+    bool chromeCollides() const
+    {
+        juce::Array<juce::Rectangle<int>> labels;
+        if (stacked()) for (int i = 0; i < stackTitles.size(); ++i) labels.add (tabChip (i));
+        else labels.add (handle());
+        for (auto& l : labels)
+            for (int b = 0; b < NumButtons; ++b)
+                if (l.intersects (button (b)) || l.getWidth() < 24) return true;
+        return false;
     }
     int tabChipAt (juce::Point<int> p) const
     {
@@ -485,13 +516,17 @@ private:
         g.setColour (strong ? colour.withAlpha (0.9f) : Colours::lineHi.get());
         g.drawRoundedRectangle (f.reduced (0.5f), f.getHeight() * 0.5f, 1.0f);
         // Grip: two rows of dots say "you can pick this up".
-        g.setColour (Colours::textDim);
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 2; ++j)
-                g.fillEllipse (f.getX() + 11.0f + (float) i * 4.0f, f.getCentreY() - 3.5f + (float) j * 5.0f, 2.0f, 2.0f);
-        g.setColour (strong ? Colours::text.get() : Colours::textDim.get());
-        g.setFont (mono (10.5f).boldened());
-        g.drawFittedText (text, r.withTrimmedLeft (28).withTrimmedRight (10), juce::Justification::centredLeft, 1, 0.7f);
+        const bool roomy = r.getWidth() > 60;
+        if (roomy)
+        {
+            g.setColour (Colours::textDim);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 2; ++j)
+                    g.fillEllipse (f.getX() + 11.0f + (float) i * 4.0f, f.getCentreY() - 3.5f + (float) j * 5.0f, 2.0f, 2.0f);
+        }
+        g.setColour (strong ? Colours::text.get() : Colours::text.withAlpha (0.7f));
+        g.setFont (mono (f.getHeight() < 22.0f ? 9.5f : 10.5f).boldened());
+        g.drawFittedText (text, roomy ? r.withTrimmedLeft (28).withTrimmedRight (10) : r.reduced (6, 0), roomy ? juce::Justification::centredLeft : juce::Justification::centred, 1, 0.7f);
     }
 
     void drawRound (juce::Graphics& g, juce::Rectangle<int> r, const char* glyph) const

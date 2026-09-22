@@ -369,7 +369,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         auto& w = makeWidget ("space", "space", "SOUND SPACE", Colours::text, spacePanel);
         auto* W = &w.content;
         for (auto* c : std::initializer_list<juce::Component*> { &space, &spaceMode, &expandButton, &popOutButton }) W->addAndMakeVisible (c);
-        spaceMode.setBounds (at (spacePanel, 214, 11, 122, 24));
+        spaceMode.setBounds (at (spacePanel, 192, 11, 144, 24)); // room for SPECTRUM without squeezing
         space.setBounds (at (spacePanel, 12, 44, 384, 318));
         expandButton.setBounds (at (spacePanel, 340, 11, 26, 24));
         popOutButton.setBounds (at (spacePanel, 370, 11, 26, 24));
@@ -382,7 +382,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
             g.setFont (mono (10.0f));
             const juce::String info = note >= 0 ? juce::MidiMessage::getMidiNoteName (note, true, true, 3) + "   " + juce::String (voices) + (voices == 1 ? " voice" : " voices")
                                                 : "play a note";
-            g.drawText (info, juce::Rectangle<float> (118 + shift, 10, 90, 24), juce::Justification::centredRight, false);
+            g.drawText (info, juce::Rectangle<float> (96 + shift, 10, 90, 24), juce::Justification::centredRight, false);
         };
         w.finishBuilding();
         w.spread.setFlags (space, Spread::Stretch);
@@ -1066,8 +1066,9 @@ void HypernovaAudioProcessorEditor::layoutPlayPage()
     constexpr int cell = 68, knobY = 36;
     const auto c = Palette::env;
 
-    pg->captions.push_back ({ { 12, 4, 60, 24 }, "ARP", c, false });
-    toggle (std::make_unique<PillToggle> ("ON", c), "arpOn", { 52, 5, 58, 22 }, "Arpeggiator on/off. Hold notes and it plays them as a pattern, locked to the song.", pg);
+    // A power light like every other section's, rather than a switch that says "ON" while it's off.
+    toggle (std::make_unique<PowerLed> (c), "arpOn", { 12, 5, 22, 22 }, "Arpeggiator on/off. Hold notes and it plays them as a pattern, locked to the song.", pg);
+    pg->captions.push_back ({ { 40, 4, 70, 24 }, "ARP", c, false });
     combo ("arpMode", arpModeNames(), { 116, 4, 104, 24 }, pg);
     combo ("arpRate", arpRateNames(), { 226, 4, 76, 24 }, pg);
     knob ("arpOct", "OCTAVES", c, { 12, knobY, cell, 72 }, 42, pg);

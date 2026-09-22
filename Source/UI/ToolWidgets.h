@@ -906,11 +906,11 @@ public:
             }
             cards.push_back (std::make_unique<Card> (*this, e));
             list.addAndMakeVisible (*cards.back());
-            cards.back()->setBounds (0, y, 292, 62);
-            y += 66;
+            cards.back()->setBounds (0, y, cardWidth(), 64);
+            y += 70;
         }
         list.headers = headers;
-        list.setSize (292, y + 8);
+        list.setSize (cardWidth(), y + 8);
         repaint();
     }
 
@@ -920,7 +920,14 @@ public:
         auto top = r.removeFromTop (34);
         close.setBounds (top.removeFromRight (30).withSizeKeepingCentre (26, 24));
         viewport.setBounds (r);
+        // Cards stop short of the scroll bar, so nothing sits under it.
+        if (list.getWidth() != cardWidth())
+        {
+            for (auto& c : cards) c->setSize (cardWidth(), c->getHeight());
+            list.setSize (cardWidth(), list.getHeight());
+        }
     }
+    int cardWidth() const { return juce::jmax (200, viewport.getWidth() - viewport.getScrollBarThickness() - 6); }
 
     void paint (juce::Graphics& g) override
     {
@@ -975,28 +982,35 @@ private:
         void paint (juce::Graphics& g) override
         {
             auto r = getLocalBounds().toFloat().reduced (1.0f);
-            g.setColour (isMouseOver() ? Colours::panelHi.brighter (0.05f) : Colours::panelHi.get());
+            const bool over = isMouseOver (true), down = isMouseButtonDown();
+            g.setColour (down ? Colours::panelHi.darker (0.1f) : over ? Colours::panelHi.brighter (0.05f) : Colours::panelHi.get());
             g.fillRoundedRectangle (r, 10.0f);
-            g.setColour (isMouseOver() ? entry.colour.withAlpha (0.8f) : Colours::line.get());
+            g.setColour (over ? entry.colour.withAlpha (0.8f) : Colours::line.get());
             g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
-            auto icon = r.removeFromLeft (54).reduced (9);
+            auto icon = r.removeFromLeft (56).reduced (9, 10);
             drawIcon (g, icon);
-            auto text = r.reduced (4, 8);
-            auto badge = text.removeFromRight (70);
-            g.setColour (Colours::text);
-            g.setFont (font (12.0f, true));
-            g.drawText (entry.name, text.removeFromTop (18), juce::Justification::centredLeft, true);
-            g.setColour (Colours::textDim);
-            g.setFont (font (10.0f));
-            g.drawFittedText (entry.description, text.toNearestInt(), juce::Justification::topLeft, 2, 0.85f);
+            // Name and status on one line, the description on the full width under them: nothing overlaps.
+            auto text = r.reduced (4, 9).withTrimmedRight (6);
+            auto top = text.removeFromTop (18);
             const juce::String b = entry.multi ? "+ ADD" : entry.state == 1 ? "ON SCREEN" : entry.state == 2 ? "IN A TAB" : "+ ADD";
-            const bool active = entry.multi || entry.state != 1;
-            auto chip = badge.withSizeKeepingCentre (66, 20);
-            g.setColour (active ? entry.colour.withAlpha (0.2f) : Colours::inset.get());
-            g.fillRoundedRectangle (chip, 10.0f);
-            g.setColour (active ? entry.colour.get() : Colours::textFaint.get());
-            g.setFont (mono (9.0f).boldened());
+            const bool add = entry.multi || entry.state == 0;
+            const auto badgeFont = mono (9.0f).boldened().withExtraKerningFactor (0.06f);
+            const float badgeW = juce::GlyphArrangement::getStringWidth (badgeFont, b) + 16.0f;
+            const auto chip = juce::Rectangle<float> (top.getRight() - badgeW, top.getY(), badgeW, 18.0f);
+            g.setColour (add ? Colours::accent.withAlpha (over ? 0.3f : 0.18f) : Colours::inset.get());
+            g.fillRoundedRectangle (chip, 9.0f);
+            g.setColour (add ? Colours::accent.withAlpha (0.8f) : Colours::line.get());
+            g.drawRoundedRectangle (chip.reduced (0.5f), 9.0f, 1.0f);
+            g.setColour (add ? Colours::text.get() : Colours::textDim.get());
+            g.setFont (badgeFont);
             g.drawText (b, chip, juce::Justification::centred, false);
+            g.setColour (Colours::text);
+            g.setFont (font (12.5f, true));
+            g.drawText (entry.name, top.withRight (chip.getX() - 6.0f), juce::Justification::centredLeft, true);
+            text.removeFromTop (3);
+            g.setColour (Colours::text.withAlpha (0.62f));
+            g.setFont (font (10.5f));
+            g.drawFittedText (entry.description, text.toNearestInt(), juce::Justification::topLeft, 2, 0.9f);
         }
 
         void mouseEnter (const juce::MouseEvent&) override { repaint(); }
@@ -1028,83 +1042,166 @@ private:
         Entry entry;
         bool dragging = false;
 
+        // Each widget gets its own small picture of what it is.
         void drawIcon (juce::Graphics& g, juce::Rectangle<float> r) const
         {
             g.setColour (entry.colour.withAlpha (0.14f));
             g.fillRoundedRectangle (r, 8.0f);
             const auto c = entry.colour.get();
-            auto in = r.reduced (7);
-            juce::Path p;
+            auto in = r.reduced (8);
             const auto& t = entry.type;
-            if (t == "scope" || t == "oscA" || t == "oscB")
+            juce::Path p;
+            const juce::PathStrokeType stroke (1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+            auto wave = [&] (juce::Rectangle<float> b, float cycles, float amp)
             {
-                for (int i = 0; i <= 24; ++i)
+                juce::Path w;
+                for (int i = 0; i <= 28; ++i)
                 {
-                    const float x = in.getX() + in.getWidth() * (float) i / 24.0f;
-                    const float y = in.getCentreY() - std::sin ((float) i / 24.0f * 6.283f * (t == "scope" ? 2.0f : 1.0f)) * in.getHeight() * 0.4f;
-                    if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+                    const float x = b.getX() + b.getWidth() * (float) i / 28.0f;
+                    const float y = b.getCentreY() - std::sin ((float) i / 28.0f * 6.283f * cycles) * b.getHeight() * amp;
+                    if (i == 0) w.startNewSubPath (x, y); else w.lineTo (x, y);
+                }
+                return w;
+            };
+            g.setColour (c);
+            if (t.startsWith ("osc") && t.length() == 4) // Osc A..H: a sine with the oscillator's letter ("+" for adding one)
+            {
+                g.strokePath (wave (in.withTrimmedBottom (in.getHeight() * 0.3f), 1.0f, 0.36f), stroke);
+                g.setFont (mono (9.0f).boldened());
+                g.drawText (t.substring (3), in.removeFromBottom (11), juce::Justification::centred, false);
+            }
+            else if (t == "sources") // mixer faders
+            {
+                for (int i = 0; i < 4; ++i)
+                {
+                    const float x = in.getX() + in.getWidth() * (0.14f + 0.24f * (float) i);
+                    g.setColour (c.withAlpha (0.45f));
+                    g.fillRect (x - 0.75f, in.getY(), 1.5f, in.getHeight());
+                    g.setColour (c);
+                    g.fillRoundedRectangle (juce::Rectangle<float> (7.0f, 4.0f).withCentre ({ x, in.getY() + in.getHeight() * (0.25f + 0.17f * (float) ((i * 5) % 4)) }), 1.5f);
                 }
             }
-            else if (t == "meter")
+            else if (t == "sampler") // a recorded waveform
             {
-                for (int i = 0; i < 2; ++i)
-                    p.addRoundedRectangle (in.getX() + (float) i * in.getWidth() * 0.55f, in.getY() + in.getHeight() * (i == 0 ? 0.25f : 0.45f),
-                                           in.getWidth() * 0.35f, in.getHeight() * (i == 0 ? 0.75f : 0.55f), 2.0f);
-                g.setColour (c);
-                g.fillPath (p);
-                return;
+                for (int i = 0; i < 13; ++i)
+                {
+                    const float x = in.getX() + in.getWidth() * (float) i / 12.0f;
+                    const float h = in.getHeight() * (0.15f + 0.8f * std::abs (std::sin ((float) i * 1.7f)) * std::exp (-(float) i * 0.12f));
+                    g.fillRoundedRectangle (x - 1.0f, in.getCentreY() - h * 0.5f, 2.0f, h, 1.0f);
+                }
             }
-            else if (t == "xy")
+            else if (t == "sub") // a slow sine under noise
             {
-                p.addRectangle (in);
-                g.setColour (c.withAlpha (0.6f));
-                g.strokePath (p, juce::PathStrokeType (1.0f));
-                g.setColour (c);
-                g.fillEllipse (juce::Rectangle<float> (8, 8).withCentre (in.getRelativePoint (0.65f, 0.35f)));
-                return;
+                g.strokePath (wave (in.withTrimmedTop (in.getHeight() * 0.35f), 0.5f, 0.3f), stroke);
+                juce::Random rnd (7);
+                for (int i = 0; i < 16; ++i)
+                    g.fillRect (in.getX() + in.getWidth() * (float) i / 16.0f, in.getY() + in.getHeight() * 0.18f - rnd.nextFloat() * 5.0f, 1.2f, rnd.nextFloat() * 6.0f + 1.0f);
+            }
+            else if (t == "pitch") // a glide between two notes
+            {
+                p.startNewSubPath (in.getX(), in.getBottom() - 3.0f);
+                p.lineTo (in.getX() + in.getWidth() * 0.3f, in.getBottom() - 3.0f);
+                p.cubicTo (in.getCentreX(), in.getBottom() - 3.0f, in.getCentreX(), in.getY() + 3.0f, in.getX() + in.getWidth() * 0.7f, in.getY() + 3.0f);
+                p.lineTo (in.getRight(), in.getY() + 3.0f);
+                g.strokePath (p, stroke);
             }
             else if (t == "filter")
             {
                 p.startNewSubPath (in.getX(), in.getCentreY());
-                p.lineTo (in.getX() + in.getWidth() * 0.55f, in.getCentreY());
-                p.quadraticTo (in.getX() + in.getWidth() * 0.7f, in.getY(), in.getRight(), in.getBottom());
+                p.lineTo (in.getX() + in.getWidth() * 0.5f, in.getCentreY());
+                p.quadraticTo (in.getX() + in.getWidth() * 0.66f, in.getY(), in.getRight(), in.getBottom());
+                g.strokePath (p, stroke);
             }
             else if (t == "env")
             {
                 p.startNewSubPath (in.getBottomLeft());
                 p.lineTo (in.getX() + in.getWidth() * 0.2f, in.getY());
-                p.lineTo (in.getX() + in.getWidth() * 0.5f, in.getCentreY());
-                p.lineTo (in.getX() + in.getWidth() * 0.8f, in.getCentreY());
+                p.lineTo (in.getX() + in.getWidth() * 0.45f, in.getCentreY());
+                p.lineTo (in.getX() + in.getWidth() * 0.78f, in.getCentreY());
                 p.lineTo (in.getBottomRight());
+                g.strokePath (p, stroke);
             }
-            else if (t == "pinboard" || t == "macros" || t == "fx" || t == "morefx" || t == "play" || t == "sub" || t == "pitch")
+            else if (t == "mod") // an LFO with an arrow off it
             {
-                const int n = t == "macros" ? 4 : 3;
+                g.strokePath (wave (in.withTrimmedRight (in.getWidth() * 0.25f), 1.0f, 0.3f), stroke);
+                const auto tip = juce::Point<float> (in.getRight(), in.getCentreY());
+                p.startNewSubPath (tip.translated (-7.0f, 0));
+                p.lineTo (tip);
+                p.startNewSubPath (tip.translated (-3.0f, -3.0f)); p.lineTo (tip); p.lineTo (tip.translated (-3.0f, 3.0f));
+                g.strokePath (p, stroke);
+            }
+            else if (t == "macros" || t == "pinboard") // knobs (the pinboard's has a pin)
+            {
+                const int n = t == "macros" ? 4 : 2;
                 for (int i = 0; i < n; ++i)
                 {
                     const float d = in.getWidth() / (float) n;
-                    auto k = juce::Rectangle<float> (d * 0.8f, d * 0.8f).withCentre ({ in.getX() + d * ((float) i + 0.5f), in.getCentreY() });
-                    p.addEllipse (k);
+                    const auto ctr = juce::Point<float> (in.getX() + d * ((float) i + 0.5f), in.getCentreY() + (t == "pinboard" ? 4.0f : 0.0f));
+                    g.drawEllipse (juce::Rectangle<float> (d * 0.8f, d * 0.8f).withCentre (ctr), 1.5f);
+                    g.drawLine (juce::Line<float> (ctr, ctr.getPointOnCircumference (d * 0.3f, -0.8f + (float) i * 0.7f)), 1.5f);
                 }
-                g.setColour (c);
-                g.strokePath (p, juce::PathStrokeType (1.6f));
-                return;
-            }
-            else if (t == "space")
-            {
-                for (int i = 0; i < 3; ++i) p.addEllipse (in.reduced ((float) i * 4.0f));
-            }
-            else // modulation, monitor
-            {
-                for (int i = 0; i <= 24; ++i)
+                if (t == "pinboard")
                 {
-                    const float x = in.getX() + in.getWidth() * (float) i / 24.0f;
-                    const float y = in.getCentreY() + ((i / 6) % 2 == 0 ? -1.0f : 1.0f) * in.getHeight() * 0.3f;
-                    if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+                    const auto pin = in.getRelativePoint (0.5f, 0.12f);
+                    g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (pin));
+                    g.drawLine (pin.x, pin.y, pin.x, pin.y + 7.0f, 1.4f);
                 }
             }
-            g.setColour (c);
-            g.strokePath (p, juce::PathStrokeType (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            else if (t == "xy")
+            {
+                g.setColour (c.withAlpha (0.6f));
+                g.drawRect (in, 1.0f);
+                g.drawLine (in.getX(), in.getY() + in.getHeight() * 0.35f, in.getRight(), in.getY() + in.getHeight() * 0.35f, 0.8f);
+                g.drawLine (in.getX() + in.getWidth() * 0.65f, in.getY(), in.getX() + in.getWidth() * 0.65f, in.getBottom(), 0.8f);
+                g.setColour (c);
+                g.fillEllipse (juce::Rectangle<float> (8, 8).withCentre (in.getRelativePoint (0.65f, 0.35f)));
+            }
+            else if (t == "modmon") // lanes of moving lines
+            {
+                for (int k = 0; k < 3; ++k)
+                    g.strokePath (wave (in.withHeight (in.getHeight() / 3.0f).translated (0, in.getHeight() / 3.0f * (float) k), 1.0f + (float) k * 0.5f, 0.25f), juce::PathStrokeType (1.2f));
+            }
+            else if (t == "rack") // modules in a chain
+            {
+                for (int i = 0; i < 3; ++i)
+                {
+                    auto m = juce::Rectangle<float> (in.getWidth() * 0.26f, in.getHeight() * 0.7f).withCentre ({ in.getX() + in.getWidth() * (0.15f + 0.35f * (float) i), in.getCentreY() });
+                    g.drawRoundedRectangle (m, 2.5f, 1.4f);
+                    if (i < 2) g.drawLine (m.getRight(), m.getCentreY(), m.getRight() + in.getWidth() * 0.09f, m.getCentreY(), 1.2f);
+                }
+            }
+            else if (t == "lowend") // a split: a low band under a line
+            {
+                g.setColour (c.withAlpha (0.3f));
+                g.fillRect (in.withWidth (in.getWidth() * 0.4f));
+                g.setColour (c);
+                g.fillRect (in.getX() + in.getWidth() * 0.4f - 0.8f, in.getY(), 1.6f, in.getHeight());
+                p.startNewSubPath (in.getX(), in.getY() + in.getHeight() * 0.35f);
+                p.lineTo (in.getX() + in.getWidth() * 0.4f, in.getY() + in.getHeight() * 0.3f);
+                p.lineTo (in.getRight(), in.getBottom() - 2.0f);
+                g.strokePath (p, stroke);
+            }
+            else if (t == "play") // keys
+            {
+                for (int i = 0; i < 5; ++i) g.drawRoundedRectangle (in.getX() + in.getWidth() * 0.2f * (float) i, in.getY(), in.getWidth() * 0.18f, in.getHeight(), 1.5f, 1.2f);
+                for (int i : { 0, 1, 3 }) g.fillRoundedRectangle (in.getX() + in.getWidth() * (0.2f * (float) i + 0.13f), in.getY(), in.getWidth() * 0.12f, in.getHeight() * 0.55f, 1.0f);
+            }
+            else if (t == "space") // the orbit
+            {
+                g.drawEllipse (in.reduced (1.0f), 1.3f);
+                g.drawEllipse (in.reduced (in.getWidth() * 0.12f, in.getHeight() * 0.32f), 1.3f);
+                g.fillEllipse (juce::Rectangle<float> (5, 5).withCentre (in.getCentre()));
+            }
+            else if (t == "scope")
+                g.strokePath (wave (in, 2.0f, 0.38f), stroke);
+            else if (t == "meter")
+            {
+                for (int i = 0; i < 2; ++i)
+                    g.fillRoundedRectangle (in.getX() + in.getWidth() * (0.18f + 0.36f * (float) i), in.getY() + in.getHeight() * (i == 0 ? 0.2f : 0.4f),
+                                            in.getWidth() * 0.26f, in.getHeight() * (i == 0 ? 0.8f : 0.6f), 2.0f);
+            }
+            else
+                g.strokePath (wave (in, 1.0f, 0.35f), stroke);
         }
     };
 

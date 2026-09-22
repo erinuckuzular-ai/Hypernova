@@ -449,6 +449,9 @@ int main (int argc, char** argv)
                     if (tb->getButtonText().isNotEmpty() && textW > (float) room * 1.12f)
                         issues.add (state + ": " + pathOf (c) + " text is too long for it (" + juce::String (textW, 0) + " > " + juce::String (room) + ")");
                 }
+                if (auto* w = dynamic_cast<ab::ui::Widget*> (c))
+                    if (w->editing && ! w->collapsed && w->chromeCollides())
+                        issues.add (state + ": " + pathOf (c) + " layout-mode title runs into its buttons (" + juce::String (w->getWidth()) + " px wide)");
                 if (auto* k = dynamic_cast<ab::ui::Knob*> (c))
                     if (k->labelOverflow() > 1.15f)
                         issues.add (state + ": " + pathOf (c) + " label squashed to fit (" + juce::String (k->labelOverflow(), 2) + "x)");
