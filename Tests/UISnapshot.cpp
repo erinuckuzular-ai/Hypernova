@@ -148,10 +148,13 @@ int main (int argc, char** argv)
         auto* oscA = ed->findWidget ("oscA");
         auto* sub = ed->findWidget ("sub");
         auto* pitch = ed->findWidget ("pitch");
-        check (oscA != nullptr && std::abs (oscA->getX() - 24) <= 1 && std::abs (oscA->getWidth() - 400) <= 8 && std::abs (oscA->getHeight() - 378) <= 8,
+        check (oscA != nullptr && std::abs (oscA->getX() - 24) <= 1 && std::abs (oscA->getWidth() - 400) <= 8 && std::abs (oscA->getHeight() - 348) <= 10,
                "Sound Design is the classic layout (" + oscA->getBounds().toString() + ")");
-        check (ed->findWidget ("mod")->isVisible() && ! ed->findWidget ("rack")->isVisible()
-               && ed->layoutTree().findLeaf ("mod") == ed->layoutTree().findLeaf ("rack"), "deck pages share one place as tabs");
+        // The deck opens on the effects rack, with the other two pages behind it as tabs.
+        check (ed->findWidget ("rack")->isVisible() && ! ed->findWidget ("mod")->isVisible()
+               && ed->layoutTree().findLeaf ("mod") == ed->layoutTree().findLeaf ("rack"), "the deck opens on the effects, the rest are tabs");
+        check (ed->findWidget ("rack")->getHeight() >= 220, "and the rack has room for its units ("
+               + juce::String (ed->findWidget ("rack")->getHeight()) + ")");
         tidy ("default");
 
         // Normal mode: the overlay only takes the gutters, never a control.

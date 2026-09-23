@@ -1752,9 +1752,12 @@ void HypernovaAudioProcessorEditor::showAddEffectMenu (juce::Component* target, 
     m.setLookAndFeel (&lookAndFeel);
     m.addSectionHeader ("ADD AN EFFECT");
     const auto inRack = processor.rackEffects();
+    // One line each, in FxId order. The static_assert keeps this list honest: a new effect won't compile
+    // until it has its own blurb, instead of reading past the end of the array.
     static const char* blurbs[] = { "warmth to grit", "wobble, hiss, saturation", "multiband squash", "shift up or down",
                                     "width and movement", "jet swooshes", "sweeping filter", "trance gate and auto pan",
-                                    "echoes", "reverb", "low and high shelves" };
+                                    "echoes", "reverb", "five bands", "bits and sample rate", "phone, car, club" };
+    static_assert (std::size (blurbs) == (size_t) ab::NumFx, "every effect needs its own line in this menu");
     for (int fx = 0; fx < ab::NumFx; ++fx)
     {
         const bool there = std::find (inRack.begin(), inRack.end(), fx) != inRack.end();

@@ -189,7 +189,7 @@ public:
     void addToRack (int fxId);                     // switches it on (with a sensible amount if it was silent)
     void removeFromRack (int fxId);                // switches it off
     std::atomic<int> parameterChanges { 0 }; // bumped on any parameter change, so the editor redraws only when needed
-    int uiDeckPage = 0; // which tab of the editor's bottom deck is showing
+    int uiDeckPage = 1; // which tab of the editor's bottom deck is showing: the effects rack, so it's there on opening
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
     std::atomic<int> uiScalePercent { 100 };
 

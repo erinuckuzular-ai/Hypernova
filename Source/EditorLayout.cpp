@@ -225,10 +225,12 @@ juce::ValueTree HypernovaAudioProcessorEditor::defaultLayout (const juce::String
     }
     else
     {
+        // The deck along the bottom opens on the effects rack, so the units are there without going looking
+        // for them; it gets the room a rack module needs, taken off the rows above.
         root = split (false, 1.0f, {
-            split (true, 378, { leaf ({ "oscA" }, 400), leaf ({ "oscB" }, 400), leaf ({ "space", "sources" }, 408) }),
-            split (true, 212, { leaf ({ "sub" }, 240), leaf ({ "pitch" }, 256), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }),
-            leaf ({ "mod", "rack", "play" }, 190, juce::jlimit (0, 2, page == 3 ? 2 : page == 0 ? 0 : 1)) });
+            split (true, 348, { leaf ({ "oscA" }, 400), leaf ({ "oscB" }, 400), leaf ({ "space", "sources" }, 408) }),
+            split (true, 196, { leaf ({ "sub" }, 240), leaf ({ "pitch" }, 256), leaf ({ "filter" }, 332), leaf ({ "env" }, 368) }),
+            leaf ({ "mod", "rack", "play" }, 236, juce::jlimit (0, 2, page == 3 ? 2 : page == 0 ? 0 : 1)) });
     }
     ws.appendChild (toolsTree, nullptr);
     juce::ValueTree dockTree ("Dock");
