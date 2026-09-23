@@ -1333,9 +1333,19 @@ void HypernovaAudioProcessor::updateOrbit (int numSamples)
         morphed[i].store (v, std::memory_order_relaxed);
     }
     morphActive.store (true, std::memory_order_relaxed);
+    morphSeen.store (true, std::memory_order_relaxed);
     shownMorphX.store (morphNowX, std::memory_order_relaxed);
     shownMorphY.store (morphNowY, std::memory_order_relaxed);
     for (int c = 0; c < ab::Orbit::NumCorners; ++c) shownWeights[(size_t) c].store (w[(size_t) c], std::memory_order_relaxed);
+}
+
+// Live means Orbit is switched on with something captured: the same answer whether or not audio is running,
+// so the display never flickers while the plugin is asleep.
+bool HypernovaAudioProcessor::orbitLive() const
+{
+    auto it = raw.find ("orbitOn");
+    if (it == raw.end() || rawValue[(size_t) it->second]->load() < 0.5f) return false;
+    return cornersFilled() > 0;
 }
 
 float HypernovaAudioProcessor::soundValue (const juce::String& id) const
@@ -1345,6 +1355,16 @@ float HypernovaAudioProcessor::soundValue (const juce::String& id) const
 
 juce::Point<float> HypernovaAudioProcessor::orbitPoint() const
 {
+    // Before any audio has run (or with Orbit off) the point is simply where the controls put it.
+    if (! morphSeen.load (std::memory_order_relaxed) || ! orbitLive())
+    {
+        auto at = [this] (const char* id)
+        {
+            auto it = raw.find (id);
+            return it != raw.end() ? rawValue[(size_t) it->second]->load() : 0.0f;
+        };
+        return { at ("orbitX"), at ("orbitY") };
+    }
     return { shownMorphX.load (std::memory_order_relaxed), shownMorphY.load (std::memory_order_relaxed) };
 }
 

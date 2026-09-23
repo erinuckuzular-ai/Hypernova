@@ -198,7 +198,7 @@ public:
     int cornersFilled() const;
     void bakeOrbit();                                // the blend becomes the sound, and Orbit switches off
     float soundValue (const juce::String& id) const; // what the engine is using: the knob, or Orbit's blend
-    bool orbitLive() const { return morphActive.load (std::memory_order_relaxed); }
+    bool orbitLive() const;                          // Orbit is on and has a sound to morph
     juce::Point<float> orbitPoint() const;           // where the morph sits right now, travel included
     std::array<float, ab::Orbit::NumCorners> orbitWeights() const;
 
@@ -348,6 +348,7 @@ private:
     std::vector<juce::uint8> rawMorphs;                       // Orbit leaves its own controls alone
     std::vector<std::atomic<float>> morphed;                  // the blended value, worked out once a block
     std::atomic<bool> morphActive { false };
+    std::atomic<bool> morphSeen { false };   // the engine has worked out a point at least once
     std::array<std::atomic<float>*, ab::NumFx> fxBusRaw {};   // each effect's bus, looked up once
 
     // Orbit's captured sounds live in the state tree; these are the copy the audio thread reads.

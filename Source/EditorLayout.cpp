@@ -31,6 +31,7 @@ namespace
         { "lfo4",     "LFO 4",          "MODULATION", "A fourth LFO, the same as LFO 3",                                 false, SlotLfo },
         { "follower", "Follower",       "MODULATION", "How loud the synth is, as something to modulate with",           false, SlotMod },
         { "macros",   "Macros",         "MODULATION", "The four macros, big: rename them, see what they move",         false, SlotFx },
+        { "orbit",    "Orbit",          "MODULATION", "Four captured sounds, and a point that morphs between them",    false, SlotOscB },
         { "xy",       "XY Pad",         "MODULATION", "Two macros on one pad: drag to move both",                      true,  SlotMod },
         { "modmon",   "Mod Monitor",    "MODULATION", "Every active modulation source, live, and what it moves",       true,  SlotLfo },
         { "rack",     "Effects Rack",   "EFFECTS",    "Every effect as its own module: drag them along the chain",     false, SlotFx },

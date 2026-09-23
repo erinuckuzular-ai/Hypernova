@@ -16,7 +16,7 @@ The widget interface comes first because every later feature (sampler, extra sou
 
 | # | Item | Status | Notes |
 |---|---|---|---|
-| 1 | Orbit: sound morphing | not started | The Sound Space "ORBIT" view is a visualiser, not this feature. |
+| 1 | Orbit: sound morphing | implemented (next release) | The Orbit widget: four captured sounds at the corners of a square and a point that morphs between them. Every continuous control blends by how near the point is to each corner; anything that can only be one thing or another (a wavetable, a filter type, a switch) takes the nearest corner's value. An empty corner gives its share to the rest, so two sounds morph along a line. A corner takes the sound as it is, the blend you are hearing, or any factory sound (right-click it). The point can be dragged, automated, modulated (Morph X and Morph Y are new destinations) or left to travel a circle, a figure of eight, a drift or a bounce, free or in time with the host. Orbit leaves its own controls, the macros and the machine settings alone. "Keep the blend" writes what you hear into the knobs and switches Orbit off, and while it is live each knob shows a mark where the morph has taken it. The captured sounds travel with the session, with exported presets and across an A/B switch. Tested with `SmokeTest --orbit`. The Sound Space "ORBIT" view is a different thing: a visualiser. |
 | 2 | Event Horizon: freeze and transform | not started | |
 | 3 | Sound DNA: patch breeding | not started | Must stay separate from the dice button (the randomize strip is removed). |
 | 6 | Matter: creative audio transformation | not started | Wavetable import exists, but it converts to a wavetable, which isn't what this item asks for. |

@@ -862,6 +862,8 @@ public:
     std::function<void (const juce::String& paramId, int slot, float depth)> onModDepth;
     std::function<void (int slot, bool starting)> onModDepthGesture;
     std::function<juce::String (int slot)> modSourceName;
+    // Orbit: where the morph has taken this control, when that isn't where the knob sits.
+    std::function<bool (const juce::String& paramId, float& normalised)> morphLookup;
 
     void resized() override
     {
@@ -933,6 +935,27 @@ public:
                 g.setColour (juce::Colour (colour).brighter (0.5f).withAlpha (0.6f * fade));
                 g.fillEllipse (juce::Rectangle<float> (3.5f * fade + 1.0f, 3.5f * fade + 1.0f).withCentre (pt));
             }
+        }
+
+        // Orbit: a ring mark where the morph has this control, so you can see what you are hearing even
+        // though the knob itself hasn't moved.
+        if (float morphN = 0; morphLookup && morphLookup (id, morphN))
+        {
+            const auto knobArea = slider.getBounds().toFloat().reduced (2.0f);
+            const float radius = juce::jmin (knobArea.getWidth(), knobArea.getHeight()) * 0.5f + 2.0f;
+            const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
+            const float here = a0 + (a1 - a0) * (float) slider.valueToProportionOfLength (slider.getValue());
+            const float to = a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, morphN);
+            juce::Path arc;
+            arc.addCentredArc (knobArea.getCentreX(), knobArea.getCentreY(), radius, radius, 0.0f,
+                               juce::jmin (here, to), juce::jmax (here, to), true);
+            g.setColour (Colours::accent.withAlpha (0.35f));
+            g.strokePath (arc, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const auto at = knobArea.getCentre().getPointOnCircumference (radius, to - juce::MathConstants<float>::halfPi);
+            g.setColour (Colours::bg0);
+            g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre (at));
+            g.setColour (Colours::accent);
+            g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (at));
         }
 
         // Modulation ring: an arc from the knob's own value, in the source's colour, with a moving dot

@@ -474,6 +474,33 @@ int main (int argc, char** argv)
             srcView.toggleSolo ("subOn");
         }
 
+        // Orbit: the pad can be added, and it lands somewhere you can see.
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+            ed->addWidgetType ("orbit");
+            settle();
+            auto* w = ed->findWidget ("orbit");
+            check (w != nullptr && w->isVisible() && w->getWidth() > 200 && w->getHeight() > 120,
+                   "the Orbit pad can be added from the library (" + (w != nullptr ? w->getBounds().toString() : juce::String ("missing")) + ")");
+            check (ed->findWidget ("rack") != nullptr && ed->findWidget ("mod") != nullptr, "and the deck is still there");
+            tidy ("with Orbit");
+            // Capturing a corner from the pad, and the point following the parameters.
+            proc.captureCorner (0);
+            settle();
+            check (proc.cornerFilled (0), "clicking an empty corner captures the sound");
+            proc.setParam ("orbitOn", 1.0f);
+            proc.setParam ("orbitX", 0.75f);
+            settle();
+            auto& pad = ed->orbitView();
+            pad.refresh();
+            check (pad.isVisible(), "the pad is showing while Orbit is live");
+            proc.setParam ("orbitOn", 0.0f);
+            proc.clearCorner (0);
+            ed->hideWidget ("orbit");
+            settle();
+        }
+
         // Routing: a source's bus pill in the Sources mixer, and an effect moved between the buses.
         {
             proc.setParam ("bOn", 1.0f);
@@ -1087,6 +1114,23 @@ int main (int argc, char** argv)
         e.addWidgetType ("follower");
     });
     proc.setParam ("mod4Src", 0.0f);
+    snap ("ui_13_orbit.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        // Two sounds in the corners and the point between them, so the pad shows what it is for.
+        proc.captureCorner (0);
+        proc.loadFactoryPreset (30);
+        proc.captureCorner (1);
+        proc.loadFactoryPreset (60);
+        proc.captureCorner (3);
+        proc.setParam ("orbitOn", 1.0f);
+        proc.setParam ("orbitX", 0.62f);
+        proc.setParam ("orbitY", 0.35f);
+        proc.setParam ("orbitPath", (float) ab::Orbit::Circle);
+        proc.setParam ("orbitDepth", 0.4f);
+        e.addWidgetType ("orbit");
+    });
+    proc.setParam ("orbitOn", 0.0f);
+    for (int c = 0; c < ab::Orbit::NumCorners; ++c) proc.clearCorner (c);
     snap ("ui_11_lfo3.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
     {
         proc.setParam ("lfo3Shape", (float) ab::LDrawn);

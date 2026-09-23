@@ -99,6 +99,18 @@ Knob& HypernovaAudioProcessorEditor::knob (const juce::String& id, const juce::S
     knobs.push_back (std::make_unique<Knob> (processor.apvts, id, label, c, size));
     auto& k = *knobs.back();
     k.modLookup = [this] (const juce::String& p) { return modInfoFor (p); };
+    // Orbit: while it's live, a mark shows where the morph has each control.
+    k.morphLookup = [this] (const juce::String& p, float& normalised)
+    {
+        if (! processor.orbitLive()) return false;
+        auto* rp = dynamic_cast<juce::RangedAudioParameter*> (processor.apvts.getParameter (p));
+        auto* knobValue = processor.apvts.getRawParameterValue (p);
+        if (rp == nullptr || knobValue == nullptr) return false;
+        const float used = processor.soundValue (p);
+        if (std::abs (used - knobValue->load()) < 1.0e-4f) return false;
+        normalised = juce::jlimit (0.0f, 1.0f, rp->convertTo0to1 (used));
+        return true;
+    };
     k.onModDrop = [this] (const juce::String& src, const juce::String& p) { assignMod (src, p); };
     k.onModMenu = [this] (const juce::String& p) { showModMenu (p); };
     wireModDepth (k);
@@ -449,6 +461,38 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         followerMeter.setBounds (172, 44, design.getWidth() - 184, 142);
         w.finishBuilding();
         w.spread.setFlags (followerMeter, Spread::Stretch);
+    }
+
+    // Orbit: four captured sounds, and a point that morphs between them.
+    {
+        const juce::Rectangle<int> design { 0, 0, 420, 300 };
+        auto& w = makeWidget ("orbit", "orbit", "ORBIT", Palette::oscB, design);
+        auto* W = &w.content;
+        toggle (std::make_unique<PillToggle> ("ORBIT", Palette::oscB), "orbitOn", { design.getWidth() - 200, 10, 74, 22 },
+                "Hear the blend of the captured sounds instead of the knobs", W);
+        W->addAndMakeVisible (keepBlendButton);
+        keepBlendButton.setBounds (design.getWidth() - 118, 10, 106, 22);
+        keepBlendButton.setTooltip ("Keep what you are hearing: the blend is written into the knobs and Orbit switches off");
+        keepBlendButton.onClick = [this]
+        {
+            if (! processor.orbitLive()) { showMessage ("Nothing to keep: switch Orbit on first"); return; }
+            processor.bakeOrbit();
+            showMessage ("The blend is the sound now");
+        };
+        W->addAndMakeVisible (orbitPad);
+        orbitPad.setBounds (12, 40, design.getWidth() - 24, 186);
+        orbitPad.onCornerMenu = [this] (int corner, juce::Point<int> where) { showCornerMenu (corner, where); };
+        orbitPad.onCapture = [this] (int corner)
+        {
+            processor.captureCorner (corner);
+            showMessage (ab::Orbit::cornerNames()[corner] + " holds this sound now");
+        };
+        combo ("orbitPath", ab::Orbit::pathNames(), { 12, 236, 108, 24 }, W);
+        combo ("orbitSync", ab::lfoSyncNames(), { 126, 236, 92, 24 }, W);
+        knob ("orbitRate", "RATE", Palette::oscB, { 228, 232, 74, 62 }, 38, W);
+        knob ("orbitDepth", "TRAVEL", Palette::oscB, { 306, 232, 74, 62 }, 38, W);
+        w.finishBuilding();
+        w.spread.setFlags (orbitPad, Spread::Stretch);
     }
 
     // Sound space
@@ -888,6 +932,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (rack.isVisible()) { rack.refresh(); if ((viewTick % 3) != 0) rack.tick (sounding); }
     if (sources.isVisible()) sources.refresh();
     if (followerMeter.isVisible()) followerMeter.refresh();
+    if (orbitPad.isVisible()) orbitPad.refresh();   // the point follows the engine, however it is being moved
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
@@ -1743,6 +1788,46 @@ void HypernovaAudioProcessorEditor::showRackModuleMenu (int fxId, juce::Point<in
             showMessage (ab::fxRackNames()[fx] + " took " + ab::fxRackNames()[fxId] + "'s place");
         }
         rack.refresh (true);
+    });
+}
+
+// Right-click a corner of the Orbit pad: what can go in it, and how to empty it.
+void HypernovaAudioProcessorEditor::showCornerMenu (int corner, juce::Point<int> screenPos)
+{
+    juce::PopupMenu m, sounds;
+    m.setLookAndFeel (&lookAndFeel);
+    m.addSectionHeader ("CORNER " + ab::Orbit::cornerNames()[corner]);
+    m.addItem (1, processor.orbitLive() ? "Capture the blend you are hearing" : "Capture the sound as it is");
+    // A shortlist of factory sounds, by category, so a corner can hold something you are not playing.
+    juce::String category;
+    juce::PopupMenu group;
+    const auto& presets = ab::factoryPresets();
+    for (int i = 0; i < (int) presets.size(); ++i)
+    {
+        const juce::String here (presets[(size_t) i].category);
+        if (here != category)
+        {
+            if (group.containsAnyActiveItems()) sounds.addSubMenu (category, group);
+            group = juce::PopupMenu();
+            category = here;
+        }
+        group.addItem (100 + i, presets[(size_t) i].name);
+    }
+    if (group.containsAnyActiveItems()) sounds.addSubMenu (category, group);
+    m.addSubMenu ("Put a sound here", sounds);
+    m.addSeparator();
+    m.addItem (2, "Empty it", processor.cornerFilled (corner));
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }), [this, corner] (int r)
+    {
+        if (r == 0) return;
+        if (r == 1) { processor.captureCorner (corner); showMessage (ab::Orbit::cornerNames()[corner] + " holds this sound now"); }
+        else if (r == 2) { processor.clearCorner (corner); showMessage (ab::Orbit::cornerNames()[corner] + " is empty"); }
+        else if (r >= 100)
+        {
+            processor.putPresetInCorner (corner, r - 100);
+            showMessage (processor.cornerName (corner) + " is in " + ab::Orbit::cornerNames()[corner]);
+        }
+        orbitPad.repaint();
     });
 }
 
