@@ -5,6 +5,7 @@
 #include "DSP/Synth.h"
 #include "DSP/Effects.h"
 #include "Presets.h"
+#include "Orbit.h"
 #include <unordered_map>
 
 namespace ab
@@ -188,6 +189,19 @@ public:
     std::vector<int> rackEffects() const;          // in chain order
     void addToRack (int fxId);                     // switches it on (with a sensible amount if it was silent)
     void removeFromRack (int fxId);                // switches it off
+    // --- Orbit: four captured sounds, and a point that morphs between them -----------------------------
+    void captureCorner (int corner);                 // this sound, as it is now, into that corner (undoable)
+    void putPresetInCorner (int corner, int program); // a factory sound into that corner (undoable)
+    void clearCorner (int corner);
+    bool cornerFilled (int corner) const;
+    juce::String cornerName (int corner) const;
+    int cornersFilled() const;
+    void bakeOrbit();                                // the blend becomes the sound, and Orbit switches off
+    float soundValue (const juce::String& id) const; // what the engine is using: the knob, or Orbit's blend
+    bool orbitLive() const { return morphActive.load (std::memory_order_relaxed); }
+    juce::Point<float> orbitPoint() const;           // where the morph sits right now, travel included
+    std::array<float, ab::Orbit::NumCorners> orbitWeights() const;
+
     std::atomic<int> parameterChanges { 0 }; // bumped on any parameter change, so the editor redraws only when needed
     int uiDeckPage = 1; // which tab of the editor's bottom deck is showing: the effects rack, so it's there on opening
     std::atomic<int> uiAnimation { 0 }; // backdrop animation: 0 full, 1 calm, 2 off (saved with the session)
@@ -326,8 +340,27 @@ private:
     juce::SmoothedValue<float> masterGain;
     int lastMode = -1;
 
-    std::unordered_map<std::string, std::atomic<float>*> raw;
+    // Every parameter, in one order, so Orbit can blend whole sounds by index instead of by name.
+    std::unordered_map<std::string, int> raw;                 // parameter id -> index
+    std::vector<std::atomic<float>*> rawValue;                // its live value
+    std::vector<juce::RangedAudioParameter*> rawParam;
+    std::vector<juce::uint8> rawDiscrete;                     // a choice, a switch or a whole number: no blending
+    std::vector<juce::uint8> rawMorphs;                       // Orbit leaves its own controls alone
+    std::vector<std::atomic<float>> morphed;                  // the blended value, worked out once a block
+    std::atomic<bool> morphActive { false };
     std::array<std::atomic<float>*, ab::NumFx> fxBusRaw {};   // each effect's bus, looked up once
+
+    // Orbit's captured sounds live in the state tree; these are the copy the audio thread reads.
+    std::array<ab::Orbit::Corners, 2> orbitCorners;
+    std::atomic<int> orbitSide { 0 };
+    ab::Orbit::Travel orbitTravel;
+    double orbitPhase = 0;
+    float morphNowX = 0, morphNowY = 0;          // smoothed, so a jump between sounds doesn't step
+    std::atomic<float> shownMorphX { 0 }, shownMorphY { 0 };
+    std::array<std::atomic<float>, ab::Orbit::NumCorners> shownWeights {};
+    void updateOrbit (int numSamples);           // once a block, before the settings are read
+    void readCornersFromState();                 // after a preset or session load
+    void writeCornersToState (const ab::Orbit::Corners& c);
 
     juce::CriticalSection nameLock;
     juce::String presetName { "Init" }, presetCategory { "Init" };

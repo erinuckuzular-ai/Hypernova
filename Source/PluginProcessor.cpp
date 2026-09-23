@@ -316,6 +316,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
     }
 
+    // Orbit (appended): four captured sounds at the corners of a square, and a point that morphs between them.
+    add<Bool> (l, pid ("orbitOn"), "Orbit", false);
+    addFloat (l, "orbitX", "Orbit X", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "orbitY", "Orbit Y", { 0.0f, 1.0f }, 0.0f, pctText);
+    add<Choice> (l, pid ("orbitPath"), "Orbit Path", Orbit::pathNames(), 0);
+    addFloat (l, "orbitRate", "Orbit Rate", skewed (0.01f, 8.0f, 0.3f), 0.2f, lfoHzText);
+    add<Choice> (l, pid ("orbitSync"), "Orbit Sync", lfoSyncNames(), 0);
+    addFloat (l, "orbitDepth", "Orbit Travel", { 0.0f, 1.0f }, 0.3f, pctText);
+
     // Routing (appended): every source plays into a bus and every effect sits on one, so two chains can run
     // side by side and meet at the output. Everything defaults to the main bus, so older sounds are unchanged.
     {
@@ -349,7 +358,23 @@ HypernovaAudioProcessor::HypernovaAudioProcessor()
             apvts.addParameterListener (rp->getParameterID(), changeCounter.get());
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-            raw[rp->getParameterID().toStdString()] = apvts.getRawParameterValue (rp->getParameterID());
+        {
+            const auto id = rp->getParameterID();
+            raw[id.toStdString()] = (int) rawValue.size();
+            rawValue.push_back (apvts.getRawParameterValue (id));
+            rawParam.push_back (rp);
+            // A choice, a switch or a whole number can only be one thing or another, so Orbit takes the
+            // nearest corner's value for it instead of landing somewhere in between.
+            rawDiscrete.push_back ((juce::uint8) (dynamic_cast<juce::AudioParameterChoice*> (rp) != nullptr
+                                                  || dynamic_cast<juce::AudioParameterBool*> (rp) != nullptr
+                                                  || dynamic_cast<juce::AudioParameterInt*> (rp) != nullptr));
+            // What Orbit leaves alone: its own controls, the macros and the mod wheel (how you play the sound,
+            // not part of it), and the machine settings. Everything else is the sound and gets blended.
+            rawMorphs.push_back ((juce::uint8) ! (id.startsWith ("orbit") || id.startsWith ("macro")
+                                                  || id == "quality" || id.startsWith ("mpe")));
+        }
+    morphed = std::vector<std::atomic<float>> (rawValue.size());
+    for (size_t i = 0; i < rawValue.size(); ++i) morphed[i].store (rawValue[i]->load(), std::memory_order_relaxed);
     // Each effect's bus is read every block, so its parameter is looked up once here instead.
     for (int fx = 0; fx < NumFx; ++fx)
         fxBusRaw[(size_t) fx] = apvts.getRawParameterValue (fxParamPrefix (fx) + "Bus");
@@ -370,7 +395,11 @@ float HypernovaAudioProcessor::param (const char* id) const
 {
     auto it = raw.find (id);
     jassert (it != raw.end());
-    return it != raw.end() ? it->second->load (std::memory_order_relaxed) : 0.0f;
+    if (it == raw.end()) return 0.0f;
+    const size_t i = (size_t) it->second;
+    // With Orbit live the engine hears the blend of the captured sounds, not the knobs as they sit.
+    if (morphActive.load (std::memory_order_relaxed) && rawMorphs[i] != 0) return morphed[i].load (std::memory_order_relaxed);
+    return rawValue[i]->load (std::memory_order_relaxed);
 }
 
 void HypernovaAudioProcessor::setParam (const juce::String& id, float realValue)
@@ -903,6 +932,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     shownBeats = hostPlaying ? hostPpq : freeBeats;
     shownBpm = bpm;
 
+    updateOrbit (numSamples);   // the blend is worked out first: every setting below is read through it
     blockSettings = readSynthSettings();
     applyQuality ((int) param ("quality"));
     smoothSettings (blockSettings, numSamples);
@@ -1225,6 +1255,256 @@ void HypernovaAudioProcessor::applyExpressionToVoices (int channel)
 
 // The envelope follower: how loud the synth is right now, smoothed with its own attack and release.
 // It's taken from the voices (before the effects), so feeding it back into them can't run away.
+// ---------------------------------------------------------------------------------------------------
+// Orbit: four captured sounds, and a point between them. Worked out once a block, before anything reads
+// a parameter, so the whole engine hears the blend without knowing anything about it.
+void HypernovaAudioProcessor::updateOrbit (int numSamples)
+{
+    // Orbit's own controls are read straight from the knobs: it never morphs itself.
+    auto plain = [this] (const char* id)
+    {
+        auto it = raw.find (id);
+        return it != raw.end() ? rawValue[(size_t) it->second]->load (std::memory_order_relaxed) : 0.0f;
+    };
+    const auto& corners = orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)];
+    if (plain ("orbitOn") < 0.5f || corners.howMany() == 0 || morphed.size() != rawValue.size())
+    {
+        morphActive.store (false, std::memory_order_relaxed);
+        return;
+    }
+
+    float x = plain ("orbitX"), y = plain ("orbitY");
+
+    // Anything in the matrix aimed at the morph moves it too. These rows are read from the matrix as it is
+    // being edited, not from the blend: a captured sound's own matrix must not take the morph over.
+    {
+        const Voice* newest = nullptr;
+        for (auto& v : voices)
+            if (v.isActive() && (newest == nullptr || v.age > newest->age)) newest = &v;
+        for (int i = 0; i < NumModSlots; ++i)
+        {
+            const std::string row = "mod" + std::to_string (i + 1);
+            const int dest = (int) plain ((row + "Dest").c_str());
+            if (dest != DMorphX && dest != DMorphY) continue;
+            const int src = (int) plain ((row + "Src").c_str());
+            if (src == SrcNone || src >= NumSrc) continue;
+            float v = 0;
+            if (src >= SrcMacro1 && src <= SrcMacro4) v = globalMod.macros[(size_t) (src - SrcMacro1)];
+            else if (src == SrcModWheel) v = globalMod.modWheel;
+            else if (src == SrcFollow) v = globalMod.follower;
+            else if (newest != nullptr) v = newest->lastSrc[src];
+            (dest == DMorphX ? x : y) += shapeMod ((int) plain ((row + "Shape").c_str()), v) * plain ((row + "Amt").c_str());
+        }
+    }
+
+    // A path of its own: the point keeps travelling around wherever it was left.
+    const int path = (int) plain ("orbitPath");
+    const float depth = plain ("orbitDepth");
+    if (path != ab::Orbit::Still && depth > 0.001f)
+    {
+        const int sync = (int) plain ("orbitSync");
+        const double hz = sync == 0 ? (double) plain ("orbitRate") : bpm / 60.0 / lfoSyncBeats (sync);
+        if (sync != 0 && hostPlaying) orbitPhase = hostPpq / (lfoSyncBeats (sync) * 4.0);
+        else orbitPhase += hz * numSamples / juce::jmax (8000.0, sampleRateNow);
+        orbitPhase -= std::floor (orbitPhase);
+        const auto off = orbitTravel.step (path, orbitPhase, (float) numSamples / (float) juce::jmax (8000.0, sampleRateNow));
+        x += off.x * depth * 0.5f;
+        y += off.y * depth * 0.5f;
+    }
+
+    // Smoothed over about 15 ms, so jumping across the square slides instead of stepping.
+    const float k = juce::jlimit (0.0f, 1.0f, (float) numSamples / (0.015f * (float) juce::jmax (8000.0, sampleRateNow)));
+    morphNowX += (juce::jlimit (0.0f, 1.0f, x) - morphNowX) * k;
+    morphNowY += (juce::jlimit (0.0f, 1.0f, y) - morphNowY) * k;
+
+    const auto w = ab::Orbit::weights (morphNowX, morphNowY, corners.filled);
+    const int nearest = ab::Orbit::strongest (w);
+    const auto& near = corners.values[(size_t) nearest];
+    if (near.size() != rawValue.size()) { morphActive.store (false, std::memory_order_relaxed); return; }
+
+    for (size_t i = 0; i < rawValue.size(); ++i)
+    {
+        if (rawMorphs[i] == 0) continue;
+        if (rawDiscrete[i] != 0) { morphed[i].store (near[i], std::memory_order_relaxed); continue; }
+        float v = 0;
+        for (int c = 0; c < ab::Orbit::NumCorners; ++c)
+            if (w[(size_t) c] > 0.0f && corners.values[(size_t) c].size() == rawValue.size())
+                v += w[(size_t) c] * corners.values[(size_t) c][i];
+        morphed[i].store (v, std::memory_order_relaxed);
+    }
+    morphActive.store (true, std::memory_order_relaxed);
+    shownMorphX.store (morphNowX, std::memory_order_relaxed);
+    shownMorphY.store (morphNowY, std::memory_order_relaxed);
+    for (int c = 0; c < ab::Orbit::NumCorners; ++c) shownWeights[(size_t) c].store (w[(size_t) c], std::memory_order_relaxed);
+}
+
+float HypernovaAudioProcessor::soundValue (const juce::String& id) const
+{
+    return param (id.toRawUTF8());
+}
+
+juce::Point<float> HypernovaAudioProcessor::orbitPoint() const
+{
+    return { shownMorphX.load (std::memory_order_relaxed), shownMorphY.load (std::memory_order_relaxed) };
+}
+
+std::array<float, ab::Orbit::NumCorners> HypernovaAudioProcessor::orbitWeights() const
+{
+    std::array<float, ab::Orbit::NumCorners> w {};
+    for (int c = 0; c < ab::Orbit::NumCorners; ++c) w[(size_t) c] = shownWeights[(size_t) c].load (std::memory_order_relaxed);
+    return w;
+}
+
+bool HypernovaAudioProcessor::cornerFilled (int corner) const
+{
+    if (! juce::isPositiveAndBelow (corner, ab::Orbit::NumCorners)) return false;
+    return orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)].filled[(size_t) corner];
+}
+
+int HypernovaAudioProcessor::cornersFilled() const
+{
+    return orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)].howMany();
+}
+
+juce::String HypernovaAudioProcessor::cornerName (int corner) const
+{
+    if (! juce::isPositiveAndBelow (corner, ab::Orbit::NumCorners)) return {};
+    auto tree = apvts.state.getChildWithName ("orbit").getChild (corner);
+    return tree.isValid() ? tree.getProperty ("name", "").toString() : juce::String();
+}
+
+// The captured sounds are kept in the state tree, so they travel with the sound, with presets, and with A/B.
+// Only what differs from a parameter's default is written, so a corner holding an Init sound costs nothing.
+void HypernovaAudioProcessor::writeCornersToState (const ab::Orbit::Corners& c)
+{
+    auto orbit = apvts.state.getOrCreateChildWithName ("orbit", &undoManager);
+    while (orbit.getNumChildren() < ab::Orbit::NumCorners) orbit.appendChild (juce::ValueTree ("corner"), &undoManager);
+    for (int i = 0; i < ab::Orbit::NumCorners; ++i)
+    {
+        auto tree = orbit.getChild (i);
+        if (! c.filled[(size_t) i] || c.values[(size_t) i].size() != rawValue.size())
+        {
+            tree.setProperty ("filled", false, &undoManager);
+            tree.setProperty ("data", "", &undoManager);
+            continue;
+        }
+        juce::String data;
+        for (size_t k = 0; k < rawValue.size(); ++k)
+        {
+            if (rawMorphs[k] == 0) continue;
+            const float v = c.values[(size_t) i][k];
+            if (std::abs (v - rawParam[k]->convertFrom0to1 (rawParam[k]->getDefaultValue())) < 1.0e-6f) continue;
+            data << rawParam[k]->getParameterID() << "=" << juce::String (v, 6) << " ";
+        }
+        tree.setProperty ("filled", true, &undoManager);
+        tree.setProperty ("data", data.trim(), &undoManager);
+    }
+}
+
+void HypernovaAudioProcessor::readCornersFromState()
+{
+    ab::Orbit::Corners next;
+    auto orbit = apvts.state.getChildWithName ("orbit");
+    for (int i = 0; i < ab::Orbit::NumCorners; ++i)
+    {
+        auto tree = orbit.isValid() ? orbit.getChild (i) : juce::ValueTree();
+        if (! tree.isValid() || ! (bool) tree.getProperty ("filled", false)) continue;
+        auto& values = next.values[(size_t) i];
+        values.resize (rawValue.size());
+        for (size_t k = 0; k < rawValue.size(); ++k) values[k] = rawParam[k]->convertFrom0to1 (rawParam[k]->getDefaultValue());
+        juce::StringArray pairs;
+        pairs.addTokens (tree.getProperty ("data", "").toString(), " ", "");
+        for (const auto& pair : pairs)
+        {
+            const int eq = pair.indexOfChar ('=');
+            if (eq <= 0) continue;
+            auto it = raw.find (pair.substring (0, eq).toStdString());
+            if (it != raw.end()) values[(size_t) it->second] = pair.substring (eq + 1).getFloatValue();
+        }
+        next.filled[(size_t) i] = true;
+    }
+    const int side = 1 - orbitSide.load (std::memory_order_acquire);
+    orbitCorners[(size_t) side] = std::move (next);
+    orbitSide.store (side, std::memory_order_release);
+}
+
+void HypernovaAudioProcessor::captureCorner (int corner)
+{
+    if (! juce::isPositiveAndBelow (corner, ab::Orbit::NumCorners)) return;
+    undoManager.beginNewTransaction ("Capture " + ab::Orbit::cornerNames()[corner]);
+    auto next = orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)];
+    auto& values = next.values[(size_t) corner];
+    values.resize (rawValue.size());
+    // The sound as it is now, which with Orbit live is the blend you are hearing.
+    for (size_t k = 0; k < rawValue.size(); ++k)
+        values[k] = morphActive.load() && rawMorphs[k] != 0 ? morphed[k].load() : rawValue[k]->load();
+    next.filled[(size_t) corner] = true;
+    writeCornersToState (next);
+    {
+        const juce::ScopedLock sl (nameLock);
+        apvts.state.getChildWithName ("orbit").getChild (corner).setProperty ("name", presetName, &undoManager);
+    }
+    const int side = 1 - orbitSide.load (std::memory_order_acquire);
+    orbitCorners[(size_t) side] = std::move (next);
+    orbitSide.store (side, std::memory_order_release);
+    apvts.copyState();
+}
+
+void HypernovaAudioProcessor::putPresetInCorner (int corner, int program)
+{
+    if (! juce::isPositiveAndBelow (corner, ab::Orbit::NumCorners)) return;
+    if (! juce::isPositiveAndBelow (program, (int) ab::factoryPresets().size())) return;
+    undoManager.beginNewTransaction ("Put a sound in " + ab::Orbit::cornerNames()[corner]);
+    // Work out what that preset's parameters would be, without touching the sound being played.
+    std::vector<float> values ((size_t) rawValue.size());
+    for (size_t k = 0; k < rawValue.size(); ++k) values[k] = rawParam[k]->convertFrom0to1 (rawParam[k]->getDefaultValue());
+    for (const auto& [id, value] : ab::factoryPresets()[(size_t) program].values)
+    {
+        auto it = raw.find (id);
+        if (it != raw.end()) values[(size_t) it->second] = value;
+    }
+    auto next = orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)];
+    next.values[(size_t) corner] = std::move (values);
+    next.filled[(size_t) corner] = true;
+    writeCornersToState (next);
+    apvts.state.getChildWithName ("orbit").getChild (corner)
+        .setProperty ("name", juce::String (ab::factoryPresets()[(size_t) program].name), &undoManager);
+    const int side = 1 - orbitSide.load (std::memory_order_acquire);
+    orbitCorners[(size_t) side] = std::move (next);
+    orbitSide.store (side, std::memory_order_release);
+    apvts.copyState();
+}
+
+void HypernovaAudioProcessor::clearCorner (int corner)
+{
+    if (! juce::isPositiveAndBelow (corner, ab::Orbit::NumCorners)) return;
+    undoManager.beginNewTransaction ("Empty " + ab::Orbit::cornerNames()[corner]);
+    auto next = orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)];
+    next.filled[(size_t) corner] = false;
+    next.values[(size_t) corner].clear();
+    writeCornersToState (next);
+    apvts.state.getChildWithName ("orbit").getChild (corner).setProperty ("name", "", &undoManager);
+    const int side = 1 - orbitSide.load (std::memory_order_acquire);
+    orbitCorners[(size_t) side] = std::move (next);
+    orbitSide.store (side, std::memory_order_release);
+    apvts.copyState();
+}
+
+// Keep what you are hearing: the blend is written into the knobs and Orbit switches off.
+void HypernovaAudioProcessor::bakeOrbit()
+{
+    if (! morphActive.load()) return;
+    undoManager.beginNewTransaction ("Keep the blend");
+    std::vector<float> values ((size_t) rawValue.size());
+    for (size_t k = 0; k < rawValue.size(); ++k) values[k] = rawMorphs[k] != 0 ? morphed[k].load() : rawValue[k]->load();
+    morphActive.store (false, std::memory_order_relaxed);
+    for (size_t k = 0; k < rawValue.size(); ++k)
+        if (rawMorphs[k] != 0 && std::abs (values[k] - rawValue[k]->load()) > 1.0e-6f)
+            rawParam[k]->setValueNotifyingHost (rawParam[k]->convertTo0to1 (values[k]));
+    setParam ("orbitOn", 0.0f);
+    apvts.copyState();
+}
+
 void HypernovaAudioProcessor::updateFollower (const float* L, const float* R, int n, const float* altL, const float* altR)
 {
     const float att = juce::jmax (0.5f, param ("folAtt")) * 0.001f;
@@ -1876,6 +2156,7 @@ bool HypernovaAudioProcessor::loadUserPreset (const juce::File& file)
     takeSampleFrom (state, false);
     state.setProperty ("abSlot", compareSlot(), nullptr); // a preset loads into the A/B slot you're on
     apvts.replaceState (state);
+    readCornersFromState();   // Orbit's corners come with the preset
     {
         const juce::ScopedLock sl (nameLock);
         presetName = state.getProperty ("presetName", file.getFileNameWithoutExtension()).toString();
@@ -2142,6 +2423,7 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         if (! state.hasType (apvts.state.getType())) return;
         takeSampleFrom (state, true);
         apvts.replaceState (state);
+        readCornersFromState();   // Orbit's captured sounds travel with the session
         const juce::ScopedLock sl (nameLock);
         presetName = state.getProperty ("presetName", "Init").toString();
         presetCategory = state.getProperty ("presetCategory", "").toString();
@@ -2198,6 +2480,11 @@ void HypernovaAudioProcessor::compareSwitch (int slot)
     currentProgram = target.getProperty ("program", 0);
     for (int o = 0; o < NumOsc; ++o)
         setUserTable (o, target.getProperty (oscPrefix (o) + "UserTable", "").toString());
+    // Orbit's captured sounds are part of the sound, so they switch over with it.
+    apvts.state.removeChild (apvts.state.getChildWithName ("orbit"), &undoManager);
+    if (auto orbit = target.getChildWithName ("orbit"); orbit.isValid())
+        apvts.state.appendChild (orbit.createCopy(), &undoManager);
+    readCornersFromState();
     apvts.state.setProperty ("abSlot", slot, &undoManager);
     apvts.copyState(); // lands the parameter changes in this step's undo now, not on the next timer tick
     ++presetVersion;

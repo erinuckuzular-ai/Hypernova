@@ -747,6 +747,186 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Orbit: four captured sounds, and a point that morphs between them.
+    if (argc == 2 && juce::String (argv[1]) == "--orbit")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        auto render = [&] (HypernovaAudioProcessor& p, double seconds)
+        {
+            p.panic();   // from silence each time: the notes below are held, not released
+            std::vector<float> out;
+            const int total = (int) (seconds * rate);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 110), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            return out;
+        };
+        auto diff = [] (const std::vector<float>& a, const std::vector<float>& b)
+        {
+            double d = 0, e = 0;
+            for (size_t i = 0; i < juce::jmin (a.size(), b.size()); ++i) { d += (double) (a[i] - b[i]) * (a[i] - b[i]); e += (double) a[i] * a[i]; }
+            return std::sqrt (d / juce::jmax (1e-12, e));
+        };
+        auto settle = [&] (HypernovaAudioProcessor& p)   // a few silent blocks: the morph and every smoothed control land
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer none;
+            for (int i = 0; i < 60; ++i) { buf.clear(); p.processBlock (buf, none); }
+        };
+        // A sound made here rather than loaded, with nothing random in it, so two renders of it match.
+        auto sound = [&] (HypernovaAudioProcessor& q, int table, float cutoff, float pos)
+        {
+            q.applyPresetValues ({});
+            q.setParam ("drift", 0.0f);
+            q.setParam ("retrig", 1.0f);
+            q.setParam ("aTable", (float) table);
+            q.setParam ("aPos", pos);
+            q.setParam ("cutoff", cutoff);
+            q.setParam ("fltOn", 1.0f);
+            q.setParam ("ampR", 0.4f);
+            settle (q);   // smoothed controls reach their new places before anything is rendered
+        };
+
+        // Two sounds, captured into the corners, then morphed between.
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        sound (p, 2, 600.0f, 0.2f);
+        render (p, 1.0);     // a warm-up: the oversampling filters hold state from whatever came before
+        settle (p);
+        const auto soundA = render (p, 1.0);
+        settle (p);
+        const auto soundAAgain = render (p, 1.0);
+        check (diff (soundA, soundAAgain) < 0.005, "the same sound renders the same twice (" + juce::String (diff (soundA, soundAAgain), 4) + ")");
+        p.captureCorner (0);
+        sound (p, 9, 4000.0f, 0.8f);
+        const auto soundB = render (p, 1.0);
+        p.captureCorner (1);
+        check (p.cornersFilled() == 2, "two sounds captured into the corners");
+        check (p.cornerName (0).isNotEmpty(), "a corner keeps the name of the sound in it (" + p.cornerName (0) + ")");
+
+        p.setParam ("orbitOn", 1.0f);
+        p.setParam ("orbitX", 0.0f);
+        p.setParam ("orbitY", 0.0f);
+        settle (p);
+        const auto atA = render (p, 1.0);
+        check (diff (soundA, atA) < 0.02, "at the A corner it plays the first sound (" + juce::String (diff (soundA, atA), 4) + ")");
+        p.setParam ("orbitX", 1.0f);
+        settle (p);
+        const auto atB = render (p, 1.0);
+        check (diff (soundB, atB) < 0.02, "at the B corner it plays the second (" + juce::String (diff (soundB, atB), 4) + ")");
+
+        // Halfway: continuous controls land between the two, discrete ones take the nearer corner's.
+        p.setParam ("orbitOn", 0.0f);     // with Orbit live, capturing takes the blend: set the knobs first
+        settle (p);
+        p.setParam ("aTable", 3.0f);
+        p.setParam ("cutoff", 400.0f);
+        p.captureCorner (2);              // corner C, bottom left
+        p.setParam ("aTable", 10.0f);
+        p.setParam ("cutoff", 4000.0f);
+        p.captureCorner (3);              // corner D, bottom right
+        p.setParam ("orbitOn", 1.0f);
+        p.setParam ("orbitY", 1.0f);
+        p.setParam ("orbitX", 0.5f);
+        settle (p);
+        const float mid = p.soundValue ("cutoff");
+        check (mid > 900.0f && mid < 3000.0f, "halfway, the cutoff sits between the two (" + juce::String (juce::roundToInt (mid)) + " Hz)");
+        p.setParam ("orbitX", 0.35f);
+        settle (p);
+        check (std::abs (p.soundValue ("aTable") - 3.0f) < 0.01f, "a wavetable takes the nearer corner's, never something in between");
+        p.setParam ("orbitX", 0.65f);
+        settle (p);
+        check (std::abs (p.soundValue ("aTable") - 10.0f) < 0.01f, "and it swaps over when the other corner is nearer");
+
+        // Off, the knobs are the sound again.
+        p.setParam ("orbitOn", 0.0f);
+        settle (p);
+        check (! p.orbitLive() && std::abs (p.soundValue ("cutoff") - 4000.0f) < 1.0f, "switched off, the knobs are the sound again");
+
+        // Travelling on its own.
+        p.setParam ("orbitOn", 1.0f);
+        p.setParam ("orbitPath", (float) ab::Orbit::Circle);
+        p.setParam ("orbitDepth", 1.0f);
+        p.setParam ("orbitRate", 4.0f);
+        p.setParam ("orbitX", 0.5f);
+        p.setParam ("orbitY", 0.5f);
+        settle (p);
+        const auto first = p.orbitPoint();
+        settle (p);
+        const auto second = p.orbitPoint();
+        check (first.getDistanceFrom (second) > 0.02f, "a path of its own keeps the point moving ("
+               + juce::String (first.getDistanceFrom (second), 3) + ")");
+        p.setParam ("orbitPath", (float) ab::Orbit::Still);
+
+        // Modulating the morph: a macro moves the point.
+        p.setParam ("orbitX", 0.0f);
+        p.setParam ("mod1Src", (float) ab::SrcMacro1);
+        p.setParam ("mod1Dest", (float) ab::DMorphX);
+        p.setParam ("mod1Amt", 1.0f);
+        p.setParam ("macro1", 1.0f);
+        settle (p);
+        check (p.orbitPoint().x > 0.8f, "an lfo, envelope or macro can move the morph (" + juce::String (p.orbitPoint().x, 2) + ")");
+        p.setParam ("mod1Amt", 0.0f);
+        p.setParam ("mod1Src", 0.0f);
+        p.setParam ("mod1Dest", 0.0f);
+
+        // Keeping the blend: it becomes the sound, and Orbit switches off.
+        p.setParam ("orbitX", 0.5f);
+        p.setParam ("orbitY", 1.0f);
+        settle (p);
+        const float blended = p.soundValue ("cutoff");
+        p.bakeOrbit();
+        settle (p);
+        check (! p.orbitLive() && std::abs (p.apvts.getRawParameterValue ("cutoff")->load() - blended) < 5.0f,
+               "keeping the blend writes it into the knobs (" + juce::String (juce::roundToInt (blended)) + " Hz)");
+
+        // The corners travel with the sound.
+        {
+            juce::MemoryBlock state;
+            p.getStateInformation (state);
+            HypernovaAudioProcessor q;
+            q.prepareToPlay (rate, 256);
+            q.setStateInformation (state.getData(), (int) state.getSize());
+            check (q.cornersFilled() == 4 && q.cornerName (0) == p.cornerName (0), "the captured sounds come back with the session");
+            q.setParam ("orbitOn", 1.0f);
+            q.setParam ("orbitX", 0.0f);
+            q.setParam ("orbitY", 0.0f);
+            render (q, 1.0);   // warm-up, as above
+            settle (q);
+            const auto again = render (q, 1.0);
+            check (diff (soundA, again) < 0.02, "and they still sound like what was captured (" + juce::String (diff (soundA, again), 4) + ")");
+        }
+
+        // An empty corner gives its share to the rest instead of a silent quarter.
+        {
+            HypernovaAudioProcessor e;
+            e.prepareToPlay (rate, 256);
+            sound (e, 2, 600.0f, 0.2f);
+            render (e, 1.0);
+            settle (e);
+            e.captureCorner (0);
+            e.setParam ("orbitOn", 1.0f);
+            e.setParam ("orbitX", 1.0f);
+            e.setParam ("orbitY", 1.0f);
+            render (e, 1.0);
+            settle (e);
+            const auto only = render (e, 1.0);
+            check (diff (soundA, only) < 0.02, "with one corner filled, everywhere is that sound (" + juce::String (diff (soundA, only), 4) + ")");
+            e.clearCorner (0);
+            settle (e);
+            check (! e.orbitLive() && e.cornersFilled() == 0, "emptying the last corner switches the morph off");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // Routing: every source picks a bus, every effect sits on one, and the two meet at the output.
     if (argc == 2 && juce::String (argv[1]) == "--routing")
     {

@@ -45,14 +45,16 @@ enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DC
                DDistMix, DLowLevel, DLowDuck, DLowDrive, DEqMid, DEqMidFreq,
                // Oscillators C to H (appended).
                DCPos, DDPos, DEPos, DFPos, DGPos, DHPos, DCLevel, DDLevel, DELevel, DFLevel, DGLevel, DHLevel,
-               DLfo3Rate, DLfo4Rate, DRackMix, DCrushMix, DCrushBits, DSpeakerMix, NumDest };
+               DLfo3Rate, DLfo4Rate, DRackMix, DCrushMix, DCrushBits, DSpeakerMix,
+               // Orbit (appended): the morph point itself can be modulated.
+               DMorphX, DMorphY, NumDest };
 constexpr int FirstGlobalDest = DDistFx;
 constexpr int FirstFxParamDest = DFxFltFreq;
 // The effects are applied once per block from the newest voice's sources; the sampler, oscillators C-H
 // and the LFO rates belong to each voice. New global destinations are listed here as they're appended.
 inline bool isGlobalDest (int d)
 {
-    if (d == DRackMix || d == DCrushMix || d == DCrushBits || d == DSpeakerMix) return true;
+    if (d == DRackMix || d == DCrushMix || d == DCrushBits || d == DSpeakerMix || d == DMorphX || d == DMorphY) return true;
     return (d >= FirstGlobalDest && d < DSmpLevel) || (d > DSmpLevel && d < DCPos);
 }
 inline juce::StringArray modDestNames()
@@ -66,7 +68,7 @@ inline juce::StringArray modDestNames()
              "Gate Shape", "Auto Pan", "Pitch Shift Mix", "EQ Low", "EQ High", "Stereo Width", "Chorus Rate", "Distortion Mix",
              "Low End Level", "Low End Duck", "Low End Warmth", "EQ Mid", "EQ Mid Freq",
              "C Position", "D Position", "E Position", "F Position", "G Position", "H Position",
-             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level", "LFO 3 Rate", "LFO 4 Rate", "Rack Mix", "Crush Mix", "Crush Bits", "Speaker Mix" };
+             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level", "LFO 3 Rate", "LFO 4 Rate", "Rack Mix", "Crush Mix", "Crush Bits", "Speaker Mix", "Morph X", "Morph Y" };
 }
 
 // The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
@@ -82,7 +84,8 @@ inline juce::String modDestParam (int dest)
                                  "eqHigh", "width", "chorusRate", "distMix", "lowLevel", "lowDuck", "lowDrive",
                                  "eqMidGain", "eqMidFreq",
                                  "cPos", "dPos", "ePos", "fPos", "gPos", "hPos", "cLevel", "dLevel", "eLevel", "fLevel", "gLevel", "hLevel",
-                                 "lfo3Rate", "lfo4Rate", "fxMix", "crushMix", "crushBits", "spkMix" };
+                                 "lfo3Rate", "lfo4Rate", "fxMix", "crushMix", "crushBits", "spkMix", "orbitX", "orbitY" };
+    static_assert (sizeof (ids) / sizeof (ids[0]) == (size_t) NumDest, "every modulation destination needs its parameter id here");
     return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
 
