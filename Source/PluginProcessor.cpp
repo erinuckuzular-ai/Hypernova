@@ -316,6 +316,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
     }
 
+    // Routing (appended): every source plays into a bus and every effect sits on one, so two chains can run
+    // side by side and meet at the output. Everything defaults to the main bus, so older sounds are unchanged.
+    {
+        const juce::StringArray busNames { "Main", "Alt" };
+        for (int o = 0; o < NumOsc; ++o)
+            add<Choice> (l, pid (oscPrefix (o) + "Bus"), "Osc " + oscPrefix (o).toUpperCase() + " Bus", busNames, 0);
+        add<Choice> (l, pid ("subBus"), "Sub Bus", busNames, 0);
+        add<Choice> (l, pid ("noiseBus"), "Noise Bus", busNames, 0);
+        add<Choice> (l, pid ("smpBus"), "Sampler Bus", busNames, 0);
+        for (int fx = 0; fx < NumFx; ++fx)
+            add<Choice> (l, pid (fxParamPrefix (fx) + "Bus"), fxRackNames()[fx] + " Bus", busNames, 0);
+    }
+
     return l;
 }
 
@@ -337,6 +350,20 @@ HypernovaAudioProcessor::HypernovaAudioProcessor()
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
             raw[rp->getParameterID().toStdString()] = apvts.getRawParameterValue (rp->getParameterID());
+    // Each effect's bus is read every block, so its parameter is looked up once here instead.
+    for (int fx = 0; fx < NumFx; ++fx)
+        fxBusRaw[(size_t) fx] = apvts.getRawParameterValue (fxParamPrefix (fx) + "Bus");
+}
+
+// Is anything actually playing into the alt bus? Effects parked there do nothing until something is.
+static bool altBusInUse (const ab::SynthSettings& s)
+{
+    for (int o = 0; o < ab::NumOsc; ++o)
+        if (s.osc[(size_t) o].on && s.osc[(size_t) o].bus != 0) return true;
+    if (s.subOn && s.subBus != 0) return true;
+    if (s.noiseLevel > 0.0001f && s.noiseBus != 0) return true;
+    if (s.smp.on && s.smp.bus != 0) return true;
+    return false;
 }
 
 float HypernovaAudioProcessor::param (const char* id) const
@@ -381,11 +408,14 @@ void HypernovaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
         for (auto* f : { &speakerHp[c], &speakerHp2[c], &speakerBump[c], &speakerLp[c] }) f->reset();
     }
     for (int i = 0; i < 2; ++i)
-    {
-        voiceOversampler[(size_t) i] = std::make_unique<juce::dsp::Oversampling<float>> (2, (size_t) (i + 1),
-                                           juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
-        voiceOversampler[(size_t) i]->initProcessing ((size_t) maxBlock);
-    }
+        for (auto* set : { &voiceOversampler, &altOversampler })
+        {
+            (*set)[(size_t) i] = std::make_unique<juce::dsp::Oversampling<float>> (2, (size_t) (i + 1),
+                                     juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true);
+            (*set)[(size_t) i]->initProcessing ((size_t) maxBlock);
+        }
+    altBuf.setSize (2, maxBlock);
+    altBuf.clear();
     limiterLen = juce::jlimit (1, 512, juce::roundToInt (0.0015 * sampleRate));
     limTarget.assign ((size_t) limiterLen, 1.0f);
     limHeld.assign ((size_t) limiterLen, 1.0f);
@@ -429,16 +459,19 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
         os.pan = get ("Pan");
         os.pitch = get ("Oct") * 12.0f + get ("Semi") + get ("Fine") * 0.01f;
         os.toFilter = get ("Filter") > 0.5f;
+        os.bus = (int) get ("Bus");
     }
     s.subOn = param ("subOn") > 0.5f;
     s.subShape = (int) param ("subShape");
     s.subOct = (int) param ("subOct");
     s.subLevel = param ("subLevel");
     s.subToFilter = param ("subFilter") > 0.5f;
+    s.subBus = (int) param ("subBus");
     s.noiseLevel = param ("noiseLevel");
     s.noiseTone = param ("noiseTone");
     s.noiseType = (int) param ("noiseType");
     s.noiseToFilter = param ("noiseFilter") > 0.5f;
+    s.noiseBus = (int) param ("noiseBus");
     s.xFmAB = param ("xFmAB");
     s.xFmBA = param ("xFmBA");
     s.xRing = param ("xRing");
@@ -499,6 +532,7 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     sm.loopEnd = param ("smpLoopEnd");
     sm.reverse = param ("smpReverse") > 0.5f;
     sm.toFilter = param ("smpFilter") > 0.5f;
+    sm.bus = (int) param ("smpBus");
     sm.a = param ("smpA");
     sm.d = param ("smpD");
     sm.s = param ("smpS");
@@ -577,6 +611,9 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.delayTone = param ("dlyTone");
     f.width = param ("width");
     f.rackMix = param ("fxMix");
+    for (int fx = 0; fx < NumFx; ++fx)
+        if (auto* bp = fxBusRaw[(size_t) fx])
+            f.bus[(size_t) fx] = (juce::uint8) juce::jlimit (0, NumBus - 1, (int) bp->load (std::memory_order_relaxed));
     f.crushOn = param ("crushOn") > 0.5f;
     f.crushBits = param ("crushBits");
     f.crushRate = param ("crushRate");
@@ -904,12 +941,39 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         vL = up.getChannelPointer (0);
         vR = up.getChannelPointer (1);
     }
+
+    // The alt bus only costs anything when a source is actually playing into it.
+    const bool useAlt = altBusInUse (settings);
+    float* vaL = nullptr;
+    float* vaR = nullptr;
+    juce::dsp::AudioBlock<float> altBlock;
+    juce::dsp::Oversampling<float>* osAlt = nullptr;
+    if (useAlt)
+    {
+        if (altBuf.getNumSamples() < numSamples) altBuf.setSize (2, numSamples, false, false, true);
+        altBuf.clear (0, numSamples);
+        altBlock = juce::dsp::AudioBlock<float> (altBuf).getSubBlock (0, (size_t) numSamples);
+        osAlt = osFactor > 1 ? altOversampler[(size_t) (osFactor == 2 ? 0 : 1)].get() : nullptr;
+        if (osAlt != nullptr)
+        {
+            auto up = osAlt->processSamplesUp (altBlock);
+            up.clear();
+            vaL = up.getChannelPointer (0);
+            vaR = up.getChannelPointer (1);
+        }
+        else
+        {
+            vaL = altBuf.getWritePointer (0);
+            vaR = altBuf.getWritePointer (1);
+        }
+    }
     const int f = osFactor;
     auto renderVoices = [&] (int from, int to)
     {
         if (to <= from) return;
         for (auto& v : voices)
-            v.render (vL + from * f, vR + from * f, (to - from) * f, settings, globalMod);
+            v.render (vL + from * f, vR + from * f, (to - from) * f, settings, globalMod,
+                      vaL != nullptr ? vaL + from * f : nullptr, vaR != nullptr ? vaR + from * f : nullptr);
     };
 
     // Hosts often send the next note-on before the previous note-off at the same sample. Handle offs first
@@ -989,8 +1053,10 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     globalMod.bendSemis = (float) (pitchWheel - 8192) / 8192.0f * param ("bendRange");
     renderVoices (cursor, numSamples);
     midi.clear();
-    updateFollower (L, R, numSamples);
     if (os != nullptr) os->processSamplesDown (outBlock);
+    if (useAlt && osAlt != nullptr) osAlt->processSamplesDown (altBlock);
+    // The follower listens to everything the voices played, whichever bus it went to.
+    updateFollower (L, R, numSamples, useAlt ? altBuf.getReadPointer (0) : nullptr, useAlt ? altBuf.getReadPointer (1) : nullptr);
 
     // Master effects in chunks the effects were prepared for.
     auto fx = readFxSettings();
@@ -1000,7 +1066,13 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
         const int n = juce::jmin (maxBlock, numSamples - start);
         float* chans[2] = { L + start, R + start };
         juce::AudioBuffer<float> chunk (chans, 2, n);
-        effects.process (chunk, fx);
+        if (useAlt)
+        {
+            float* altChans[2] = { altBuf.getWritePointer (0) + start, altBuf.getWritePointer (1) + start };
+            juce::AudioBuffer<float> altChunk (altChans, 2, n);
+            effects.process (chunk, &altChunk, fx);
+        }
+        else effects.process (chunk, fx);
     }
     shownLowRms = fx.lowOn ? effects.lastLowRms : 0.0f;
     shownHighRms = fx.lowOn ? effects.lastHighRms : 0.0f;
@@ -1153,7 +1225,7 @@ void HypernovaAudioProcessor::applyExpressionToVoices (int channel)
 
 // The envelope follower: how loud the synth is right now, smoothed with its own attack and release.
 // It's taken from the voices (before the effects), so feeding it back into them can't run away.
-void HypernovaAudioProcessor::updateFollower (const float* L, const float* R, int n)
+void HypernovaAudioProcessor::updateFollower (const float* L, const float* R, int n, const float* altL, const float* altR)
 {
     const float att = juce::jmax (0.5f, param ("folAtt")) * 0.001f;
     const float rel = juce::jmax (1.0f, param ("folRel")) * 0.001f;
@@ -1163,7 +1235,9 @@ void HypernovaAudioProcessor::updateFollower (const float* L, const float* R, in
     float env = followerEnv;
     for (int i = 0; i < n; ++i)
     {
-        const float x = juce::jmax (std::abs (L[i]), std::abs (R[i])) * gain;
+        float x = juce::jmax (std::abs (L[i]), std::abs (R[i]));
+        if (altL != nullptr) x = juce::jmax (x, juce::jmax (std::abs (altL[i]), std::abs (altR[i])));
+        x *= gain;
         env = x > env ? x + (env - x) * aC : x + (env - x) * rC;
     }
     followerEnv = env;
@@ -1550,7 +1624,8 @@ void HypernovaAudioProcessor::resetFx (int fxId)
     undoManager.beginNewTransaction ("Reset " + fxRackNames()[fxId]);
     for (auto* p : getParameters())
         if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
-            if (rp->getParameterID().startsWith (prefix) && rp->getParameterID() != juce::String (fxOnParam (fxId)))
+            if (rp->getParameterID().startsWith (prefix) && rp->getParameterID() != juce::String (fxOnParam (fxId))
+                && ! rp->getParameterID().endsWith ("Bus"))   // which bus it sits on is routing, not a control
                 rp->setValueNotifyingHost (rp->getDefaultValue());
 }
 

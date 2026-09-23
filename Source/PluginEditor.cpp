@@ -389,7 +389,7 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
 
     // Sources: the mixer of everything that makes sound
     {
-        const juce::Rectangle<int> design { 0, 0, 400, 378 };
+        const juce::Rectangle<int> design { 0, 0, 452, 378 };
         auto& w = makeWidget ("sources", "sources", "SOURCES", Colours::text, design);
         auto* W = &w.content;
         W->addAndMakeVisible (addOscButton);
@@ -1707,6 +1707,9 @@ void HypernovaAudioProcessorEditor::showRackModuleMenu (int fxId, juce::Point<in
     m.addItem (2, "Move it earlier in the chain", place > 0);
     m.addItem (3, "Move it later in the chain", place >= 0 && place < (int) rackNow.size() - 1);
     m.addItem (4, "Reset its controls");
+    const auto busId = HypernovaAudioProcessor::fxParamPrefix (fxId) + "Bus";
+    const bool onAlt = processor.apvts.getRawParameterValue (busId)->load() > 0.5f;
+    m.addItem (6, onAlt ? "Move it to the main bus" : "Move it to the alt bus");
     for (int fx = 0; fx < ab::NumFx; ++fx)
         if (std::find (rackNow.begin(), rackNow.end(), fx) == rackNow.end())
             replace.addItem (100 + fx, ab::fxRackNames()[fx]);
@@ -1721,6 +1724,14 @@ void HypernovaAudioProcessorEditor::showRackModuleMenu (int fxId, juce::Point<in
         else if (r == 2 || r == 3) processor.moveFxBy (fxId, r == 2 ? -1 : 1);
         else if (r == 4) { processor.resetFx (fxId); showMessage (ab::fxRackNames()[fxId] + " back to its defaults"); }
         else if (r == 5) { processor.removeFromRack (fxId); showMessage (ab::fxRackNames()[fxId] + " taken out (and switched off)"); }
+        else if (r == 6)
+        {
+            const auto id = HypernovaAudioProcessor::fxParamPrefix (fxId) + "Bus";
+            const bool alt = processor.apvts.getRawParameterValue (id)->load() > 0.5f;
+            processor.undoManager.beginNewTransaction (alt ? "Move to the main bus" : "Move to the alt bus");
+            processor.setParam (id, alt ? 0.0f : 1.0f);
+            showMessage (ab::fxRackNames()[fxId] + (alt ? " is on the main bus" : " is on the alt bus"));
+        }
         else if (r >= 100 && r < 100 + ab::NumFx)
         {
             // Replace: the new effect takes this one's place in the chain.

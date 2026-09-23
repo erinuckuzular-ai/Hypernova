@@ -29,6 +29,7 @@ inline juce::StringArray fxRackNames()
     return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ", "CRUSH", "SPEAKER" };
 }
 using FxOrder = std::array<juce::uint8, NumFx>;
+using FxBuses = std::array<juce::uint8, NumFx>;   // 0 = the main bus, 1 = the alt bus
 inline FxOrder defaultFxOrder() { FxOrder o {}; for (int i = 0; i < NumFx; ++i) o[(size_t) i] = (juce::uint8) i; return o; }
 // "0,1,2,..." — every effect at most once. A shorter list (a sound saved before an effect existed)
 // keeps the order it has and the newer effects follow it, so chains survive new effects.
@@ -59,6 +60,7 @@ inline juce::String fxOrderText (const FxOrder& o)
 struct FxSettings
 {
     FxOrder order = defaultFxOrder();
+    FxBuses bus {};            // which bus each effect sits on: two chains run side by side
     int distType = DistTube;
     float distDrive = 0, distMix = 0;
     float ott = 0;
@@ -357,13 +359,16 @@ public:
         lowSplit.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
         highSplit.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
         for (auto& e : ottEnv) e = 0;
-        lowEnd.prepare (spec);
-        lowEnd.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
-        lowEnd.setCutoffFrequency (120.0f);
-        lowEnd.reset();
+        for (auto* f : { &lowEnd, &lowEndAlt })
+        {
+            f->prepare (spec);
+            f->setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+            f->setCutoffFrequency (120.0f);
+            f->reset();
+        }
         lowXoverNow = 120.0f;
         lowBuf.setSize (2, blockSize);
-        dryBuf.setSize (2, blockSize);
+        dryBuf.setSize (4, blockSize);   // the sound going into each lane, kept for its dry/wet
         lowGainSmoothed = 1.0f;
         duckBeats = 0;
 
@@ -401,17 +406,30 @@ public:
         shifter.reset();
     }
 
-    void process (juce::AudioBuffer<float>& buffer, const FxSettings& s)
+    void process (juce::AudioBuffer<float>& buffer, const FxSettings& s) { process (buffer, nullptr, s); }
+
+    // The main bus is `buffer`; `alt`, when there is one, is the second bus. Each effect sits on one of them,
+    // so the two chains run side by side and meet again at the output stage.
+    void process (juce::AudioBuffer<float>& buffer, juce::AudioBuffer<float>* alt, const FxSettings& s)
     {
         const int n = buffer.getNumSamples();
         auto* L = buffer.getWritePointer (0);
         auto* R = buffer.getWritePointer (1);
+        float* aL = alt != nullptr ? alt->getWritePointer (0) : nullptr;
+        float* aR = alt != nullptr ? alt->getWritePointer (1) : nullptr;
 
-        // Low End: the low band is taken out here, kept away from the rack and added back after it.
+        // Low End: the low band is taken out here, kept away from the rack and added back after it. Both buses
+        // are split, and their low bands meet in the same clean path.
         const bool split = appliedLowOn;
         if (split)
         {
-            if (std::abs (s.lowXover - lowXoverNow) > 0.5f) { lowXoverNow = s.lowXover; lowEnd.setCutoffFrequency (juce::jlimit (30.0f, 400.0f, lowXoverNow)); }
+            if (std::abs (s.lowXover - lowXoverNow) > 0.5f)
+            {
+                lowXoverNow = s.lowXover;
+                const float f = juce::jlimit (30.0f, 400.0f, lowXoverNow);
+                lowEnd.setCutoffFrequency (f);
+                lowEndAlt.setCutoffFrequency (f);
+            }
             auto* lL = lowBuf.getWritePointer (0);
             auto* lR = lowBuf.getWritePointer (1);
             for (int i = 0; i < n; ++i)
@@ -420,24 +438,44 @@ public:
                 lowEnd.processSample (0, L[i], lo, hi); lL[i] = lo; L[i] = hi;
                 lowEnd.processSample (1, R[i], lo, hi); lR[i] = lo; R[i] = hi;
             }
+            if (alt != nullptr)
+                for (int i = 0; i < n; ++i)
+                {
+                    float lo, hi;
+                    lowEndAlt.processSample (0, aL[i], lo, hi); lL[i] += lo; aL[i] = hi;
+                    lowEndAlt.processSample (1, aR[i], lo, hi); lR[i] += lo; aR[i] = hi;
+                }
         }
 
-        // A new order (or switching Low End) takes effect between blocks: this block fades out on the old setup
-        // and the next fades in on the new one, so a change while playing dips for a moment instead of clicking.
-        const bool reordering = s.order != applied || s.lowOn != appliedLowOn;
+        // A new order, a move between buses (or switching Low End) takes effect between blocks: this block fades
+        // out on the old setup and the next fades in on the new one, so a change while playing dips instead of clicking.
+        const bool reordering = s.order != applied || s.bus != appliedBus || s.lowOn != appliedLowOn;
         // Rack mix: keep what goes into the effects, so it can be blended back against what comes out.
         const bool blend = s.rackMix < 0.999f || rackMixNow < 0.999f;
         if (blend)
         {
-            if (dryBuf.getNumSamples() < n) dryBuf.setSize (2, n, false, false, true);
+            if (dryBuf.getNumSamples() < n) dryBuf.setSize (4, n, false, false, true);
             juce::FloatVectorOperations::copy (dryBuf.getWritePointer (0), L, n);
             juce::FloatVectorOperations::copy (dryBuf.getWritePointer (1), R, n);
+            if (alt != nullptr)
+            {
+                juce::FloatVectorOperations::copy (dryBuf.getWritePointer (2), aL, n);
+                juce::FloatVectorOperations::copy (dryBuf.getWritePointer (3), aR, n);
+            }
         }
-        for (auto id : applied) runEffect (id, buffer, L, R, n, s);
+        for (auto id : applied)
+        {
+            const bool onAlt = appliedBus[(size_t) id] != 0 && alt != nullptr;
+            if (onAlt) runEffect (id, *alt, aL, aR, n, s);
+            else if (appliedBus[(size_t) id] == 0) runEffect (id, buffer, L, R, n, s);
+            // An effect parked on the alt bus with no alt bus in use is simply out of the way.
+        }
         if (blend)
         {
             const auto* dL = dryBuf.getReadPointer (0);
             const auto* dR = dryBuf.getReadPointer (1);
+            const auto* dAL = dryBuf.getReadPointer (2);
+            const auto* dAR = dryBuf.getReadPointer (3);
             for (int i = 0; i < n; ++i)
             {
                 // Smoothed across the block, so turning the knob never steps.
@@ -445,16 +483,25 @@ public:
                 const float wet = juce::jlimit (0.0f, 1.0f, rackMixNow), dry = 1.0f - wet;
                 L[i] = L[i] * wet + dL[i] * dry;
                 R[i] = R[i] * wet + dR[i] * dry;
+                if (alt != nullptr)
+                {
+                    aL[i] = aL[i] * wet + dAL[i] * dry;
+                    aR[i] = aR[i] * wet + dAR[i] * dry;
+                }
             }
         }
         else rackMixNow = s.rackMix;
+        // The buses meet here, before the low band comes back and before the output stage.
+        if (alt != nullptr)
+            for (int i = 0; i < n; ++i) { L[i] += aL[i]; R[i] += aR[i]; }
         if (split) processLowBand (L, R, n, s);
         else lastLowRms = lastHighRms = 0.0f;
         if (reordering)
         {
             for (int i = 0; i < n; ++i) { const float g = 1.0f - (float) (i + 1) / (float) n; L[i] *= g; R[i] *= g; }
             applied = s.order;
-            if (s.lowOn != appliedLowOn) { appliedLowOn = s.lowOn; lowEnd.reset(); }
+            appliedBus = s.bus;
+            if (s.lowOn != appliedLowOn) { appliedLowOn = s.lowOn; lowEnd.reset(); lowEndAlt.reset(); }
             fadeIn = true;
         }
         else if (fadeIn)
@@ -498,8 +545,9 @@ public:
 
 private:
     FxOrder applied = defaultFxOrder();
+    FxBuses appliedBus {};
     bool fadeIn = false, appliedLowOn = false;
-    juce::dsp::LinkwitzRileyFilter<float> lowEnd;
+    juce::dsp::LinkwitzRileyFilter<float> lowEnd, lowEndAlt;
     juce::AudioBuffer<float> lowBuf, dryBuf;
     float rackMixNow = 1.0f;
     float lowXoverNow = 120.0f, lowGainSmoothed = 1.0f;

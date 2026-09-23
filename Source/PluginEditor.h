@@ -67,6 +67,7 @@ public:
     void addOscillator();                                     // switches on the next free oscillator and shows its panel
     void removeOscillator (int osc);                          // switches it off and hides its panel
     ab::ui::SourcesView& sourcesView() { return sources; }
+    ab::ui::EffectsRack& rackView() { return rack; }
     ab::ui::ToolContent* toolFor (const juce::String& id) const { auto it = tools.find (id); return it != tools.end() ? it->second.get() : nullptr; }
 
     static constexpr int baseWidth = 1280, baseHeight = 986;

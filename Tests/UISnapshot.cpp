@@ -471,6 +471,49 @@ int main (int argc, char** argv)
             srcView.toggleSolo ("subOn");
         }
 
+        // Routing: a source's bus pill in the Sources mixer, and an effect moved between the buses.
+        {
+            proc.setParam ("bOn", 1.0f);
+            proc.setParam ("bBus", 0.0f);
+            auto& srcView = ed->sourcesView();
+            std::function<juce::Component* (juce::Component&, const juce::String&)> findDeep =
+                [&findDeep] (juce::Component& parent, const juce::String& id) -> juce::Component*
+                {
+                    for (auto* c : parent.getChildren())
+                    {
+                        if (c->getComponentID() == id) return c;
+                        if (auto* found = findDeep (*c, id)) return found;
+                    }
+                    return nullptr;
+                };
+            auto* pill = findDeep (srcView, "bus_bOn");
+            check (pill != nullptr && pill->isVisible() && pill->getWidth() > 20, "every source shows which bus it plays into");
+            if (pill != nullptr)
+            {
+                auto src = juce::Desktop::getInstance().getMainMouseSource();
+                const juce::Point<float> at { 8.0f, 8.0f };
+                pill->mouseUp (juce::MouseEvent (src, at, {}, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, pill, pill,
+                                                 juce::Time::getCurrentTime(), at, juce::Time::getCurrentTime(), 1, false));
+                check (proc.apvts.getRawParameterValue ("bBus")->load() > 0.5f, "clicking it moves that source to the alt bus");
+                proc.undoManager.undo();
+                check (proc.apvts.getRawParameterValue ("bBus")->load() < 0.5f, "and undo brings it back");
+            }
+            // An effect on the alt bus keeps its own place in that bus's chain.
+            proc.addToRack (ab::FxCrush);
+            proc.addToRack (ab::FxSpeaker);
+            proc.setParam ("spkBus", 1.0f);
+            settle();
+            auto& rackView = ed->rackView();
+            check (rackView.busOf (ab::FxSpeaker) == 1 && rackView.busOf (ab::FxCrush) == 0, "an effect can sit on either bus");
+            check (rackView.module (ab::FxSpeaker).chainIndex == 1, "and it counts from the start of its own chain");
+            proc.setParam ("spkBus", 0.0f);
+            settle();
+            check (rackView.module (ab::FxSpeaker).chainIndex > 1, "back on the main bus it follows the units before it");
+            proc.removeFromRack (ab::FxSpeaker);
+            proc.removeFromRack (ab::FxCrush);
+            settle();
+        }
+
         // LFO 3 as a widget, and drawing its shape with the mouse.
         {
             ed->loadWorkspace ("Sound Design", false);
@@ -774,6 +817,8 @@ int main (int argc, char** argv)
             ed->loadWorkspace ("Effects", false);
             proc.addToRack (ab::FxCrush);
             proc.addToRack (ab::FxSpeaker);
+            proc.setParam ("spkBus", 1.0f);    // the speaker on the alt bus: two lanes in the rack
+            proc.setParam ("bBus", 1.0f);
             proc.setParam ("spkType", (float) ab::dsp::Speaker::Phone);
             proc.setParam ("crushBits", 4.0f);
             proc.setParam ("crushRate", 4000.0f);

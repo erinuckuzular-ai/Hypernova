@@ -60,7 +60,8 @@ public:
     const int fxId;        // -1: the output module
     const int designWidth;
     bool lifted = false;
-    int chainIndex = 0;    // where it sits in the chain, shown on its face
+    int chainIndex = 0;    // where it sits in its bus's chain, shown on its face
+    int bus = 0;           // which bus it processes: 0 the main one, 1 the alt one
     ThemeColour colour { SlotText };
 
     std::function<void (FxModule&, const juce::MouseEvent&)> onHeaderDown, onHeaderDrag, onHeaderUp;
@@ -114,16 +115,23 @@ public:
         }
         g.setColour (on() ? Colours::text.get() : Colours::textDim.get());
         g.setFont (mono (11.0f).boldened().withExtraKerningFactor (0.12f));
-        const int nameW = juce::jmax (40, getWidth() - textX - 56);
+        const int nameW = juce::jmax (40, getWidth() - textX - (bus != 0 ? 76 : 56));
         g.drawText (nameOf (fxId), juce::Rectangle<int> (textX, 6, nameW, 20), juce::Justification::centredLeft, true);
         if (fxId >= 0 && chainIndex > 0)
         {
-            auto badge = juce::Rectangle<float> (18.0f, 14.0f).withCentre ({ (float) (getWidth() - 40), 16.0f });
-            g.setColour (accent.withAlpha (0.16f));
+            const bool alt = bus != 0;
+            const float badgeW = alt ? 38.0f : 18.0f;
+            auto badge = juce::Rectangle<float> (badgeW, 14.0f).withCentre ({ (float) getWidth() - 31.0f - badgeW * 0.5f, 16.0f });
+            g.setColour (accent.withAlpha (alt ? 0.1f : 0.16f));
             g.fillRoundedRectangle (badge, 7.0f);
+            if (alt)
+            {
+                g.setColour (accent.withAlpha (0.55f));
+                g.drawRoundedRectangle (badge.reduced (0.5f), 7.0f, 1.0f);
+            }
             g.setColour (accent.withAlpha (0.9f));
             g.setFont (mono (9.0f).boldened());
-            g.drawText (juce::String (chainIndex), badge, juce::Justification::centred, false);
+            g.drawText (alt ? "ALT " + juce::String (chainIndex) : juce::String (chainIndex), badge, juce::Justification::centred, false);
         }
         if (fxId >= 0)
         {
@@ -773,6 +781,21 @@ public:
 
     FxModule& module (int id) { return *modules[(size_t) id]; }
 
+
+    // Which bus an effect sits on: the two buses run side by side and meet at the output.
+    int busOf (int id) const
+    {
+        if (id < 0) return 0;
+        if (auto* v = proc.apvts.getRawParameterValue (HypernovaAudioProcessor::fxParamPrefix (id) + "Bus"))
+            return juce::jlimit (0, NumBus - 1, (int) v->load());
+        return 0;
+    }
+    bool anyOnAltBus() const
+    {
+        for (int id : shown) if (busOf (id) != 0) return true;
+        return false;
+    }
+
     // Once a frame (from the editor's timer): listen to the output and move every visible display on.
     void tick (bool sounding)
     {
@@ -842,7 +865,10 @@ public:
         outputModule->repaint (outputModule->display());
         if (dragId >= 0) return;
         const auto now = proc.rackEffects();
-        if (now != shown || force) { shown = now; layout (true); }
+        // Moving a unit between the buses redraws the lanes, even though the chain itself hasn't changed.
+        juce::String buses;
+        for (int id : now) buses << busOf (id);
+        if (now != shown || buses != shownBuses || force) { shown = now; shownBuses = buses; layout (true); }
     }
 
     int shownCount() const { return (int) shown.size(); }
@@ -875,22 +901,34 @@ public:
 
     void paintStrip (juce::Graphics& g)
     {
-        // Patch leads between the units, in the colour of the effect the sound is coming from.
-        const float y = (float) getHeight() * 0.5f;
-        float from = 0.0f;
-        for (size_t i = 0; i <= shown.size(); ++i)
+        // Patch leads between the units, in the colour of the effect the sound is coming from. With anything on
+        // the alt bus the leads split into two lanes, so the two chains read as the parallel paths they are.
+        const bool split = anyOnAltBus();
+        const float mid = (float) getHeight() * 0.5f;
+        const float end = slotX ((int) shown.size());
+        for (int bus = 0; bus < (split ? NumBus : 1); ++bus)
         {
-            const float to = i < shown.size() ? module (shown[i]).getX() : slotX ((int) shown.size());
-            if (to - from > 6.0f)
+            const float y = split ? mid + (bus == 0 ? -11.0f : 11.0f) : mid;
+            float from = 0.0f;
+            int previous = -1;   // the unit the sound is coming from on this bus
+            bool any = false;
+            for (size_t i = 0; i <= shown.size(); ++i)
             {
-                const auto c = i == 0 ? Colours::line.get() : fxColour (shown[i - 1]).get().withAlpha (0.55f);
-                g.setColour (c);
-                g.drawLine (from, y, to - 5.0f, y, 1.4f);
-                juce::Path head;
-                head.addTriangle (to - 5.0f, y - 3.5f, to - 5.0f, y + 3.5f, to, y);
-                g.fillPath (head);
+                const bool last = i == shown.size();
+                if (! last && busOf (shown[i]) != bus) continue;
+                const float to = last ? end : (float) module (shown[i]).getX();
+                if (to - from > 6.0f)
+                {
+                    g.setColour (previous < 0 ? Colours::line.get() : fxColour (previous).get().withAlpha (0.55f));
+                    g.drawLine (from, y, to - 5.0f, y, 1.4f);
+                    juce::Path head;
+                    head.addTriangle (to - 5.0f, y - 3.5f, to - 5.0f, y + 3.5f, to, y);
+                    g.fillPath (head);
+                }
+                if (! last) { from = (float) module (shown[i]).getRight(); previous = shown[i]; any = true; }
             }
-            if (i < shown.size()) from = (float) module (shown[i]).getRight();
+            // A lane with nothing on it is still drawn, faintly, so it's clear the sound has somewhere to go.
+            juce::ignoreUnused (any);
         }
 
 
@@ -1016,6 +1054,7 @@ private:
     int quietFrames = 0;
     std::map<int, motion::Spring> shownX, shownY; // where each module is drawn now (springs to its slot)
     int lastChanges = -1, dragId = -1;
+    juce::String shownBuses;   // which bus each shown unit is on, so a move between buses redraws the lanes
     float scroll = 0, grabOffset = 0, dragX = 0, lastMouseX = 0;
     bool addHover = false;
     // Scrolling: 'scroll' is what's on screen and can run a little past either end while you pull.
@@ -1091,7 +1130,12 @@ private:
             const auto it = std::find (shown.begin(), shown.end(), m->fxId);
             if (it == shown.end()) { m->setVisible (false); shownX.erase (m->fxId); shownY.erase (m->fxId); continue; }
             const float target = slotX ((int) (it - shown.begin()));
-            m->chainIndex = (int) (it - shown.begin()) + 1;
+            const int place = (int) (it - shown.begin());
+            const int bus = busOf (m->fxId);
+            int inBus = 0;
+            for (int i = 0; i <= place; ++i) if (busOf (shown[(size_t) i]) == bus) ++inBus;
+            if (m->bus != bus) { m->bus = bus; m->repaint(); }
+            m->chainIndex = inBus;
             if (m->fxId == dragId) continue;
             auto& x = shownX[m->fxId];
             auto& y = shownY[m->fxId];

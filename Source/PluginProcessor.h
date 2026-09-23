@@ -202,7 +202,7 @@ public:
     static bool paramInSection (const juce::String& id, int section);
     void mutateSection (int section, float amount);
     void publishModSources (const float* lfo, float modEnv, float velocity, float note);
-    void updateFollower (const float* L, const float* R, int n);
+    void updateFollower (const float* L, const float* R, int n, const float* altL = nullptr, const float* altR = nullptr);
     float followerEnv = 0;
     std::array<std::atomic<bool>, NumSections> sectionLocked {}; // nudge the current sound by up to `amount` of each control's range
     juce::MidiKeyboardState keyboardState;
@@ -248,6 +248,8 @@ private:
     bool smoothReady = false;
     int smoothVersion = -1;
     std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 2> voiceOversampler; // 2x, 4x
+    std::array<std::unique_ptr<juce::dsp::Oversampling<float>>, 2> altOversampler;   // the same for the alt bus
+    juce::AudioBuffer<float> altBuf;                                                 // the alt bus, before the buses meet
     int osFactor = 1, currentQuality = -1;
     // Look-ahead peak limiter: audio is delayed limiterLen samples so gain can ramp down before a peak
     // instead of slamming onto it (an instant gain step is itself a click).
@@ -325,6 +327,7 @@ private:
     int lastMode = -1;
 
     std::unordered_map<std::string, std::atomic<float>*> raw;
+    std::array<std::atomic<float>*, ab::NumFx> fxBusRaw {};   // each effect's bus, looked up once
 
     juce::CriticalSection nameLock;
     juce::String presetName { "Init" }, presetCategory { "Init" };

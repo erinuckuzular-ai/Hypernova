@@ -2,3 +2,5 @@ build/
 build-*/
 dist/
 .DS_Store
+# stray test output: a mistyped mode leaves a folder named after the flag
+--*/

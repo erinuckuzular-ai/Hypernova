@@ -7,6 +7,55 @@
 namespace ab::ui
 {
 
+// Which bus a source plays into. Two buses run side by side, each with its own effects, and they meet at the output.
+class BusPill : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    BusPill (HypernovaAudioProcessor& p, juce::String parameter, ThemeColour c)
+        : proc (p), param (std::move (parameter)), colour (c)
+    {
+        setTooltip ("Which bus this source plays into. Effects can sit on either one, so the two run side by side.");
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    int bus() const
+    {
+        auto* v = proc.apvts.getRawParameterValue (param);
+        return v != nullptr ? juce::jlimit (0, NumBus - 1, (int) v->load()) : 0;
+    }
+
+    void mouseEnter (const juce::MouseEvent&) override { over = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { over = false; repaint(); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! getLocalBounds().contains (e.getPosition())) return;
+        const int next = (bus() + 1) % NumBus;
+        proc.undoManager.beginNewTransaction (next == 0 ? "To the main bus" : "To the alt bus");
+        proc.setParam (param, (float) next);
+        proc.apvts.copyState();   // land it in this undo step now, not on the next timer tick
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const bool alt = bus() != 0;
+        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (alt ? colour.withAlpha (over ? 0.32f : 0.24f) : (over ? Colours::panelHi.brighter (0.06f) : Colours::panelHi.withAlpha (0.8f)));
+        g.fillRoundedRectangle (r, 6.0f);
+        g.setColour (alt ? colour.withAlpha (0.8f) : Colours::line.get());
+        g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+        g.setColour (alt ? Colours::text.get() : Colours::text.withAlpha (over ? 0.9f : 0.62f));
+        g.setFont (mono (9.0f).boldened().withExtraKerningFactor (0.1f));
+        g.drawText (alt ? "ALT" : "MAIN", r, juce::Justification::centred, false);
+    }
+
+private:
+    HypernovaAudioProcessor& proc;
+    juce::String param;
+    ThemeColour colour;
+    bool over = false;
+};
+
 class SourcesView : public juce::Component, public juce::SettableTooltipClient
 {
 public:
@@ -74,7 +123,8 @@ private:
     {
     public:
         Row (SourcesView& o, juce::AudioProcessorValueTreeState& state, const juce::String& title, const juce::String& widgetId, ThemeColour c,
-             const char* onParam, const char* levelParam, const char* panParam, const char* routeParam, int oscIndex)
+             const char* onParam, const char* levelParam, const char* panParam, const char* routeParam, int oscIndex,
+             const char* busParam)
             : owner (o), name (title), widget (widgetId), colour (c), osc (oscIndex), on (onParam != nullptr ? juce::String (onParam) : juce::String()), level (c)
         {
             if (onParam != nullptr)
@@ -103,6 +153,12 @@ private:
                 addAndMakeVisible (*route);
                 attachments.push_back (std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (state, routeParam, *route));
             }
+            if (busParam != nullptr)
+            {
+                busPill = std::make_unique<BusPill> (o.proc, busParam, c);
+                busPill->setComponentID ("bus_" + juce::String (onParam != nullptr ? onParam : levelParam));
+                addAndMakeVisible (*busPill);
+            }
             soloed = false;
             if (osc >= 2)
             {
@@ -119,16 +175,28 @@ private:
             if (led != nullptr) led->setBounds (r.removeFromLeft (22).withSizeKeepingCentre (18, 18));
             else r.removeFromLeft (22);
             r.removeFromLeft (6);
-            nameArea = r.removeFromLeft (juce::jmin (96, r.getWidth() / 3));
-            r.removeFromLeft (6);
             if (osc >= 2) remove.setBounds (r.removeFromRight (20).withSizeKeepingCentre (18, 18)); else r.removeFromRight (20);
             r.removeFromRight (4);
             if (on.isNotEmpty()) solo.setBounds (r.removeFromRight (24).withSizeKeepingCentre (22, 20)); else r.removeFromRight (24);
             r.removeFromRight (4);
             if (route != nullptr) route->setBounds (r.removeFromRight (74).withSizeKeepingCentre (70, 20)); else r.removeFromRight (74);
             r.removeFromRight (6);
-            if (panAttach != nullptr) pan.setBounds (r.removeFromRight (58)); else r.removeFromRight (58);
+            if (busPill != nullptr) busPill->setBounds (r.removeFromRight (46).withSizeKeepingCentre (44, 20)); else r.removeFromRight (46);
             r.removeFromRight (6);
+            // Squeezed narrow, the pan bar gives up its room so the level bar stays readable; pan is on the
+            // source's own panel either way.
+            const bool roomForPan = getWidth() >= 380;
+            if (panAttach != nullptr && roomForPan)
+            {
+                pan.setVisible (true);
+                pan.setBounds (r.removeFromRight (58));
+                r.removeFromRight (6);
+            }
+            else if (panAttach != nullptr) pan.setVisible (false);
+            else if (roomForPan) r.removeFromRight (64);
+            // The name gives up room before the level bar does: the level is what the row is for.
+            nameArea = r.removeFromLeft (juce::jlimit (48, 96, r.getWidth() - 90));
+            r.removeFromLeft (6);
             level.setBounds (r);
         }
 
@@ -159,6 +227,7 @@ private:
         int osc;
         std::unique_ptr<PowerLed> led;
         std::unique_ptr<PillToggle> route;
+        std::unique_ptr<BusPill> busPill;
         struct LevelBar : juce::Slider
         {
             explicit LevelBar (ThemeColour c) : colour (c)
@@ -266,14 +335,14 @@ private:
         {
             const auto p = oscPrefix (o);
             if (o >= 2 && st.getRawParameterValue (p + "On")->load() < 0.5f) continue;
-            const juce::String on = p + "On", lvl = p + "Level", pn = p + "Pan", rt = p + "Filter";
+            const juce::String on = p + "On", lvl = p + "Level", pn = p + "Pan", rt = p + "Filter", bs = p + "Bus";
             rows.push_back (std::make_unique<Row> (*this, st, "OSC " + p.toUpperCase(), "osc" + p.toUpperCase(), colourFor (o),
-                                                   on.toRawUTF8(), lvl.toRawUTF8(), pn.toRawUTF8(), rt.toRawUTF8(), o));
+                                                   on.toRawUTF8(), lvl.toRawUTF8(), pn.toRawUTF8(), rt.toRawUTF8(), o, bs.toRawUTF8()));
         }
-        rows.push_back (std::make_unique<Row> (*this, st, "SUB", "sub", Palette::sub, "subOn", "subLevel", nullptr, "subFilter", -1));
-        rows.push_back (std::make_unique<Row> (*this, st, "NOISE", "sub", Colours::textDim, nullptr, "noiseLevel", nullptr, "noiseFilter", -1));
+        rows.push_back (std::make_unique<Row> (*this, st, "SUB", "sub", Palette::sub, "subOn", "subLevel", nullptr, "subFilter", -1, "subBus"));
+        rows.push_back (std::make_unique<Row> (*this, st, "NOISE", "sub", Colours::textDim, nullptr, "noiseLevel", nullptr, "noiseFilter", -1, "noiseBus"));
         if (lastSignature.endsWith ("S"))
-            rows.push_back (std::make_unique<Row> (*this, st, "SAMPLER", "sampler", Palette::oscA, "smpOn", "smpLevel", "smpPan", "smpFilter", -1));
+            rows.push_back (std::make_unique<Row> (*this, st, "SAMPLER", "sampler", Palette::oscA, "smpOn", "smpLevel", "smpPan", "smpFilter", -1, "smpBus"));
         for (auto& r : rows) addAndMakeVisible (*r);
         resized();
         repaint();

@@ -103,6 +103,7 @@ inline int modDestForParam (const juce::String& paramId)
 constexpr int NumModSlots = 8;
 constexpr int MaxUnison = 7;
 constexpr int NumOsc = 8; // A and B, plus C to H that a sound can switch on
+constexpr int NumBus = 2; // every source picks a bus: the main one, or the alt one with its own half of the rack
 inline juce::String oscPrefix (int o) { return juce::String::charToString ((juce::juce_wchar) ('a' + o)); }
 constexpr int MaxVoices = 20;   // 16 playable + spares so a stolen/retriggered voice can fade out instead of clicking
 constexpr int PolyLimit = 16;
@@ -112,6 +113,7 @@ constexpr int SubBlock = 16;
 struct OscSettings
 {
     bool on = true, toFilter = true;
+    int bus = 0;                       // which bus this oscillator plays into
     const Wavetable* custom = nullptr; // an imported table replacing the factory one (owned by the processor)
     int table = 0, warp = WarpOff, unison = 1;
     float pos = 0, warpAmt = 0, detune = 0.2f, blend = 0.5f, level = 0.8f, pan = 0, pitch = 0, width = 1.0f; // pitch in semitones
@@ -153,6 +155,7 @@ struct ModSlot { int src = SrcNone, dest = DNone; float amount = 0; int shape = 
 struct SynthSettings
 {
     std::array<OscSettings, NumOsc> osc;
+    int subBus = 0, noiseBus = 0;      // the sub and the noise pick a bus too
     bool subOn = false, subToFilter = false;
     int subShape = SubSine, subOct = -1;
     float subLevel = 0.6f;
@@ -500,6 +503,7 @@ public:
     void prepare (double sampleRate)
     {
         sr = sampleRate;
+        combBuf.assign ((size_t) NumBus * 2 * (size_t) combSize, 0.0f);
         rng.s = 0x12345u + (juce::uint32) (reinterpret_cast<juce::pointer_sized_uint> (this) & 0xffff) * 2654435761u;
         reset();
     }
@@ -508,7 +512,7 @@ public:
     {
         ampEnv.kill();
         modEnv.kill();
-        for (auto& f : svf) for (auto& s : f) s.reset();
+        for (auto& bus : svf) for (auto& f : bus) for (auto& s : f) s.reset();
         note = -1;
     }
 
@@ -547,8 +551,8 @@ public:
         if (! wasActive)
         {
             fmPrev[0] = fmPrev[1] = 0;
-            for (auto& f : svf) for (auto& sv : f) sv.reset();
-            for (auto& c : comb) std::fill (std::begin (c), std::end (c), 0.0f);
+            for (auto& bus : svf) for (auto& f : bus) for (auto& sv : f) sv.reset();
+            std::fill (combBuf.begin(), combBuf.end(), 0.0f);
             driftValue = 0.3f * rng.next();
         }
         for (int l = 0; l < NumLfo; ++l)
@@ -579,7 +583,9 @@ public:
     bool fading = false;
     float pitchNow() const { return currentPitch; }
 
-    void render (float* outL, float* outR, int numSamples, const SynthSettings& s, const GlobalMod& g)
+    // The voice plays into one or two buses: altL/altR are the second bus, or null when everything goes to the first.
+    void render (float* outL, float* outR, int numSamples, const SynthSettings& s, const GlobalMod& g,
+                 float* altL = nullptr, float* altR = nullptr)
     {
         if (! isActive()) return;
         if (startDelay > 0)
@@ -587,8 +593,12 @@ public:
             const int skip = juce::jmin (startDelay, numSamples);
             startDelay -= skip;
             outL += skip; outR += skip; numSamples -= skip;
+            if (altL != nullptr) { altL += skip; altR += skip; }
             if (numSamples <= 0) return;
         }
+        // With no second bus every source plays into the first, whatever it asks for.
+        const bool twoBuses = altL != nullptr && altR != nullptr;
+        const auto busOf = [twoBuses] (int b) { return twoBuses ? juce::jlimit (0, NumBus - 1, b) : 0; };
         ampEnv.set (s.env[0], sr);
         modEnv.set (s.env[1], sr);
         smpEnv.set ({ s.smp.a, s.smp.d, s.smp.s, s.smp.r }, sr);
@@ -770,11 +780,12 @@ public:
             const float gF = std::tan (juce::MathConstants<float>::pi * cutoff / (float) sr);
             const bool twoStage = s.filterType == FLp24 || s.filterType == FDirty;
             const float kRes = 2.0f - 1.96f * res;
-            for (int c = 0; c < 2; ++c)
-            {
-                svf[c][0].set (gF, twoStage ? 1.414f : kRes);
-                svf[c][1].set (gF, kRes);
-            }
+            for (int b = 0; b < NumBus; ++b)
+                for (int c = 0; c < 2; ++c)
+                {
+                    svf[b][c][0].set (gF, twoStage ? 1.414f : kRes);
+                    svf[b][c][1].set (gF, kRes);
+                }
             if (s.filterType == FFormant)
             {
                 // Cutoff sweeps the vowel a > e > i > o > u; resonance narrows the formants.
@@ -784,11 +795,12 @@ public:
                 const float vf = v - (float) vi;
                 const float F1 = f1[vi] + (f1[vi + 1] - f1[vi]) * vf, F2 = f2[vi] + (f2[vi + 1] - f2[vi]) * vf;
                 const float kF = 1.2f - 1.0f * std::sqrt (res);
-                for (int c = 0; c < 2; ++c)
-                {
-                    svf[c][0].set (std::tan (juce::MathConstants<float>::pi * F1 / (float) sr), kF);
-                    svf[c][1].set (std::tan (juce::MathConstants<float>::pi * F2 / (float) sr), kF);
-                }
+                for (int b = 0; b < NumBus; ++b)
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        svf[b][c][0].set (std::tan (juce::MathConstants<float>::pi * F1 / (float) sr), kF);
+                        svf[b][c][1].set (std::tan (juce::MathConstants<float>::pi * F2 / (float) sr), kF);
+                    }
             }
             const float combDelay = juce::jlimit (2.0f, (float) combSize - 2.0f, (float) sr / cutoff);
             const float combFb = res * 0.995f;
@@ -816,10 +828,23 @@ public:
             }
             else shownSample = -1.0f;
 
+            // Which bus each source plays into, and which buses have anything going through the filter.
+            int oscBus[NumOsc] {};
+            bool filtered[NumBus] {};
+            for (int o = 0; o < NumOsc; ++o)
+            {
+                oscBus[o] = busOf (s.osc[(size_t) o].bus);
+                if (run[o].on && s.osc[(size_t) o].toFilter) filtered[oscBus[o]] = true;
+            }
+            const int subBusIdx = busOf (s.subBus), noiseBusIdx = busOf (s.noiseBus), smpBusIdx = busOf (sm.bus);
+            if (subLevel > 0.0f && s.subToFilter) filtered[subBusIdx] = true;
+            if (noiseLevel > 0.0f && s.noiseToFilter) filtered[noiseBusIdx] = true;
+            if (smpOn && sm.toFilter) filtered[smpBusIdx] = true;
+
             // ---- audio rate ----
             for (int i = 0; i < n; ++i)
             {
-                float fL = 0, fR = 0, dL = 0, dR = 0; // filtered bus / direct bus
+                float fL[NumBus] {}, fR[NumBus] {}, dL[NumBus] {}, dR[NumBus] {}; // filtered path / direct path, per bus
                 float oscOut[NumOsc] {};
 
                 float oscL[NumOsc] {}, oscR[NumOsc] {};
@@ -873,8 +898,9 @@ public:
                 for (int ai = 0; ai < numActive; ++ai)
                 {
                     const int o = active[ai];
-                    if (s.osc[(size_t) o].toFilter) { fL += oscL[o]; fR += oscR[o]; }
-                    else                            { dL += oscL[o]; dR += oscR[o]; }
+                    const int b = oscBus[o];
+                    if (s.osc[(size_t) o].toFilter) { fL[b] += oscL[o]; fR[b] += oscR[o]; }
+                    else                            { dL[b] += oscL[o]; dR[b] += oscR[o]; }
                 }
 
                 if (crossOn && s.xRing > 0.0001f && run[0].on && run[1].on)
@@ -882,8 +908,8 @@ public:
                     // Ring modulation: the product of the two oscillators, added through osc A's routing.
                     const float ringL = oscL[0] * oscOut[1] * s.xRing * 1.6f;
                     const float ringR = oscR[0] * oscOut[1] * s.xRing * 1.6f;
-                    if (s.osc[0].toFilter) { fL += ringL; fR += ringR; }
-                    else                   { dL += ringL; dR += ringR; }
+                    if (s.osc[0].toFilter) { fL[oscBus[0]] += ringL; fR[oscBus[0]] += ringR; }
+                    else                   { dL[oscBus[0]] += ringL; dR[oscBus[0]] += ringR; }
                 }
                 fmPrev[0] = oscOut[0];
                 fmPrev[1] = oscOut[1];
@@ -908,7 +934,7 @@ public:
                         default:        v = (float) std::sin (juce::MathConstants<double>::twoPi * subPhase); break;
                     }
                     v *= subLevel;
-                    if (s.subToFilter) { fL += v; fR += v; } else { dL += v; dR += v; }
+                    if (s.subToFilter) { fL[subBusIdx] += v; fR[subBusIdx] += v; } else { dL[subBusIdx] += v; dR[subBusIdx] += v; }
                 }
 
                 if (noiseLevel > 0.0f)
@@ -917,7 +943,7 @@ public:
                     noiseState[0] += noiseCoef * (noise[0].tick (s.noiseType, sr) - noiseState[0]);
                     noiseState[1] += noiseCoef * (noise[1].tick (s.noiseType, sr) - noiseState[1]);
                     const float nl = noiseState[0] * noiseLevel * 1.6f, nr = noiseState[1] * noiseLevel * 1.6f;
-                    if (s.noiseToFilter) { fL += nl; fR += nr; } else { dL += nl; dR += nr; }
+                    if (s.noiseToFilter) { fL[noiseBusIdx] += nl; fR[noiseBusIdx] += nr; } else { dL[noiseBusIdx] += nl; dR[noiseBusIdx] += nr; }
                 }
 
                 if (smpOn)
@@ -925,23 +951,28 @@ public:
                     float sl = 0, sr2 = 0;
                     smpPlay.tick (sm, smpInc, smpGL, smpGR, sl, sr2);
                     const float e = smpEnv.tick();
-                    if (sm.toFilter) { fL += sl * e; fR += sr2 * e; } else { dL += sl * e; dR += sr2 * e; }
+                    if (sm.toFilter) { fL[smpBusIdx] += sl * e; fR[smpBusIdx] += sr2 * e; } else { dL[smpBusIdx] += sl * e; dR[smpBusIdx] += sr2 * e; }
                 }
 
                 if (crossOn && s.xFltFm > 0.0001f && s.filterOn && s.filterType != FFormant)
                 {
                     // Filter FM: osc A shifts the cutoff at audio rate, which buzzes and growls.
                     const float g2 = juce::jlimit (0.0005f, 1.4f, gF * (1.0f + s.xFltFm * 3.0f * oscOut[0]));
-                    for (int c = 0; c < 2; ++c)
-                    {
-                        svf[c][0].set (g2, twoStage ? 1.414f : kRes);
-                        svf[c][1].set (g2, kRes);
-                    }
+                    for (int b = 0; b < NumBus; ++b)
+                        for (int c = 0; c < 2; ++c)
+                        {
+                            svf[b][c][0].set (g2, twoStage ? 1.414f : kRes);
+                            svf[b][c][1].set (g2, kRes);
+                        }
                 }
 
                 if (s.filterOn)
                 {
-                    float* ch[2] = { &fL, &fR };
+                  // Each bus runs its own copy of the filter, with the same settings, so the two paths never smear together.
+                  for (int b = 0; b < NumBus; ++b)
+                  {
+                    if (! filtered[b]) continue;
+                    float* ch[2] = { &fL[b], &fR[b] };
                     for (int c = 0; c < 2; ++c)
                     {
                         float x = *ch[c];
@@ -949,7 +980,7 @@ public:
                         if (drive > 0.001f || s.filterType == FDirty)
                             x = std::tanh (x * driveGain) * driveNorm * 1.6f;
                         float lo, bp, hp;
-                        svf[c][0].tick (x, lo, bp, hp);
+                        svf[b][c][0].tick (x, lo, bp, hp);
                         float y;
                         switch (s.filterType)
                         {
@@ -960,7 +991,7 @@ public:
                             case FFormant:
                             {
                                 float lo2, bp2, hp2;
-                                svf[c][1].tick (x, lo2, bp2, hp2);
+                                svf[b][c][1].tick (x, lo2, bp2, hp2);
                                 y = (bp * 1.4f + bp2 * 1.0f) * 1.3f;
                                 break;
                             }
@@ -970,31 +1001,34 @@ public:
                                 if (r < 0) r += (float) combSize;
                                 const int i0 = (int) r, i1 = (i0 + 1) % combSize;
                                 const float fr = r - (float) i0;
-                                const float d = comb[c][i0] + fr * (comb[c][i1] - comb[c][i0]);
-                                combDamp[c] = d + 0.3f * (combDamp[c] - d);   // gentle damping, like a real string
-                                const float w = x + combFb * combDamp[c];
-                                comb[c][combPos] = w;
+                                auto* line = combBuf.empty() ? nullptr : combLine (b, c);
+                                if (line == nullptr) { y = x; break; }   // not prepared yet: pass it through
+                                const float d = line[i0] + fr * (line[i1] - line[i0]);
+                                combDamp[b][c] = d + 0.3f * (combDamp[b][c] - d);   // gentle damping, like a real string
+                                const float w = x + combFb * combDamp[b][c];
+                                line[combPos] = w;
                                 y = w * (1.0f - combFb * 0.35f);
                                 break;
                             }
                             case FDirty:
                             {
                                 float lo2, bp2, hp2;
-                                svf[c][1].tick (std::tanh (lo * 1.5f), lo2, bp2, hp2);
+                                svf[b][c][1].tick (std::tanh (lo * 1.5f), lo2, bp2, hp2);
                                 y = lo2;
                                 break;
                             }
                             default:
                             {
                                 float lo2, bp2, hp2;
-                                svf[c][1].tick (lo, lo2, bp2, hp2);
+                                svf[b][c][1].tick (lo, lo2, bp2, hp2);
                                 y = lo2;
                                 break;
                             }
                         }
                         *ch[c] = dry + (y - dry) * s.filterMix;
                     }
-                    if (s.filterType == FComb) combPos = (combPos + 1) % combSize;
+                  }
+                  if (s.filterType == FComb) combPos = (combPos + 1) % combSize;
                 }
 
                 float amp = ampEnv.tick() * velGain * ampMod;
@@ -1005,8 +1039,13 @@ public:
                     if (--fadeLeft <= 0) { ampEnv.kill(); modEnv.kill(); fading = false; }
                 }
                 modEnv.tick();
-                outL[start + i] += (fL + dL) * amp;
-                outR[start + i] += (fR + dR) * amp;
+                outL[start + i] += (fL[0] + dL[0]) * amp;
+                outR[start + i] += (fR[0] + dR[0]) * amp;
+                if (twoBuses)
+                {
+                    altL[start + i] += (fL[1] + dL[1]) * amp;
+                    altR[start + i] += (fR[1] + dR[1]) * amp;
+                }
             }
 
             if (! ampEnv.active())
@@ -1031,15 +1070,16 @@ private:
     float driftValue = 0, driftTarget = 0;
     int driftTimer = 0, startDelay = 0, fadeLen = 1, fadeLeft = 0;
     static constexpr int combSize = 4096;
-    float comb[2][combSize] {};
-    float combDamp[2] {};
+    std::vector<float> combBuf;            // NumBus * 2 lines, allocated once the voice is prepared
+    float combDamp[NumBus][2] {};
+    float* combLine (int b, int c) { return combBuf.data() + ((size_t) b * 2 + (size_t) c) * (size_t) combSize; }
     int combPos = 0;
     float slotSmoothed[NumModSlots] {};
     double lfoPhase[NumLfo] {};
     float lfoHeld[NumLfo] {}, lfoPrevHeld[NumLfo] {};
     dsp::Env ampEnv, modEnv, smpEnv;
     dsp::SamplePlayer smpPlay;
-    dsp::SVF svf[2][2];
+    dsp::SVF svf[NumBus][2][2];
     dsp::Rng rng;
 };
 

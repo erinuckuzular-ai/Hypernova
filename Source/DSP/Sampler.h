@@ -44,6 +44,7 @@ inline juce::StringArray sampleLoopNames() { return { "No loop", "Loop", "Ping-p
 struct SamplerSettings
 {
     bool on = false, track = true, reverse = false, toFilter = true;
+    int bus = 0;   // which bus the sampler plays into
     const SampleData* data = nullptr;
     int root = 60, loop = LoopOff;
     float level = 0.8f, pan = 0, semi = 0, fine = 0;          // fine in cents

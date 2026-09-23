@@ -747,6 +747,157 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Routing: every source picks a bus, every effect sits on one, and the two meet at the output.
+    if (argc == 2 && juce::String (argv[1]) == "--routing")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        auto render = [&] (HypernovaAudioProcessor& p, double seconds)
+        {
+            std::vector<float> out;
+            const int total = (int) (seconds * rate);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 110), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            return out;
+        };
+        auto rms = [] (const std::vector<float>& v)
+        {
+            double e = 0;
+            for (auto x : v) e += (double) x * x;
+            return std::sqrt (e / juce::jmax ((size_t) 1, v.size()));
+        };
+        auto diff = [] (const std::vector<float>& a, const std::vector<float>& b)
+        {
+            double d = 0, e = 0;
+            for (size_t i = 0; i < juce::jmin (a.size(), b.size()); ++i) { d += (double) (a[i] - b[i]) * (a[i] - b[i]); e += (double) a[i] * a[i]; }
+            return std::sqrt (d / juce::jmax (1e-12, e));
+        };
+        // Two oscillators, no effects: the buses only add up, so splitting them must not change the sound.
+        auto twoOscs = [rate] (HypernovaAudioProcessor& p)
+        {
+            p.prepareToPlay (rate, 256);
+            p.setParam ("bOn", 1.0f);
+            p.setParam ("quality", 0.0f);   // no oversampling, so both runs take exactly the same path
+        };
+        {
+            HypernovaAudioProcessor together, apart;
+            twoOscs (together); twoOscs (apart);
+            apart.setParam ("bBus", 1.0f);
+            const auto x = render (together, 1.0), y = render (apart, 1.0);
+            check (diff (x, y) < 0.02, "moving an oscillator to the alt bus leaves the sound alone (" + juce::String (diff (x, y), 4) + ")");
+        }
+        // The same with the filter on: each bus runs its own copy, and a linear filter adds up the same way.
+        {
+            HypernovaAudioProcessor together, apart;
+            for (auto* p : { &together, &apart })
+            {
+                twoOscs (*p);
+                p->setParam ("fltOn", 1.0f);
+                p->setParam ("cutoff", 900.0f);
+                p->setParam ("res", 0.6f);
+                p->setParam ("fltDrive", 0.0f);
+            }
+            apart.setParam ("bBus", 1.0f);
+            const auto x = render (together, 1.0), y = render (apart, 1.0);
+            check (diff (x, y) < 0.05, "and each bus filters its own material without smearing into the other (" + juce::String (diff (x, y), 4) + ")");
+        }
+        // An effect on the main bus leaves a source on the alt bus alone.
+        {
+            HypernovaAudioProcessor p;
+            twoOscs (p);
+            p.setParam ("bBus", 1.0f);
+            p.setParam ("crushMix", 1.0f);
+            p.setParam ("crushBits", 2.0f);
+            p.setParam ("crushRate", 3000.0f);
+            const auto crushed = render (p, 1.0);
+            HypernovaAudioProcessor q;
+            twoOscs (q);
+            q.setParam ("bBus", 1.0f);
+            const auto clean = render (q, 1.0);
+            check (diff (clean, crushed) > 0.05, "an effect on the main bus still bites (" + juce::String (diff (clean, crushed), 3) + ")");
+            // Now park the crush on the alt bus: the main oscillator comes through clean instead.
+            HypernovaAudioProcessor r;
+            twoOscs (r);
+            r.setParam ("bBus", 1.0f);
+            r.setParam ("crushMix", 1.0f);
+            r.setParam ("crushBits", 2.0f);
+            r.setParam ("crushRate", 3000.0f);
+            r.setParam ("crushBus", 1.0f);
+            const auto moved = render (r, 1.0);
+            check (diff (crushed, moved) > 0.05, "and moving it to the alt bus changes what it colours (" + juce::String (diff (crushed, moved), 3) + ")");
+            check (rms (moved) > 0.001, "both buses still reach the output (" + juce::String (rms (moved), 4) + ")");
+        }
+        // An effect parked on the alt bus with nothing playing there does nothing at all.
+        {
+            HypernovaAudioProcessor p, q;
+            for (auto* x : { &p, &q })
+            {
+                twoOscs (*x);
+                x->setParam ("crushMix", 1.0f);
+                x->setParam ("crushBits", 2.0f);
+            }
+            q.setParam ("crushBus", 1.0f);
+            const auto on = render (p, 1.0), parked = render (q, 1.0);
+            check (diff (on, parked) > 0.05, "parking an effect on an empty alt bus takes it out of the sound");
+        }
+        // Low End is taken out of both buses and stays clean.
+        {
+            HypernovaAudioProcessor p;
+            twoOscs (p);
+            p.setParam ("bBus", 1.0f);
+            p.setParam ("lowOn", 1.0f);
+            p.setParam ("distMix", 1.0f);
+            p.setParam ("distDrive", 1.0f);
+            const auto out = render (p, 1.0);
+            check (rms (out) > 0.001, "low end and two buses run together (" + juce::String (rms (out), 4) + ")");
+        }
+        // What the second bus costs: the same eight-voice chord, everything on one bus and then split across two.
+        {
+            auto cost = [&] (bool split)
+            {
+                HypernovaAudioProcessor p;
+                p.prepareToPlay (rate, 256);
+                p.setParam ("bOn", 1.0f);
+                if (split) { p.setParam ("bBus", 1.0f); p.setParam ("crushBus", 1.0f); }
+                juce::MidiBuffer midi;
+                for (int k = 0; k < 8; ++k) midi.addEvent (juce::MidiMessage::noteOn (1, 48 + k * 3, (juce::uint8) 100), 0);
+                juce::AudioBuffer<float> buf (2, 256);
+                const int blocks = (int) (2.0 * rate / 256);
+                const auto t0 = juce::Time::getHighResolutionTicks();
+                for (int b = 0; b < blocks; ++b) { p.processBlock (buf, midi); midi.clear(); }
+                return juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) / 2.0 * 100.0;
+            };
+            const double one = cost (false), two = cost (true);
+            check (two < one * 2.2 + 1.0, "a second bus costs " + juce::String (two / juce::jmax (0.01, one), 2) + "x one bus ("
+                                          + juce::String (one, 1) + "% -> " + juce::String (two, 1) + "% of realtime)");
+        }
+
+        // The routing is saved with the sound.
+        {
+            HypernovaAudioProcessor p;
+            twoOscs (p);
+            p.setParam ("bBus", 1.0f);
+            p.setParam ("crushBus", 1.0f);
+            juce::MemoryBlock state;
+            p.getStateInformation (state);
+            HypernovaAudioProcessor q;
+            q.prepareToPlay (rate, 256);
+            q.setStateInformation (state.getData(), (int) state.getSize());
+            check (q.apvts.getRawParameterValue ("bBus")->load() > 0.5f
+                   && q.apvts.getRawParameterValue ("crushBus")->load() > 0.5f, "and it comes back with the sound");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc == 2 && juce::String (argv[1]) == "--mpe")
     {
         int failures = 0;
@@ -1289,6 +1440,14 @@ int main (int argc, char** argv)
                 writer->writeFromAudioSampleBuffer (out, 0, total);
             }
         return 0;
+    }
+
+    // Past every mode, argv[1] is the folder to render presets into. A flag that reaches here is a mode that
+    // doesn't exist, and rendering would fill a folder named after it with 400-odd wav files.
+    if (argc > 1 && juce::String (argv[1]).startsWith ("--"))
+    {
+        std::printf ("unknown mode: %s\n", argv[1]);
+        return 2;
     }
 
     const juce::File outDir (argc > 1 ? juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]) : juce::File());
