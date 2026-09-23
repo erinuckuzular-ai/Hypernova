@@ -71,6 +71,7 @@ public:
     ab::ui::EffectsRack& rackView() { return rack; }
     ab::ui::OrbitPad& orbitView() { return orbitPad; }
     void showCornerMenu (int corner, juce::Point<int> screenPos);
+    void showChopMenu();
     ab::ui::ToolContent* toolFor (const juce::String& id) const { auto it = tools.find (id); return it != tools.end() ? it->second.get() : nullptr; }
 
     static constexpr int baseWidth = 1280, baseHeight = 986;
@@ -207,6 +208,7 @@ private:
     ab::ui::OrbitPad orbitPad { processor };
     juce::TextButton addOscButton { "+ OSC" };
     juce::TextButton keepBlendButton { "KEEP BLEND" };
+    juce::TextButton chopButton { "CHOP" };
     ab::ui::SoundSpace space;
     ab::ui::SamplerView samplerView;
     ab::ui::EffectsRack rack;

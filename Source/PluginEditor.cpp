@@ -615,11 +615,20 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         toggle (std::make_unique<PillToggle> ("TRACK KEYS", Palette::oscA), "smpTrack", { 12, 268, 118, 22 },
                 "On: the sample follows the keyboard. Off: every key plays it at its own pitch (drums, one-shots).", W);
         toggle (std::make_unique<PillToggle> ("REVERSE", Palette::oscA), "smpReverse", { 138, 268, 100, 22 }, "Play the sample backwards", W);
+        // Chop Lab: cut the sample up and play the pieces from the keyboard.
+        W->addAndMakeVisible (chopButton);
+        chopButton.setBounds (196, 11, 62, 24);
+        chopButton.setTooltip ("Cut the sample into slices, one per key");
+        chopButton.onClick = [this] { showChopMenu(); };
+        toggle (std::make_unique<PillToggle> ("CHOP", Palette::lfo), "chopOn", { 246, 268, 64, 22 },
+                "Each key from the root up plays its own slice, at the sample's own speed", W);
+        toggle (std::make_unique<PillToggle> ("HOLD", Palette::lfo), "chopHold", { 316, 268, 58, 22 },
+                "On: a slice stops when you let go. Off: it plays out.", W);
         w.extraPaint = [&w] (juce::Graphics& g)
         {
             g.setColour (Colours::textFaint);
             g.setFont (font (9.5f, true).withExtraKerningFactor (0.2f));
-            g.drawText ("SAMPLE ENVELOPE", w.spread.map ({ 330, 270, 216, 18 }), juce::Justification::centredLeft, false);
+            g.drawText ("SAMPLE ENVELOPE", w.spread.map ({ 382, 270, 166, 18 }), juce::Justification::centredLeft, false);
         };
         w.finishBuilding();
         w.spread.setFlags (samplerView, Spread::Stretch);
@@ -1788,6 +1797,47 @@ void HypernovaAudioProcessorEditor::showRackModuleMenu (int fxId, juce::Point<in
             showMessage (ab::fxRackNames()[fx] + " took " + ab::fxRackNames()[fxId] + "'s place");
         }
         rack.refresh (true);
+    });
+}
+
+// The CHOP button: how to cut the sample up.
+void HypernovaAudioProcessorEditor::showChopMenu()
+{
+    if (processor.sampleForUi() == nullptr) { showMessage ("Load a sample first"); return; }
+    juce::PopupMenu m;
+    m.setLookAndFeel (&lookAndFeel);
+    m.addSectionHeader ("CHOP");
+    m.addItem (1, "Cut it on the hits");
+    m.addSeparator();
+    const int counts[] = { 4, 8, 16, 32 };
+    for (int i = 0; i < 4; ++i) m.addItem (10 + i, "Cut it into " + juce::String (counts[i]) + " equal slices");
+    m.addSeparator();
+    m.addItem (20, "Take the slices out", processor.slicesForUi().any());
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chopButton), [this, counts] (int r)
+    {
+        if (r == 0) return;
+        if (r == 1)
+        {
+            processor.chopSample (0);
+            const int n = processor.slicesForUi().count();
+            showMessage (n > 1 ? juce::String (n) + " slices, from " + juce::MidiMessage::getMidiNoteName (
+                                     (int) processor.apvts.getRawParameterValue ("chopRoot")->load(), true, true, 4) + " up"
+                               : juce::String ("No clear hits in that sample: try equal slices"));
+        }
+        else if (r >= 10 && r < 20)
+        {
+            processor.chopSample (counts[r - 10]);
+            showMessage (juce::String (counts[r - 10]) + " slices, from " + juce::MidiMessage::getMidiNoteName (
+                             (int) processor.apvts.getRawParameterValue ("chopRoot")->load(), true, true, 4) + " up");
+        }
+        else if (r == 20)
+        {
+            processor.undoManager.beginNewTransaction ("Take the slices out");
+            processor.setSlices ("");
+            processor.setParam ("chopOn", 0.0f);
+            showMessage ("Back to one sample across the keyboard");
+        }
+        samplerView.repaint();
     });
 }
 

@@ -1189,6 +1189,29 @@ int main (int argc, char** argv)
         juce::FileOutputStream out (f);
         juce::PNGImageFormat().writeImageToStream (image, out);
         std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
+
+        // Chop Lab: the same recording cut into slices, one per key.
+        {
+            proc.setParam ("smpLoop", 0.0f);
+            proc.chopSample (8);
+            juce::MidiBuffer chopMidi;
+            chopMidi.addEvent (juce::MidiMessage::noteOn (1, 62, 1.0f), 0);
+            for (int i = 0; i < 24; ++i)
+            {
+                juce::AudioBuffer<float> buf (2, 512);
+                proc.processBlock (buf, chopMidi);
+                chopMidi.clear();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+            }
+            auto chopShot = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+            auto cf = outDir.getChildFile ("ui_14_chop.png");
+            cf.deleteFile();
+            juce::FileOutputStream chopOut (cf);
+            juce::PNGImageFormat().writeImageToStream (chopShot, chopOut);
+            std::printf ("wrote %s\n", cf.getFullPathName().toRawUTF8());
+            proc.setSlices ("");
+            proc.setParam ("chopOn", 0.0f);
+        }
         wavFile.deleteFile();
         proc.clearSample();
     }

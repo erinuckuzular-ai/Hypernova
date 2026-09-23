@@ -3,6 +3,8 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <cmath>
 #include <vector>
+#include <algorithm>
+#include <array>
 
 // The sampler: one imported sample played by every voice, alongside the oscillators.
 // The sample itself is decoded on the message thread into an immutable SampleData; the audio thread only
@@ -38,6 +40,17 @@ struct SampleData
     }
 };
 
+// Chop Lab: a sample cut into slices, one per key. The edges are positions in the sample (0..1), sorted,
+// with a slice between each pair, so `edges - 1` slices.
+constexpr int MaxSlices = 32;
+struct Slices
+{
+    int edges = 0;                                   // 0 or 2..MaxSlices+1
+    std::array<float, MaxSlices + 1> at {};
+    int count() const { return juce::jmax (0, edges - 1); }
+    bool any() const { return edges >= 2; }
+};
+
 enum SampleLoop { LoopOff, LoopForward, LoopPingPong, NumLoopModes };
 inline juce::StringArray sampleLoopNames() { return { "No loop", "Loop", "Ping-pong" }; }
 
@@ -45,6 +58,10 @@ struct SamplerSettings
 {
     bool on = false, track = true, reverse = false, toFilter = true;
     int bus = 0;   // which bus the sampler plays into
+    // Chop Lab: each key from chopRoot up plays its own slice, at the sample's own speed.
+    bool chop = false, chopHold = false;   // hold: the slice plays while the key is down, otherwise it plays out
+    int chopRoot = 60;
+    Slices slices;
     const SampleData* data = nullptr;
     int root = 60, loop = LoopOff;
     float level = 0.8f, pan = 0, semi = 0, fine = 0;          // fine in cents
@@ -61,19 +78,30 @@ namespace dsp
         int dir = 1;
         bool done = true;
 
-        void start (const SamplerSettings& s)
+        int slice = -1;   // which slice this note plays, or -1 for the whole sample between the flags
+
+        void start (const SamplerSettings& s, int sliceIndex = -1)
         {
+            slice = sliceIndex;
             done = s.data == nullptr || s.data->length < 8;
+            // A key outside the slices has nothing to play.
+            if (! done && s.chop && s.slices.any() && (sliceIndex < 0 || sliceIndex >= s.slices.count())) done = true;
             if (done) return;
             double a, b;
-            region (s, a, b);
+            region (s, slice, a, b);
             dir = s.reverse ? -1 : 1;
             pos = s.reverse ? b - 1.0 : a;
         }
 
-        static void region (const SamplerSettings& s, double& a, double& b)
+        static void region (const SamplerSettings& s, int slice, double& a, double& b)
         {
             const double len = (double) s.data->length;
+            if (s.chop && s.slices.any() && slice >= 0 && slice + 1 < s.slices.edges)
+            {
+                a = juce::jlimit (0.0, len - 8.0, (double) s.slices.at[(size_t) slice] * len);
+                b = juce::jlimit (a + 8.0, len, (double) s.slices.at[(size_t) slice + 1] * len);
+                return;
+            }
             a = juce::jlimit (0.0, len - 8.0, (double) juce::jmin (s.start, s.end) * len);
             b = juce::jlimit (a + 8.0, len, (double) juce::jmax (s.start, s.end) * len);
         }
@@ -84,8 +112,8 @@ namespace dsp
             if (done || s.data == nullptr) return;
             const auto& d = *s.data;
             double a, b;
-            region (s, a, b);
-            const bool looping = s.loop != LoopOff;
+            region (s, slice, a, b);
+            const bool looping = s.loop != LoopOff && ! (s.chop && s.slices.any());   // a slice plays once
             double la = a, lb = b;
             if (looping)
             {
@@ -137,6 +165,67 @@ namespace dsp
             else if (pos >= b || pos < a) done = true;
         }
     };
+
+    // Where a recording's hits are: the loudness rises sharply, then doesn't rise again for a moment. Used
+    // to cut a break into slices without doing it by hand. Returns positions in 0..1, always starting at 0.
+    inline std::vector<float> findOnsets (const std::vector<float>& mono, double rate, int maxCount)
+    {
+        std::vector<float> out { 0.0f };
+        const int n = (int) mono.size();
+        const int hop = juce::jmax (64, (int) (0.005 * rate));       // 5 ms steps
+        const int window = juce::jmax (hop, (int) (0.02 * rate));    // 20 ms of sound per step
+        if (n < window * 4 || maxCount < 2) return out;
+
+        std::vector<float> energy;
+        energy.reserve ((size_t) (n / hop + 1));
+        for (int i = 0; i + window < n; i += hop)
+        {
+            double e = 0;
+            for (int k = 0; k < window; ++k) e += (double) mono[(size_t) (i + k)] * mono[(size_t) (i + k)];
+            energy.push_back ((float) std::sqrt (e / window));
+        }
+        const int steps = (int) energy.size();
+        if (steps < 8) return out;
+
+        // How much louder each step is than the one before it: a hit is a peak in that.
+        std::vector<float> rise ((size_t) steps, 0.0f);
+        for (int i = 1; i < steps; ++i) rise[(size_t) i] = juce::jmax (0.0f, energy[(size_t) i] - energy[(size_t) i - 1]);
+        double mean = 0;
+        for (float v : rise) mean += v;
+        mean /= steps;
+        double spread = 0;
+        for (float v : rise) spread += (v - mean) * (v - mean);
+        spread = std::sqrt (spread / steps);
+        float loudest = 0;
+        for (float v : rise) loudest = juce::jmax (loudest, v);
+        if (loudest < 1.0e-6f) return out;
+        const float threshold = juce::jmax ((float) (mean + 1.2 * spread), loudest * 0.15f);
+
+        const int neighbourhood = juce::jmax (2, (int) (0.02 * rate / hop));   // the peak of its own 40 ms
+        const int apart = juce::jmax (neighbourhood, (int) (0.06 * rate / hop)); // no two hits within 60 ms
+        std::vector<std::pair<float, int>> hits;
+        int last = -apart;
+        for (int i = 1; i < steps; ++i)
+        {
+            if (rise[(size_t) i] < threshold || i - last < apart) continue;
+            bool peak = true;
+            for (int k = juce::jmax (0, i - neighbourhood); k <= juce::jmin (steps - 1, i + neighbourhood); ++k)
+                if (rise[(size_t) k] > rise[(size_t) i]) { peak = false; break; }
+            if (! peak) continue;
+            hits.push_back ({ rise[(size_t) i], i });
+            last = i;
+        }
+        // Keep the strongest if there are more than there are keys for, then put them back in order.
+        std::sort (hits.begin(), hits.end(), [] (auto& a, auto& b) { return a.first > b.first; });
+        if ((int) hits.size() > maxCount - 1) hits.resize ((size_t) maxCount - 1);
+        std::sort (hits.begin(), hits.end(), [] (auto& a, auto& b) { return a.second < b.second; });
+        for (auto& [strength, step] : hits)
+        {
+            const float at = (float) ((double) step * hop / (double) n);
+            if (at > 0.01f && at < 0.99f && at - out.back() > 0.01f) out.push_back (at);
+        }
+        return out;
+    }
 
     // Pitch of a recording, as a MIDI note: normalised autocorrelation over a steady stretch after the attack.
     // Returns -1 when there's no convincing pitch (drums, noise).

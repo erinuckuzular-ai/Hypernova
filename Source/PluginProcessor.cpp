@@ -316,6 +316,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
     }
 
+    // Chop Lab (appended): the sample cut into slices, one per key.
+    add<Bool> (l, pid ("chopOn"), "Chop", false);
+    add<Int> (l, pid ("chopRoot"), "Chop Root Key", 0, 127, 60);
+    add<Bool> (l, pid ("chopHold"), "Chop Hold", false);
+
     // Orbit (appended): four captured sounds at the corners of a square, and a point that morphs between them.
     add<Bool> (l, pid ("orbitOn"), "Orbit", false);
     addFloat (l, "orbitX", "Orbit X", { 0.0f, 1.0f }, 0.0f, pctText);
@@ -562,6 +567,10 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     sm.reverse = param ("smpReverse") > 0.5f;
     sm.toFilter = param ("smpFilter") > 0.5f;
     sm.bus = (int) param ("smpBus");
+    sm.chop = param ("chopOn") > 0.5f;
+    sm.chopRoot = (int) param ("chopRoot");
+    sm.chopHold = param ("chopHold") > 0.5f;
+    sm.slices = sliceTable[(size_t) sliceSide.load (std::memory_order_acquire)];
     sm.a = param ("smpA");
     sm.d = param ("smpD");
     sm.s = param ("smpS");
@@ -805,7 +814,7 @@ void HypernovaAudioProcessor::noteOff (int note, int channel)
             if (v.trigger == note && v.held)
             {
                 if (sustainPedal) { v.held = false; sustained[i] = true; }
-                else v.stop();
+                else v.stop (! blockSettings.smp.chopHold);
             }
         }
         return;
@@ -824,7 +833,7 @@ void HypernovaAudioProcessor::noteOff (int note, int channel)
         sustained[(size_t) monoVoice] = true;
     }
     else
-        v.stop();
+        v.stop (! blockSettings.smp.chopHold);
 }
 
 void HypernovaAudioProcessor::allNotesOff (bool hard)
@@ -1070,7 +1079,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
                 sustainPedal = msg.getControllerValue() >= 64;
                 if (! sustainPedal)
                     for (size_t i = 0; i < voices.size(); ++i)
-                        if (sustained[i]) { sustained[i] = false; if (! voices[i].held) voices[i].stop(); }
+                        if (sustained[i]) { sustained[i] = false; if (! voices[i].held) voices[i].stop (! blockSettings.smp.chopHold); }
             }
             else if (msg.getControllerNumber() == 123 || msg.getControllerNumber() == 120)
                 allNotesOff (msg.getControllerNumber() == 120);
@@ -1103,6 +1112,15 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
             effects.process (chunk, &altChunk, fx);
         }
         else effects.process (chunk, fx);
+    }
+    {
+        // Which slice the newest voice is playing, so the waveform can light it up.
+        int slice = -1;
+        const Voice* newest = nullptr;
+        for (auto& v : voices)
+            if (v.isActive() && (newest == nullptr || v.age > newest->age)) newest = &v;
+        if (newest != nullptr) slice = newest->playingSlice();
+        shownSlice.store (slice, std::memory_order_relaxed);
     }
     shownLowRms = fx.lowOn ? effects.lastLowRms : 0.0f;
     shownHighRms = fx.lowOn ? effects.lastHighRms : 0.0f;
@@ -1255,6 +1273,80 @@ void HypernovaAudioProcessor::applyExpressionToVoices (int channel)
 
 // The envelope follower: how loud the synth is right now, smoothed with its own attack and release.
 // It's taken from the voices (before the effects), so feeding it back into them can't run away.
+// ---------------------------------------------------------------------------------------------------
+// Chop Lab: the sample cut into slices, one per key from the chop root up. The edges are kept with the
+// sound as a list of positions; the audio thread reads a copy that is swapped in whole.
+void HypernovaAudioProcessor::setSlices (const juce::String& text)
+{
+    ab::Slices next;
+    juce::StringArray parts;
+    parts.addTokens (text, " ", "");
+    std::vector<float> at;
+    for (const auto& piece : parts)
+    {
+        if (piece.trim().isEmpty()) continue;
+        at.push_back (juce::jlimit (0.0f, 1.0f, piece.getFloatValue()));
+    }
+    std::sort (at.begin(), at.end());
+    // The edges always run from the start of the sample to its end, and never two in the same place.
+    std::vector<float> edges { 0.0f };
+    for (float v : at)
+        if (v > edges.back() + 0.002f && v < 0.998f) edges.push_back (v);
+    edges.push_back (1.0f);
+    if ((int) edges.size() > ab::MaxSlices + 1) edges.resize ((size_t) ab::MaxSlices + 1);
+    if (edges.size() >= 3)   // fewer than that is not a chop at all
+    {
+        next.edges = (int) edges.size();
+        for (size_t i = 0; i < edges.size(); ++i) next.at[i] = edges[i];
+    }
+    const int side = 1 - sliceSide.load (std::memory_order_acquire);
+    sliceTable[(size_t) side] = next;
+    sliceSide.store (side, std::memory_order_release);
+
+    juce::String saved;
+    for (int i = 0; i < next.edges; ++i) saved << juce::String (next.at[(size_t) i], 5) << " ";
+    apvts.state.setProperty ("slices", saved.trim(), &undoManager);
+    ++presetVersion;
+}
+
+juce::String HypernovaAudioProcessor::sliceText() const
+{
+    return apvts.state.getProperty ("slices", "").toString();
+}
+
+ab::Slices HypernovaAudioProcessor::slicesForUi() const
+{
+    return sliceTable[(size_t) sliceSide.load (std::memory_order_acquire)];
+}
+
+void HypernovaAudioProcessor::readSlicesFromState()
+{
+    setSlices (apvts.state.getProperty ("slices", "").toString());
+}
+
+// Cut the sample up: either where its hits are, or into equal pieces.
+void HypernovaAudioProcessor::chopSample (int slices)
+{
+    const auto* data = currentSample.load (std::memory_order_acquire);
+    if (data == nullptr || data->length < 64) return;
+    undoManager.beginNewTransaction (slices > 0 ? "Chop into " + juce::String (slices) : juce::String ("Chop on the hits"));
+    juce::String text;
+    if (slices > 0)
+    {
+        for (int i = 0; i <= slices; ++i) text << juce::String ((float) i / (float) slices, 5) << " ";
+    }
+    else
+    {
+        std::vector<float> mono ((size_t) data->length);
+        for (int i = 0; i < data->length; ++i) mono[(size_t) i] = 0.5f * (data->l[(size_t) i + 2] + data->r[(size_t) i + 2]);
+        for (float at : ab::dsp::findOnsets (mono, data->rate, ab::MaxSlices)) text << juce::String (at, 5) << " ";
+        text << "1";
+    }
+    setSlices (text.trim());
+    setParam ("chopOn", 1.0f);
+    apvts.copyState();
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Orbit: four captured sounds, and a point between them. Worked out once a block, before anything reads
 // a parameter, so the whole engine hears the blend without knowing anything about it.
@@ -2177,6 +2269,7 @@ bool HypernovaAudioProcessor::loadUserPreset (const juce::File& file)
     state.setProperty ("abSlot", compareSlot(), nullptr); // a preset loads into the A/B slot you're on
     apvts.replaceState (state);
     readCornersFromState();   // Orbit's corners come with the preset
+    readSlicesFromState();
     {
         const juce::ScopedLock sl (nameLock);
         presetName = state.getProperty ("presetName", file.getFileNameWithoutExtension()).toString();
@@ -2444,6 +2537,7 @@ void HypernovaAudioProcessor::setStateInformation (const void* data, int sizeInB
         takeSampleFrom (state, true);
         apvts.replaceState (state);
         readCornersFromState();   // Orbit's captured sounds travel with the session
+        readSlicesFromState();
         const juce::ScopedLock sl (nameLock);
         presetName = state.getProperty ("presetName", "Init").toString();
         presetCategory = state.getProperty ("presetCategory", "").toString();

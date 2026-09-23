@@ -747,6 +747,153 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Chop Lab: a sample cut into slices, one per key.
+    if (argc == 2 && juce::String (argv[1]) == "--chop")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        // A test recording: four hits, each a short burst at its own pitch, 0.25 s apart, so the slice a key
+        // plays can be told apart by its frequency.
+        const double tones[4] = { 220.0, 330.0, 440.0, 660.0 };
+        const auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("hn_chop_test.wav");
+        {
+            const double fileRate = 44100.0;
+            const int n = (int) (1.0 * fileRate);
+            juce::AudioBuffer<float> b (1, n);
+            b.clear();
+            for (int hit = 0; hit < 4; ++hit)
+            {
+                const int from = (int) (hit * 0.25 * fileRate);
+                const int len = (int) (0.18 * fileRate);
+                for (int i = 0; i < len && from + i < n; ++i)
+                {
+                    const double t = i / fileRate;
+                    const float env = (float) std::exp (-t * 12.0);          // a percussive hit, so onsets stand out
+                    b.setSample (0, from + i, env * (float) std::sin (juce::MathConstants<double>::twoPi * tones[hit] * t));
+                }
+            }
+            wavFile.deleteFile();
+            juce::WavAudioFormat wav;
+            auto stream = std::unique_ptr<juce::OutputStream> (wavFile.createOutputStream());
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (stream.get(), fileRate, 1, 24, {}, 0));
+            stream.release();
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        }
+
+        auto render = [&] (HypernovaAudioProcessor& p, int note, double seconds, double offAt)
+        {
+            const int total = (int) (seconds * rate), off = (int) (offAt * rate);
+            std::vector<float> out ((size_t) total, 0.0f);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 110), 0);
+                if (offAt > 0 && off >= pos && off < pos + 256) midi.addEvent (juce::MidiMessage::noteOff (1, note), off - pos);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256 && pos + i < total; ++i) out[(size_t) (pos + i)] = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            }
+            return out;
+        };
+        auto frequency = [&] (const std::vector<float>& x, double from, double to)
+        {
+            int crossings = 0, first = -1, last = -1;
+            for (int i = (int) (from * rate) + 1; i < (int) (to * rate) && i < (int) x.size(); ++i)
+                if (x[(size_t) i - 1] < 0.0f && x[(size_t) i] >= 0.0f) { if (first < 0) first = i; last = i; ++crossings; }
+            return crossings > 1 ? (crossings - 1) * rate / (last - first) : 0.0;
+        };
+        auto rms = [&] (const std::vector<float>& x, double from, double to)
+        {
+            double sum = 0; int n = 0;
+            for (int i = (int) (from * rate); i < (int) (to * rate) && i < (int) x.size(); ++i) { sum += x[(size_t) i] * x[(size_t) i]; ++n; }
+            return n > 0 ? std::sqrt (sum / juce::jmax (1, n)) : 0.0;
+        };
+
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        for (auto* id : { "aOn", "bOn", "subOn", "fltOn" }) p.setParam (id, 0.0f);
+        p.setParam ("noiseLevel", 0.0f);
+        juce::String error;
+        check (p.loadSample (wavFile, error), "the test recording loads (" + error + ")");
+        p.setParam ("smpOn", 1.0f);
+        p.setParam ("smpA", 0.0005f);
+        p.setParam ("smpR", 0.02f);
+        p.setParam ("ampA", 0.0005f);
+        p.setParam ("ampR", 0.02f);
+
+        // Chopping on the hits finds the four bursts.
+        p.chopSample (0);
+        const auto found = p.slicesForUi();
+        check (found.count() == 4, "chopping on the hits found four slices (" + juce::String (found.count()) + ")");
+        check (found.any() && std::abs (found.at[1] - 0.25f) < 0.04f && std::abs (found.at[2] - 0.5f) < 0.04f,
+               "and the cuts land on them (" + juce::String (found.at[1], 3) + ", " + juce::String (found.at[2], 3) + ")");
+        check (p.apvts.getRawParameterValue ("chopOn")->load() > 0.5f, "chopping switches Chop on");
+
+        // Each key from the root up plays its own slice, at the sample's own pitch.
+        p.setParam ("chopRoot", 60.0f);
+        for (int slice = 0; slice < 4; ++slice)
+        {
+            const auto out = render (p, 60 + slice, 0.2, 0.0);
+            const double f = frequency (out, 0.01, 0.06);
+            check (std::abs (f - tones[slice]) < tones[slice] * 0.08,
+                   "key " + juce::String (60 + slice) + " plays slice " + juce::String (slice + 1) + " ("
+                   + juce::String (juce::roundToInt (f)) + " Hz, wanted " + juce::String (juce::roundToInt (tones[slice])) + ")");
+        }
+
+        // A key past the last slice has nothing to play.
+        check (rms (render (p, 60 + 8, 0.2, 0.0), 0.0, 0.2) < 0.001, "a key past the last slice stays quiet");
+
+        // Equal slices: sixteen of them, and the fifth starts a quarter of the way in.
+        p.chopSample (16);
+        check (p.slicesForUi().count() == 16, "sixteen equal slices (" + juce::String (p.slicesForUi().count()) + ")");
+        check (std::abs (p.slicesForUi().at[4] - 0.25f) < 0.001f, "cut where they should be");
+        p.chopSample (4);
+
+        // Letting go of the key doesn't cut the slice off, unless the sound says to hold it.
+        {
+            const auto playedOut = render (p, 60, 0.22, 0.02);
+            check (rms (playedOut, 0.08, 0.16) > 0.002, "a slice plays out after the key goes up ("
+                   + juce::String (rms (playedOut, 0.08, 0.16), 4) + ")");
+            p.setParam ("chopHold", 1.0f);
+            const auto cutShort = render (p, 60, 0.22, 0.02);
+            check (rms (cutShort, 0.08, 0.16) < rms (playedOut, 0.08, 0.16) * 0.5, "with hold on, it stops with the key");
+            p.setParam ("chopHold", 0.0f);
+        }
+
+        // Switched off, the sampler plays the whole thing and follows the keyboard again.
+        {
+            p.setParam ("chopOn", 0.0f);
+            const auto low = render (p, 48, 0.3, 0.0), high = render (p, 60, 0.3, 0.0);
+            check (frequency (high, 0.01, 0.05) > frequency (low, 0.01, 0.05) * 1.8,
+                   "with Chop off the sampler tracks the keyboard again");
+            p.setParam ("chopOn", 1.0f);
+        }
+
+        // The slices travel with the sound.
+        {
+            juce::MemoryBlock state;
+            p.getStateInformation (state);
+            HypernovaAudioProcessor q;
+            q.prepareToPlay (rate, 256);
+            q.setStateInformation (state.getData(), (int) state.getSize());
+            check (q.slicesForUi().count() == p.slicesForUi().count() && q.sliceText() == p.sliceText(),
+                   "the slices come back with the session");
+            const auto out = render (q, 62, 0.2, 0.0);
+            check (std::abs (frequency (out, 0.01, 0.06) - tones[2]) < tones[2] * 0.08, "and the keys still play them");
+        }
+
+        // Slices can be set by hand, and are kept in order and inside the sample.
+        p.setSlices ("0.6 0.2 1.4 -0.3 0.2");
+        const auto tidy = p.slicesForUi();
+        check (tidy.count() == 3 && tidy.at[0] < tidy.at[1] && tidy.at[1] < tidy.at[2],
+               "markers dragged anywhere come back sorted and inside the sample (" + juce::String (tidy.count()) + " slices)");
+        wavFile.deleteFile();
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // Orbit: four captured sounds, and a point that morphs between them.
     if (argc == 2 && juce::String (argv[1]) == "--orbit")
     {

@@ -492,6 +492,7 @@ public:
     juce::uint64 age = 0;
     int trigger = -1; // the key that started this voice (chord voices share their root's key)
     bool held = false;
+    bool chopping = false, playingOut = false;   // a chopped slice, and one still playing after the key went up
 
     bool isActive() const { return ampEnv.active(); }
     float ampLevel() const { return ampEnv.value; }
@@ -501,6 +502,7 @@ public:
     float shownSample = -1; // sampler playhead, 0..1 of the sample (-1 when it isn't playing)
     double shownLfoPhase[NumLfo] {};
     float lastSrc[NumSrc] {}; // per-voice mod sources of the last sub-block (drives global FX destinations)
+    int playingSlice() const { return smpPlay.done ? -1 : smpPlay.slice; }   // which slice this voice is playing
     float slotValue[NumModSlots] {}; // each slot's source after its shape and slew (the effects use these too)
 
     void prepare (double sampleRate)
@@ -567,7 +569,10 @@ public:
         }
         ampEnv.noteOn();
         modEnv.noteOn();
-        smpPlay.start (s.smp);
+        // Chop Lab: each key from the root up plays its own slice, at the sample's own speed.
+        chopping = s.smp.chop && s.smp.slices.any() && s.smp.on;
+        playingOut = false;
+        smpPlay.start (s.smp, chopping ? midiNote - s.smp.chopRoot : -1);
         smpEnv.noteOn();
     }
 
@@ -579,7 +584,16 @@ public:
         held = true;
     }
 
-    void stop() { held = false; ampEnv.noteOff(); modEnv.noteOff(); smpEnv.noteOff(); }
+    // Letting go of a chopped key doesn't cut the slice off: it plays out, unless the sound says to hold.
+    void stop (bool playSliceOut = false)
+    {
+        held = false;
+        if (playSliceOut && chopping && ! smpPlay.done) { playingOut = true; return; }
+        playingOut = false;
+        ampEnv.noteOff();
+        modEnv.noteOff();
+        smpEnv.noteOff();
+    }
     // Hand the note over: this voice fades out in ~4 ms while the new note starts on another voice.
     // Smooth raised-cosine fade (~12 ms): no corner in the waveform, so no click even on a deep sub.
     void fadeOut() { held = false; fading = true; trigger = -1; fadeLen = fadeLeft = juce::jmax (1, (int) (0.012 * sr)); }
@@ -821,7 +835,8 @@ public:
             if (smpOn)
             {
                 const float notePart = sm.track ? basePitch : basePitch - currentPitch + (float) sm.root;
-                smpInc = std::exp2 ((notePart + sm.semi + sm.fine * 0.01f - (float) sm.root) / 12.0) * sm.data->rate / sr;
+                smpInc = chopping ? std::exp2 ((sm.semi + sm.fine * 0.01f) / 12.0) * sm.data->rate / sr
+                                  : std::exp2 ((notePart + sm.semi + sm.fine * 0.01f - (float) sm.root) / 12.0) * sm.data->rate / sr;
                 const float lvl = juce::jlimit (0.0f, 1.5f, sm.level + dst[DSmpLevel]);
                 const float p = juce::jlimit (-1.0f, 1.0f, sm.pan + dst[DPan]);
                 const float ang = (p + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
@@ -949,6 +964,7 @@ public:
                     if (s.noiseToFilter) { fL[noiseBusIdx] += nl; fR[noiseBusIdx] += nr; } else { dL[noiseBusIdx] += nl; dR[noiseBusIdx] += nr; }
                 }
 
+                if (playingOut && smpPlay.done) { playingOut = false; ampEnv.noteOff(); modEnv.noteOff(); smpEnv.noteOff(); }
                 if (smpOn)
                 {
                     float sl = 0, sr2 = 0;

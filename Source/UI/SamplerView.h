@@ -12,7 +12,8 @@ class SamplerView : public juce::Component, public juce::FileDragAndDropTarget, 
 public:
     explicit SamplerView (HypernovaAudioProcessor& p) : proc (p)
     {
-        setTooltip ("Drop a sample here. Drag the flags to set where it starts and ends, the brackets to set the loop.");
+        setTooltip ("Drop a sample here. Drag the flags to set where it starts and ends, the brackets to set the loop."
+                    " With slices: drag a cut to move it, alt-click to add one, double-click one to take it out.");
     }
 
     std::function<void (const juce::String&)> onMessage;
@@ -127,6 +128,37 @@ public:
             flag (le, "L", Palette::oscA, false);
         }
 
+        // Chop Lab: the slice edges, numbered, with the slice under the playhead lit.
+        const auto slices = proc.slicesForUi();
+        if (slices.any())
+        {
+            const bool chopping = value ("chopOn") > 0.5f;
+            const int playing = proc.shownSlice.load();
+            for (int i = 0; i < slices.count(); ++i)
+            {
+                const float x0 = xOf (slices.at[(size_t) i]), x1 = xOf (slices.at[(size_t) i + 1]);
+                if (i == playing && chopping)
+                {
+                    g.setColour (Palette::env.withAlpha (0.13f));
+                    g.fillRect (juce::Rectangle<float> (x0, plot.getY(), x1 - x0, plot.getHeight()));
+                }
+                if (i > 0)
+                {
+                    g.setColour ((chopping ? Palette::lfo.get() : Colours::line.get()).withAlpha (chopping ? 0.85f : 0.6f));
+                    g.fillRect (x0 - 0.5f, plot.getY(), 1.0f, plot.getHeight());
+                }
+                // The key this slice plays from, so the mapping is visible without counting.
+                if (chopping && x1 - x0 > 16.0f)
+                {
+                    g.setColour (Colours::textFaint.withAlpha (i == playing ? 1.0f : 0.7f));
+                    g.setFont (mono (8.0f).boldened());
+                    g.drawText (juce::MidiMessage::getMidiNoteName (juce::jlimit (0, 127, (int) value ("chopRoot") + i), true, true, 4),
+                                juce::Rectangle<float> (x0 + 3.0f, plot.getY() + 15.0f, x1 - x0 - 5.0f, 11.0f),
+                                juce::Justification::centredLeft, false);
+                }
+            }
+        }
+
         // Playhead of the newest voice.
         const float head = proc.shownSample.load();
         if (head >= 0.0f)
@@ -144,12 +176,25 @@ public:
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        setMouseCursor (markerAt (e.position) != nullptr ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+        const bool onEdge = markerAt (e.position) != nullptr || sliceEdgeAt (e.position) > 0;
+        setMouseCursor (onEdge ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (proc.sampleForUi() == nullptr) { if (onLoadRequest) onLoadRequest(); return; }
+        draggingSlice = -1;
+        if (proc.slicesForUi().any() && markerAt (e.position) == nullptr)
+        {
+            const int edge = sliceEdgeAt (e.position);
+            if (e.mods.isAltDown() || (e.mods.isCommandDown() && edge < 0))
+            {
+                // Alt-click puts a new cut where you click.
+                addSliceAt (positionOf (e.position));
+                return;
+            }
+            if (edge > 0) { draggingSlice = edge; return; }
+        }
         dragging = markerAt (e.position);
         if (dragging != nullptr)
             if (auto* p = proc.apvts.getParameter (dragging)) p->beginChangeGesture();
@@ -157,6 +202,7 @@ public:
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (draggingSlice > 0) { moveSlice (draggingSlice, positionOf (e.position)); return; }
         if (dragging == nullptr) return;
         const auto plot = plotArea();
         float v = juce::jlimit (0.0f, 1.0f, (e.position.x - plot.getX()) / plot.getWidth());
@@ -172,6 +218,7 @@ public:
 
     void mouseUp (const juce::MouseEvent&) override
     {
+        draggingSlice = -1;
         if (dragging != nullptr)
             if (auto* p = proc.apvts.getParameter (dragging)) p->endChangeGesture();
         dragging = nullptr;
@@ -179,9 +226,14 @@ public:
 
     void mouseDoubleClick (const juce::MouseEvent& e) override
     {
-        // Double-click a flag to put it back where it started.
+        // Double-click a flag to put it back where it started, or a slice edge to take that cut out.
         if (auto* id = markerAt (e.position))
+        {
             if (auto* p = proc.apvts.getParameter (id)) p->setValueNotifyingHost (p->getDefaultValue());
+            return;
+        }
+        const int edge = sliceEdgeAt (e.position);
+        if (edge > 0) removeSlice (edge);
     }
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override
@@ -225,10 +277,73 @@ private:
     int version = -1, lastChanges = -1;
     float lastHead = -2.0f;
     const char* dragging = nullptr;
+    int draggingSlice = -1;   // which slice edge is being dragged (never 0 or the last: those are the ends)
     bool dropHover = false;
 
     juce::Rectangle<float> plotArea() const { return getLocalBounds().toFloat().reduced (8.0f, 6.0f); }
     float value (const char* id) const { return proc.apvts.getRawParameterValue (id)->load(); }
+
+    // --- Chop Lab: the cuts between slices ---
+    float positionOf (juce::Point<float> where) const
+    {
+        const auto plot = plotArea();
+        return juce::jlimit (0.0f, 1.0f, (where.x - plot.getX()) / juce::jmax (1.0f, plot.getWidth()));
+    }
+
+    // Which cut is under the pointer, or -1. The two ends of the sample aren't cuts.
+    int sliceEdgeAt (juce::Point<float> where) const
+    {
+        const auto slices = proc.slicesForUi();
+        const auto plot = plotArea();
+        for (int i = 1; i < slices.edges - 1; ++i)
+            if (std::abs (plot.getX() + plot.getWidth() * slices.at[(size_t) i] - where.x) < 5.0f) return i;
+        return -1;
+    }
+
+    juce::String sliceTextWith (const std::vector<float>& edges) const
+    {
+        juce::String text;
+        for (float v : edges) text << juce::String (v, 5) << " ";
+        return text.trim();
+    }
+
+    std::vector<float> currentEdges() const
+    {
+        const auto slices = proc.slicesForUi();
+        std::vector<float> edges;
+        for (int i = 0; i < slices.edges; ++i) edges.push_back (slices.at[(size_t) i]);
+        return edges;
+    }
+
+    void moveSlice (int edge, float to)
+    {
+        auto edges = currentEdges();
+        if (edge <= 0 || edge >= (int) edges.size() - 1) return;
+        edges[(size_t) edge] = juce::jlimit (edges[(size_t) edge - 1] + 0.003f, edges[(size_t) edge + 1] - 0.003f, to);
+        proc.setSlices (sliceTextWith (edges));
+        repaint();
+    }
+
+    void addSliceAt (float at)
+    {
+        auto edges = currentEdges();
+        if (edges.empty()) edges = { 0.0f, 1.0f };
+        if ((int) edges.size() > MaxSlices) { if (onMessage) onMessage ("That's as many slices as there are keys for"); return; }
+        edges.push_back (juce::jlimit (0.0f, 1.0f, at));
+        proc.undoManager.beginNewTransaction ("Add a slice");
+        proc.setSlices (sliceTextWith (edges));
+        repaint();
+    }
+
+    void removeSlice (int edge)
+    {
+        auto edges = currentEdges();
+        if (edge <= 0 || edge >= (int) edges.size() - 1) return;
+        edges.erase (edges.begin() + edge);
+        proc.undoManager.beginNewTransaction ("Take a slice out");
+        proc.setSlices (sliceTextWith (edges));
+        repaint();
+    }
 
     void buildPeaks (const SampleData& s, int width)
     {

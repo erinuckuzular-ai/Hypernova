@@ -196,6 +196,13 @@ public:
     bool cornerFilled (int corner) const;
     juce::String cornerName (int corner) const;
     int cornersFilled() const;
+    // --- Chop Lab: the sample cut into slices, one per key ---------------------------------------------
+    void setSlices (const juce::String& text);       // "0 0.25 0.5 0.75 1", message thread, undoable
+    juce::String sliceText() const;
+    ab::Slices slicesForUi() const;
+    void chopSample (int slices);                    // 0 = find the hits, otherwise that many equal slices
+    std::atomic<int> shownSlice { -1 };               // the slice playing right now, for the waveform view
+
     void bakeOrbit();                                // the blend becomes the sound, and Orbit switches off
     float soundValue (const juce::String& id) const; // what the engine is using: the knob, or Orbit's blend
     bool orbitLive() const;                          // Orbit is on and has a sound to morph
@@ -350,6 +357,11 @@ private:
     std::atomic<bool> morphActive { false };
     std::atomic<bool> morphSeen { false };   // the engine has worked out a point at least once
     std::array<std::atomic<float>*, ab::NumFx> fxBusRaw {};   // each effect's bus, looked up once
+
+    // The slices live in the state tree; this is the copy the audio thread reads.
+    std::array<ab::Slices, 2> sliceTable;
+    std::atomic<int> sliceSide { 0 };
+    void readSlicesFromState();
 
     // Orbit's captured sounds live in the state tree; these are the copy the audio thread reads.
     std::array<ab::Orbit::Corners, 2> orbitCorners;
