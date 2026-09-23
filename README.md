@@ -32,6 +32,8 @@ cmake --build build --target SmokeTest && ./build/SmokeTest_artefacts/Release/Sm
 ./build/SmokeTest_artefacts/Release/SmokeTest --routing                                                 # the two buses
 ./build/SmokeTest_artefacts/Release/SmokeTest --resonator                                               # the physical models
 ./build/SmokeTest_artefacts/Release/SmokeTest --resample                                                # the sound recorded into the sampler
+./build/SmokeTest_artefacts/Release/SmokeTest --grains                                                  # the granular engine
+./build/SmokeTest_artefacts/Release/SmokeTest --chop                                                    # slicing
 ./build/UISnapshot_artefacts/Release/UISnapshot dist/shots --paintbench                                # UI draw cost per component
 cmake --build build --target UISnapshot && ./build/UISnapshot_artefacts/Release/UISnapshot dist/shots # editor PNGs (all three deck tabs)
 auval -v aumu ArBs Arrw

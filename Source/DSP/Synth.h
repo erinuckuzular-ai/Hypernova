@@ -589,6 +589,7 @@ public:
         modEnv.noteOn();
         // Chop Lab: each key from the root up plays its own slice, at the sample's own speed.
         resTail = 0;
+        if (s.smp.grains.on) cloud.reset();
         chopping = s.smp.chop && s.smp.slices.any() && s.smp.on;
         playingOut = false;
         smpPlay.start (s.smp, chopping ? midiNote - s.smp.chopRoot : -1);
@@ -854,10 +855,11 @@ public:
 
             // Sampler: pitch follows the voice (glide, bend, drop, drift) unless key tracking is off.
             const auto& sm = s.smp;
-            const bool smpOn = sm.on && sm.data != nullptr && ! smpPlay.done;
+            const bool grainsOn = sm.on && sm.data != nullptr && sm.grains.on;
+            const bool smpOn = sm.on && sm.data != nullptr && ! smpPlay.done && ! grainsOn;
             double smpInc = 0;
             float smpGL = 0, smpGR = 0;
-            if (smpOn)
+            if (smpOn || grainsOn)
             {
                 const float notePart = sm.track ? basePitch : basePitch - currentPitch + (float) sm.root;
                 smpInc = chopping ? std::exp2 ((sm.semi + sm.fine * 0.01f) / 12.0) * sm.data->rate / sr
@@ -895,7 +897,7 @@ public:
             const int subBusIdx = busOf (s.subBus), noiseBusIdx = busOf (s.noiseBus), smpBusIdx = busOf (sm.bus);
             if (subLevel > 0.0f && s.subToFilter) filtered[subBusIdx] = true;
             if (noiseLevel > 0.0f && s.noiseToFilter) filtered[noiseBusIdx] = true;
-            if (smpOn && sm.toFilter) filtered[smpBusIdx] = true;
+            if ((smpOn || grainsOn) && sm.toFilter) filtered[smpBusIdx] = true;
 
             // ---- audio rate ----
             for (int i = 0; i < n; ++i)
@@ -1003,7 +1005,16 @@ public:
                 }
 
                 if (playingOut && smpPlay.done) { playingOut = false; ampEnv.noteOff(); modEnv.noteOff(); smpEnv.noteOff(); }
-                if (smpOn)
+                if (grainsOn)
+                {
+                    // A cloud instead of a playhead: the sampler's own envelope still shapes it.
+                    float sl = 0, sr2 = 0;
+                    cloud.tick (sm, sm.grains, smpInc, smpGL, smpGR, sl, sr2, sr);
+                    const float e = smpEnv.tick();
+                    if (sm.toFilter) { fL[smpBusIdx] += sl * e; fR[smpBusIdx] += sr2 * e; }
+                    else             { dL[smpBusIdx] += sl * e; dR[smpBusIdx] += sr2 * e; }
+                }
+                else if (smpOn)
                 {
                     float sl = 0, sr2 = 0;
                     smpPlay.tick (sm, smpInc, smpGL, smpGR, sl, sr2);
@@ -1149,6 +1160,7 @@ private:
     double lfoPhase[NumLfo] {};
     float lfoHeld[NumLfo] {}, lfoPrevHeld[NumLfo] {};
     dsp::Env ampEnv, modEnv, smpEnv;
+    dsp::GrainCloud cloud;                         // the sampler as a cloud of grains
     dsp::Resonator resonator, resonator2;          // one per channel, so a stereo hit stays stereo
     dsp::Resonator::Settings resSettings;
     dsp::SamplePlayer smpPlay;

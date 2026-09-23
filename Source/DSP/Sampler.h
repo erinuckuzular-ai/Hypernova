@@ -54,6 +54,20 @@ struct Slices
 enum SampleLoop { LoopOff, LoopForward, LoopPingPong, NumLoopModes };
 inline juce::StringArray sampleLoopNames() { return { "No loop", "Loop", "Ping-pong" }; }
 
+// Grains: instead of one playhead, a cloud of short windowed reads. Each one starts somewhere near POSITION,
+// lasts SIZE, and is scattered by SPRAY (where) and PITCH (how fast), so a recording becomes a texture.
+struct GrainSettings
+{
+    bool on = false;
+    float position = 0.0f;    // 0..1 of the sample
+    float size = 0.08f;       // seconds
+    float rate = 20.0f;       // grains a second
+    float spray = 0.1f;       // how far from position a grain may start, as 0..1 of the sample
+    float pitchSpread = 0;    // semitones either side
+    float reverse = 0;        // how many of them play backwards, 0..1
+    float drift = 0;          // how fast position walks on by itself, in sample-lengths a second
+};
+
 struct SamplerSettings
 {
     bool on = false, track = true, reverse = false, toFilter = true;
@@ -62,6 +76,7 @@ struct SamplerSettings
     bool chop = false, chopHold = false;   // hold: the slice plays while the key is down, otherwise it plays out
     int chopRoot = 60;
     Slices slices;
+    GrainSettings grains;
     const SampleData* data = nullptr;
     int root = 60, loop = LoopOff;
     float level = 0.8f, pan = 0, semi = 0, fine = 0;          // fine in cents
@@ -164,6 +179,89 @@ namespace dsp
             }
             else if (pos >= b || pos < a) done = true;
         }
+    };
+
+    // A cloud of grains reading one recording. One of these belongs to each voice.
+    struct GrainCloud
+    {
+        static constexpr int MaxGrains = 16;
+
+        struct Grain
+        {
+            bool on = false;
+            double pos = 0, inc = 1;
+            int left = 0, length = 1;
+            float gainL = 1, gainR = 1;
+        };
+
+        void reset()
+        {
+            for (auto& g : grains) g = {};
+            next = 0;
+            walked = 0;
+            rng.setSeed (rng.nextInt64() | 1);
+        }
+
+        // Adds one frame of the whole cloud and moves it on. `speed` is the playback ratio a plain
+        // one-shot would use, so key tracking and tuning reach the grains too.
+        inline void tick (const SamplerSettings& s, const GrainSettings& gs, double speed, float gainL, float gainR,
+                          float& outL, float& outR, double sr)
+        {
+            if (s.data == nullptr) return;
+            const auto& d = *s.data;
+            const double len = (double) d.length;
+
+            // Start another grain when its turn comes round.
+            if (--next <= 0)
+            {
+                const double every = sr / juce::jlimit (0.5f, 200.0f, gs.rate);
+                next = juce::jmax (1, (int) every);
+                for (auto& g : grains)
+                {
+                    if (g.on) continue;
+                    const double centre = juce::jlimit (0.0, 1.0, (double) gs.position + walked);
+                    const double spray = (double) gs.spray * (rng.nextDouble() * 2.0 - 1.0);
+                    const double at = juce::jlimit (0.0, 0.999, centre + spray) * len;
+                    const double semis = gs.pitchSpread * (float) (rng.nextDouble() * 2.0 - 1.0);
+                    g.on = true;
+                    g.length = juce::jmax (16, (int) (juce::jlimit (0.002f, 2.0f, gs.size) * sr));
+                    g.left = g.length;
+                    g.inc = speed * std::pow (2.0, semis / 12.0);
+                    const bool back = rng.nextFloat() < juce::jlimit (0.0f, 1.0f, gs.reverse);
+                    if (back) g.inc = -g.inc;
+                    g.pos = juce::jlimit (4.0, len - 4.0, back ? at + g.length * std::abs (g.inc) : at);
+                    // A little of the stereo field per grain, so a cloud isn't a single point.
+                    const float pan = (float) (rng.nextDouble() * 2.0 - 1.0) * 0.35f;
+                    const float ang = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+                    g.gainL = std::cos (ang) * 1.41421356f;
+                    g.gainR = std::sin (ang) * 1.41421356f;
+                    break;
+                }
+            }
+
+            walked += (double) gs.drift / sr;
+            if (walked > 1.0) walked -= 1.0;
+            if (walked < -1.0) walked += 1.0;
+
+            for (auto& g : grains)
+            {
+                if (! g.on) continue;
+                // A raised-cosine window, so every grain fades in and out instead of clicking.
+                const float t = 1.0f - (float) g.left / (float) g.length;
+                const float w = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * t);
+                float L = 0, R = 0;
+                d.read (g.pos, L, R);
+                outL += L * w * g.gainL * gainL;
+                outR += R * w * g.gainR * gainR;
+                g.pos += g.inc;
+                if (--g.left <= 0 || g.pos < 0.0 || g.pos >= len) g.on = false;
+            }
+        }
+
+        std::array<Grain, MaxGrains> grains {};
+        int next = 0;
+        double walked = 0;
+        juce::Random rng { 0x9e3779b9 };
     };
 
     // Where a recording's hits are: the loudness rises sharply, then doesn't rise again for a moment. Used

@@ -1,5 +1,10 @@
 Download **Hypernova-0.14.0.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Apple Silicon + Intel, macOS 10.13 and later.
 
+## grains
+- **the sampler can read a recording as a cloud** instead of one playhead: a second of sound holds for as long as you hold the key.
+- **position** is where the grains come from — drag it on the display — **spray** scatters them, **size** and **rate** set how long each one lasts and how often they come, **pitch** spreads them, **reverse** turns some of them round and **drift** walks the position on by itself.
+- add it from the widget library (SOUND > Grains).
+
 ## resonator
 - **a new widget: strings, tubes, bells, plates and drum heads.** send any source into it — its row in the sources mixer now says MAIN, ALT or **RES** — and what you send becomes the hit.
 - a click of noise becomes a plucked string; a chopped break becomes a gamelan. it rings on after the envelope has closed, at the note you play.

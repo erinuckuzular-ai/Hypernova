@@ -1144,6 +1144,8 @@ int main (int argc, char** argv)
     });
     proc.setParam ("resOn", 0.0f);
     proc.setParam ("resMix", 0.0f);
+    // Grains needs a recording to read from, so it gets its own shot next to the sampler below.
+
     proc.setParam ("noiseLevel", 0.0f);
     proc.setParam ("noiseBus", 0.0f);
     snap ("ui_11_lfo3.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
@@ -1226,6 +1228,33 @@ int main (int argc, char** argv)
             std::printf ("wrote %s\n", cf.getFullPathName().toRawUTF8());
             proc.setSlices ("");
             proc.setParam ("chopOn", 0.0f);
+        }
+
+        // Grains: the same recording read as a cloud.
+        {
+            editor->addWidgetType ("grains");
+            proc.setParam ("grainOn", 1.0f);
+            proc.setParam ("grainPos", 0.32f);
+            proc.setParam ("grainSpray", 0.18f);
+            proc.setParam ("grainSize", 0.12f);
+            proc.setParam ("grainRate", 28.0f);
+            proc.setParam ("grainPitch", 5.0f);
+            juce::MidiBuffer grainMidi;
+            grainMidi.addEvent (juce::MidiMessage::noteOn (1, 55, 1.0f), 0);
+            for (int i = 0; i < 24; ++i)
+            {
+                juce::AudioBuffer<float> buf (2, 512);
+                proc.processBlock (buf, grainMidi);
+                grainMidi.clear();
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+            }
+            auto shot = editor->createComponentSnapshot (editor->getLocalBounds(), true, 2.0f);
+            auto gf = outDir.getChildFile ("ui_16_grains.png");
+            gf.deleteFile();
+            juce::FileOutputStream grainOut (gf);
+            juce::PNGImageFormat().writeImageToStream (shot, grainOut);
+            std::printf ("wrote %s\n", gf.getFullPathName().toRawUTF8());
+            proc.setParam ("grainOn", 0.0f);
         }
         wavFile.deleteFile();
         proc.clearSample();

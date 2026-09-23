@@ -747,6 +747,155 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Grains: the sampler read as a cloud instead of one playhead.
+    if (argc == 2 && juce::String (argv[1]) == "--grains")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        // A recording that changes as it goes: a tone that steps up every quarter of a second, so where the
+        // grains are reading from can be heard.
+        const double tones[4] = { 220.0, 440.0, 880.0, 1760.0 };
+        const auto wavFile = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("hn_grain_test.wav");
+        {
+            const double fileRate = 44100.0;
+            const int n = (int) fileRate;
+            juce::AudioBuffer<float> b (1, n);
+            for (int i = 0; i < n; ++i)
+            {
+                const int part = juce::jlimit (0, 3, (int) (4.0 * i / n));
+                b.setSample (0, i, 0.6f * (float) std::sin (juce::MathConstants<double>::twoPi * tones[part] * i / fileRate));
+            }
+            wavFile.deleteFile();
+            juce::WavAudioFormat wav;
+            auto stream = std::unique_ptr<juce::OutputStream> (wavFile.createOutputStream());
+            auto writer = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (stream.get(), fileRate, 1, 24, {}, 0));
+            stream.release();
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        }
+        auto render = [&] (HypernovaAudioProcessor& p, int note, double seconds)
+        {
+            p.panic();
+            const int total = (int) (seconds * rate);
+            std::vector<float> out ((size_t) total, 0.0f);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 110), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256 && pos + i < total; ++i) out[(size_t) (pos + i)] = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            }
+            return out;
+        };
+        auto pitchOf = [&] (const std::vector<float>& x, double from, double to)
+        {
+            std::vector<float> part (x.begin() + juce::jmin ((size_t) (from * rate), x.size()),
+                                     x.begin() + juce::jmin ((size_t) (to * rate), x.size()));
+            const float note = ab::dsp::detectPitch (part, rate, 0);
+            return note < 0 ? 0.0 : 440.0 * std::pow (2.0, (note - 69.0) / 12.0);
+        };
+        auto rms = [&] (const std::vector<float>& x, double from, double to)
+        {
+            double sum = 0; int n = 0;
+            for (int i = (int) (from * rate); i < (int) (to * rate) && i < (int) x.size(); ++i) { sum += (double) x[(size_t) i] * x[(size_t) i]; ++n; }
+            return n > 0 ? std::sqrt (sum / juce::jmax (1, n)) : 0.0;
+        };
+        auto anyNaN = [] (const std::vector<float>& x)
+        {
+            for (float v : x) if (! std::isfinite (v)) return true;
+            return false;
+        };
+
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        p.applyPresetValues ({});
+        for (auto* id : { "aOn", "bOn", "subOn", "fltOn" }) p.setParam (id, 0.0f);
+        p.setParam ("noiseLevel", 0.0f);
+        juce::String error;
+        check (p.loadSample (wavFile, error), "the test recording loads (" + error + ")");
+        p.setParam ("smpOn", 1.0f);
+        p.setParam ("smpStart", 0.0f);
+        p.setParam ("smpTrack", 0.0f);     // the grains read at the sample's own speed
+        p.setParam ("smpRoot", 60.0f);
+        p.setParam ("smpA", 0.001f);
+        p.setParam ("smpS", 1.0f);
+        p.setParam ("ampA", 0.001f);
+        p.setParam ("ampS", 1.0f);
+        p.setParam ("grainOn", 1.0f);
+        p.setParam ("grainSize", 0.08f);
+        p.setParam ("grainRate", 30.0f);
+        p.setParam ("grainSpray", 0.0f);
+
+        // A cloud holds a note for as long as you like, from a recording that was only a second long.
+        p.setParam ("grainPos", 0.05f);
+        const auto held = render (p, 60, 3.0);
+        check (! anyNaN (held), "nothing blows up");
+        check (rms (held, 2.0, 2.9) > 0.01, "a second of recording holds for as long as you hold the key ("
+               + juce::String (rms (held, 2.0, 2.9), 3) + ")");
+        check (std::abs (pitchOf (held, 1.0, 1.5) - 220.0) < 220.0 * 0.06, "and it reads from where POSITION points ("
+               + juce::String (juce::roundToInt (pitchOf (held, 1.0, 1.5))) + " Hz, wanted 220)");
+
+        // Move the position and it reads from somewhere else.
+        p.setParam ("grainPos", 0.55f);
+        const auto later = render (p, 60, 2.0);
+        check (std::abs (pitchOf (later, 1.0, 1.5) - 880.0) < 880.0 * 0.08, "moving POSITION reads from further in ("
+               + juce::String (juce::roundToInt (pitchOf (later, 1.0, 1.5))) + " Hz, wanted 880)");
+
+        // Spray scatters them, so more than one part of the recording is heard at once.
+        p.setParam ("grainSpray", 0.5f);
+        const auto sprayed = render (p, 60, 2.0);
+        check (rms (sprayed, 0.5, 1.5) > 0.005, "spray still makes sound (" + juce::String (rms (sprayed, 0.5, 1.5), 3) + ")");
+        p.setParam ("grainSpray", 0.0f);
+
+        // Pitch spread, reverse and drift all run without trouble.
+        p.setParam ("grainPitch", 12.0f);
+        p.setParam ("grainReverse", 0.5f);
+        p.setParam ("grainDrift", 0.4f);
+        const auto wild = render (p, 60, 2.0);
+        float loudest = 0;
+        for (float v : wild) loudest = juce::jmax (loudest, std::abs (v));
+        check (! anyNaN (wild) && loudest < 4.0f && rms (wild, 0.5, 1.5) > 0.003,
+               "pitch spread, reverse and drift all behave (peak " + juce::String (loudest, 2) + ")");
+        p.setParam ("grainPitch", 0.0f);
+        p.setParam ("grainReverse", 0.0f);
+        p.setParam ("grainDrift", 0.0f);
+
+        // Tiny grains, very fast: the worst case for the scheduler.
+        p.setParam ("grainSize", 0.005f);
+        p.setParam ("grainRate", 200.0f);
+        const auto dense = render (p, 60, 1.0);
+        check (! anyNaN (dense) && rms (dense, 0.2, 0.9) > 0.003, "tiny grains at 200 a second still sound ("
+               + juce::String (rms (dense, 0.2, 0.9), 3) + ")");
+
+        // What eight voices of it cost.
+        {
+            p.setParam ("grainSize", 0.08f);
+            p.setParam ("grainRate", 40.0f);
+            juce::MidiBuffer midi;
+            for (int k = 0; k < 8; ++k) midi.addEvent (juce::MidiMessage::noteOn (1, 48 + k * 3, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> buf (2, 256);
+            const int blocks = (int) (2.0 * rate / 256);
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            for (int b = 0; b < blocks; ++b) { p.processBlock (buf, midi); midi.clear(); }
+            const double cost = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) / 2.0 * 100.0;
+            check (cost < 40.0, "eight clouds at once cost " + juce::String (cost, 1) + "% of realtime");
+        }
+
+        // Switched off, the sampler is a sampler again.
+        {
+            p.setParam ("grainOn", 0.0f);
+            p.setParam ("smpTrack", 0.0f);
+            const auto plain = render (p, 60, 0.5);
+            check (std::abs (pitchOf (plain, 0.02, 0.2) - 220.0) < 220.0 * 0.06,
+                   "with grains off it plays straight through again (" + juce::String (juce::roundToInt (pitchOf (plain, 0.02, 0.2))) + " Hz)");
+        }
+        wavFile.deleteFile();
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // The resonator: a string, a tube, a bell, a plate or a drum head, struck by whatever is sent into it.
     if (argc == 2 && juce::String (argv[1]) == "--resonator")
     {

@@ -316,6 +316,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
     }
 
+    // Grains (appended): the sampler read as a cloud of short windowed grains instead of one playhead.
+    add<Bool> (l, pid ("grainOn"), "Grains", false);
+    addFloat (l, "grainPos", "Grain Position", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "grainSize", "Grain Size", skewed (0.005f, 1.0f, 0.08f), 0.08f, timeText);
+    addFloat (l, "grainRate", "Grain Rate", skewed (0.5f, 200.0f, 20.0f), 20.0f, [] (float v, int) { return juce::String (v, v < 10.0f ? 1 : 0) + "/s"; });
+    addFloat (l, "grainSpray", "Grain Spray", { 0.0f, 1.0f }, 0.08f, pctText);
+    addFloat (l, "grainPitch", "Grain Pitch Spread", { 0.0f, 24.0f, 0.1f }, 0.0f, semiText);
+    addFloat (l, "grainReverse", "Grain Reverse", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "grainDrift", "Grain Drift", { -2.0f, 2.0f }, 0.0f, [] (float v, int) { return juce::String (v, 2) + "x"; });
+
     // The resonator (appended): a string, a tube, a bell, a plate or a drum head, struck by whatever you send it.
     add<Bool> (l, pid ("resOn"), "Resonator", false);
     add<Choice> (l, pid ("resModel"), "Resonator Model", dsp::Resonator::modelNames(), 0);
@@ -592,6 +602,14 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     sm.reverse = param ("smpReverse") > 0.5f;
     sm.toFilter = param ("smpFilter") > 0.5f;
     sm.bus = (int) param ("smpBus");
+    sm.grains.on = param ("grainOn") > 0.5f;
+    sm.grains.position = param ("grainPos");
+    sm.grains.size = param ("grainSize");
+    sm.grains.rate = param ("grainRate");
+    sm.grains.spray = param ("grainSpray");
+    sm.grains.pitchSpread = param ("grainPitch");
+    sm.grains.reverse = param ("grainReverse");
+    sm.grains.drift = param ("grainDrift");
     sm.chop = param ("chopOn") > 0.5f;
     sm.chopRoot = (int) param ("chopRoot");
     sm.chopHold = param ("chopHold") > 0.5f;

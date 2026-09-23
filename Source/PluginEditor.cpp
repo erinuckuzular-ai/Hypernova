@@ -463,6 +463,22 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (followerMeter, Spread::Stretch);
     }
 
+    // Grains: the sampler read as a cloud instead of one playhead.
+    {
+        const juce::Rectangle<int> design { 0, 0, 500, 224 };
+        auto& w = makeWidget ("grains", "grains", "GRAINS", Palette::oscA, design, 38);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (Palette::oscA), "grainOn", { 8, 8, 26, 26 },
+                "Read the sample as a cloud of short grains instead of one playhead", W);
+        W->addAndMakeVisible (grainsView);
+        grainsView.setBounds (12, 44, design.getWidth() - 24, 92);
+        const char* ids[] = { "grainPos", "grainSize", "grainRate", "grainSpray", "grainPitch", "grainReverse", "grainDrift" };
+        const char* names[] = { "POSITION", "SIZE", "RATE", "SPRAY", "PITCH", "REVERSE", "DRIFT" };
+        for (int i = 0; i < 7; ++i) knob (ids[i], names[i], Palette::oscA, { 8 + i * 70, 140, 70, 68 }, 40, W);
+        w.finishBuilding();
+        w.spread.setFlags (grainsView, Spread::Stretch);
+    }
+
     // The resonator: whatever is sent into it rings as a string, a tube, a bell, a plate or a drum head.
     {
         const juce::Rectangle<int> design { 0, 0, 500, 224 };
@@ -962,6 +978,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (followerMeter.isVisible()) followerMeter.refresh();
     if (orbitPad.isVisible()) orbitPad.refresh();   // the point follows the engine, however it is being moved
     if (resonatorView.isVisible()) resonatorView.refresh();
+    if (grainsView.isVisible()) grainsView.refresh();
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();
