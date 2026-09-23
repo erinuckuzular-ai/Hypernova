@@ -2,6 +2,7 @@
 
 #include <juce_dsp/juce_dsp.h>
 #include "ExtraFx.h"
+#include "Freeze.h"
 #include <cmath>
 #include <array>
 #include <vector>
@@ -23,10 +24,10 @@ inline double delayTimeBeats (int i)
 
 // The rack: the effects that can be put in any order. Width and mono bass stay last (they're the output stage).
 // Append only: saved orders store these numbers.
-enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, FxCrush, FxSpeaker, NumFx }; // append only
+enum FxId { FxDist, FxTape, FxOtt, FxPitch, FxChorus, FxFlanger, FxFilter, FxGate, FxDelay, FxReverb, FxEq, FxCrush, FxSpeaker, FxFreeze, NumFx }; // append only
 inline juce::StringArray fxRackNames()
 {
-    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ", "CRUSH", "SPEAKER" };
+    return { "DIST", "TAPE", "OTT", "PITCH", "CHORUS", "FLANGER", "FILTER", "GATE", "DELAY", "SPACE", "EQ", "CRUSH", "SPEAKER", "FREEZE" };
 }
 using FxOrder = std::array<juce::uint8, NumFx>;
 using FxBuses = std::array<juce::uint8, NumFx>;   // 0 = the main bus, 1 = the alt bus
@@ -77,6 +78,10 @@ struct FxSettings
     float bpm = 120.0f;
     // Per-effect bypass (clicking an effect's name in the UI). Default on so older sessions are unchanged.
     bool distOn = true, ottOn = true, chorusOn = true, delayOn = true, reverbOn = true, eqOn = true;
+    // Event Horizon (appended): hold a moment of the sound open.
+    bool freezeOn = true;
+    dsp::Freeze::Settings freeze;
+
     // Crush (appended): sample-rate and bit reduction, the old sampler sound.
     bool crushOn = true;
     float crushBits = 16.0f, crushRate = 24000.0f, crushMix = 0;
@@ -384,6 +389,7 @@ public:
         fxFilter.prepare (sampleRate);
         shifter.prepare (sampleRate);
         speaker.prepare (sampleRate);
+        freeze.prepare (sampleRate);
 
         scratch.setSize (2, blockSize);
         for (auto& f : eqBands) f.reset();
@@ -612,6 +618,10 @@ private:
             case FxCrush:
                 if (s.crushOn && s.crushMix > 0.001f) crush (L, R, n, s);
                 break;
+            case FxFreeze:
+                if (s.freezeOn) freeze.process (L, R, n, s.freeze);
+                break;
+
             case FxSpeaker:
                 if (s.speakerOn && s.speakerMix > 0.001f) speaker.process (L, R, n, s.speakerType, s.speakerDrive, s.speakerMix);
                 break;
@@ -668,6 +678,7 @@ private:
     ab::dsp::FxFilter fxFilter;
     ab::dsp::PitchShifter shifter;
     ab::dsp::Speaker speaker;
+    ab::dsp::Freeze freeze;
     int grainWrite = 0;
     std::array<float, 4> grainPos {}, grainRate {};
     std::array<int, 4> grainLeft {};

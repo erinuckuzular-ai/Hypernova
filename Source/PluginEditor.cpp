@@ -1845,6 +1845,10 @@ void HypernovaAudioProcessorEditor::buildRackModules()
     kn (ab::FxEq, "eqMidQ", "WIDTH", 184);       kn (ab::FxEq, "eqHigh", "HIGH", 242);
     kn (ab::FxCrush, "crushBits", "BITS", 10);   kn (ab::FxCrush, "crushRate", "RATE", 68);  kn (ab::FxCrush, "crushMix", "MIX", 126);
     kn (ab::FxSpeaker, "spkDrive", "GRIT", 30);  kn (ab::FxSpeaker, "spkMix", "MIX", 112);
+    kn (ab::FxFreeze, "frzBlur", "BLUR", 10);    kn (ab::FxFreeze, "frzShift", "SHIFT", 68);
+    kn (ab::FxFreeze, "frzSpread", "SPREAD", 126); kn (ab::FxFreeze, "frzMix", "MIX", 184);
+    toggle (std::make_unique<PillToggle> ("HOLD", ab::ui::fxColour (ab::FxFreeze)), "frzHold", { 10, by + 1, 232, 22 },
+            "Hold what is going through right now, and keep playing it", &rack.module (ab::FxFreeze));
     cb (ab::FxSpeaker, "spkType", ab::dsp::Speaker::typeNames(), { 10, by, 190, 24 });
     kn (-1, "fxMix", "MIX", 42);   // how much of the rack you hear at all
     kn (-1, "width", "WIDTH", 106);
@@ -1996,7 +2000,7 @@ void HypernovaAudioProcessorEditor::showAddEffectMenu (juce::Component* target, 
     // until it has its own blurb, instead of reading past the end of the array.
     static const char* blurbs[] = { "warmth to grit", "wobble, hiss, saturation", "multiband squash", "shift up or down",
                                     "width and movement", "jet swooshes", "sweeping filter", "trance gate and auto pan",
-                                    "echoes", "reverb", "five bands", "bits and sample rate", "phone, car, club" };
+                                    "echoes", "reverb", "five bands", "bits and sample rate", "phone, car, club", "hold a moment open" };
     static_assert (std::size (blurbs) == (size_t) ab::NumFx, "every effect needs its own line in this menu");
     for (int fx = 0; fx < ab::NumFx; ++fx)
     {

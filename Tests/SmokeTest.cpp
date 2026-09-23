@@ -747,6 +747,120 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Event Horizon: holding a moment of the sound open.
+    if (argc == 2 && juce::String (argv[1]) == "--freeze")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        // Plays a note for `heldFor`, lets go, and keeps rendering: what comes out afterwards is the freeze.
+        // HOLD is pressed while the note is sounding, the way a pedal is: whatever is playing then is caught.
+        auto run = [&] (HypernovaAudioProcessor& p, int note, double heldFor, double total, double holdAt = -1.0)
+        {
+            p.panic();
+            if (holdAt >= 0.0) p.setParam ("frzHold", 0.0f);
+            const int frames = (int) (total * rate), off = (int) (heldFor * rate), press = (int) (holdAt * rate);
+            std::vector<float> out ((size_t) frames, 0.0f);
+            for (int pos = 0; pos < frames; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 110), 0);
+                if (off >= pos && off < pos + 256) midi.addEvent (juce::MidiMessage::noteOff (1, note), off - pos);
+                if (holdAt >= 0.0 && press >= pos && press < pos + 256) p.setParam ("frzHold", 1.0f);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256 && pos + i < frames; ++i) out[(size_t) (pos + i)] = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            }
+            return out;
+        };
+        auto rms = [&] (const std::vector<float>& x, double from, double to)
+        {
+            double sum = 0; int n = 0;
+            for (int i = (int) (from * rate); i < (int) (to * rate) && i < (int) x.size(); ++i) { sum += (double) x[(size_t) i] * x[(size_t) i]; ++n; }
+            return n > 0 ? std::sqrt (sum / juce::jmax (1, n)) : 0.0;
+        };
+        auto pitchOf = [&] (const std::vector<float>& x, double from, double to)
+        {
+            std::vector<float> part (x.begin() + juce::jmin ((size_t) (from * rate), x.size()),
+                                     x.begin() + juce::jmin ((size_t) (to * rate), x.size()));
+            const float note = ab::dsp::detectPitch (part, rate, 0);
+            return note < 0 ? 0.0 : 440.0 * std::pow (2.0, (note - 69.0) / 12.0);
+        };
+        auto anyNaN = [] (const std::vector<float>& x)
+        {
+            for (float v : x) if (! std::isfinite (v)) return true;
+            return false;
+        };
+
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        p.applyPresetValues ({});
+        p.setParam ("aTable", 0.0f);
+        p.setParam ("ampR", 0.05f);
+        p.setParam ("fltOn", 0.0f);
+        const int plain = p.getLatencySamples();
+
+        // Nothing frozen: the note stops when it stops.
+        const auto dry = run (p, 57, 0.4, 1.6);
+        check (rms (dry, 1.0, 1.5) < 0.002, "with nothing held, the note stops when you let go ("
+               + juce::String (rms (dry, 1.0, 1.5), 4) + ")");
+        check (p.getLatencySamples() == plain, "and the freeze costs no delay while it is doing nothing");
+
+        // Held: what was playing carries on after the key is long gone.
+        p.addToRack (ab::FxFreeze);
+        p.setParam ("frzMix", 1.0f);
+        const auto held = run (p, 57, 0.4, 2.0, 0.25);
+        check (! anyNaN (held), "nothing blows up");
+        check (rms (held, 1.2, 1.9) > 0.005, "held, the sound carries on after the note has gone ("
+               + juce::String (rms (held, 1.2, 1.9), 4) + ")");
+        const double frozen = pitchOf (held, 1.0, 1.6);
+        check (std::abs (frozen - 220.0) < 220.0 * 0.08, "and it holds the note it caught ("
+               + juce::String (juce::roundToInt (frozen)) + " Hz, wanted 220)");
+        check (p.getLatencySamples() > plain, "the host is told about the delay it needs ("
+               + juce::String (p.getLatencySamples() - plain) + " samples)");
+
+        // Shifted up an octave.
+        p.setParam ("frzShift", 12.0f);
+        const auto up = run (p, 57, 0.4, 2.0, 0.25);
+        const double shifted = pitchOf (up, 1.0, 1.6);
+        check (shifted > frozen * 1.7 && shifted < frozen * 2.3, "SHIFT moves what is held ("
+               + juce::String (juce::roundToInt (shifted)) + " Hz, wanted about 440)");
+        p.setParam ("frzShift", 0.0f);
+
+        // Spread smears it into a texture, and none of it runs away.
+        p.setParam ("frzSpread", 0.8f);
+        const auto smeared = run (p, 57, 0.4, 1.6, 0.25);
+        float loudest = 0;
+        for (float v : smeared) loudest = juce::jmax (loudest, std::abs (v));
+        check (! anyNaN (smeared) && loudest < 2.0f && rms (smeared, 1.0, 1.5) > 0.002,
+               "SPREAD smears it without running away (peak " + juce::String (loudest, 2) + ")");
+        p.setParam ("frzSpread", 0.0f);
+
+        // Letting go of HOLD lets it go.
+        {
+            p.setParam ("frzHold", 0.0f);
+            const auto let = run (p, 57, 0.4, 1.6);   // not pressed this time
+            check (rms (let, 1.1, 1.5) < rms (held, 1.2, 1.9) * 0.5, "letting go of HOLD lets the sound go ("
+                   + juce::String (rms (let, 1.1, 1.5), 4) + ")");
+        }
+
+        // What it costs.
+        {
+            p.setParam ("frzHold", 1.0f);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 57, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> buf (2, 256);
+            const int blocks = (int) (2.0 * rate / 256);
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            for (int b = 0; b < blocks; ++b) { p.processBlock (buf, midi); midi.clear(); }
+            const double cost = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) / 2.0 * 100.0;
+            check (cost < 30.0, "holding costs " + juce::String (cost, 1) + "% of realtime");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // Sound DNA: children take after their parents.
     if (argc == 2 && juce::String (argv[1]) == "--dna")
     {

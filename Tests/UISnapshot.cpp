@@ -847,6 +847,9 @@ int main (int argc, char** argv)
             ed->loadWorkspace ("Effects", false);
             proc.addToRack (ab::FxCrush);
             proc.addToRack (ab::FxSpeaker);
+            proc.addToRack (ab::FxFreeze);
+            proc.setParam ("frzMix", 1.0f);
+            proc.setParam ("frzHold", 1.0f);
             proc.setParam ("spkBus", 1.0f);    // the speaker on the alt bus: two lanes in the rack
             proc.setParam ("bBus", 1.0f);
             proc.setParam ("spkType", (float) ab::dsp::Speaker::Phone);

@@ -17,6 +17,7 @@ struct RackLive
 {
     static constexpr int bands = 64, wavePoints = 96;
     std::array<float, bands> spectrum {};      // 0..1 per band, 30 Hz .. 16 kHz, log spaced
+    std::array<float, bands> held {};          // the spectrum as the freeze unit is holding it
     std::array<float, wavePoints> wave {};     // the latest ~20 ms, normalised to its peak
     std::array<float, 256> l {}, r {};         // for the stereo view
     float level = 0, peak = 0;
@@ -45,6 +46,7 @@ inline ThemeColour fxColour (int fxId)
         case FxEq:      return Palette::env;
         case FxCrush:   return ThemeColour { SlotWarm };
         case FxSpeaker: return Palette::oscB;
+        case FxFreeze:  return ThemeColour { SlotAccent };
         default:        return ThemeColour { SlotText };
     }
 }
@@ -537,6 +539,46 @@ private:
         switch (fxId)
         {
             case FxEq: paintEq (g, r); return;
+            case FxFreeze:
+            {
+                // What is being held: the spectrum, still, with the shift and the spread drawn into it.
+                const bool holding = v ("frzHold") > 0.5f;
+                const float mix = v ("frzMix");
+                const float shift = v ("frzShift"), spread = v ("frzSpread");
+                juce::Path shape;
+                for (int b = 0; b < RackLive::bands; ++b)
+                {
+                    const float t = (float) b / (float) (RackLive::bands - 1);
+                    float level = live != nullptr ? juce::jlimit (0.0f, 1.0f, live->spectrum[(size_t) b]) : 0.0f;
+                    if (holding && live != nullptr)
+                    {
+                        // Frozen: the same shape every frame, moved by SHIFT and smeared by SPREAD.
+                        const float from = juce::jlimit (0.0f, 1.0f, t - shift / 48.0f);
+                        const int i0 = juce::jlimit (0, RackLive::bands - 1, (int) (from * (RackLive::bands - 1)));
+                        level = juce::jlimit (0.0f, 1.0f, live->held[(size_t) i0]);
+                        if (spread > 0.01f)
+                        {
+                            float sum = level, weight = 1.0f;
+                            const int wide = juce::jmax (1, (int) (spread * 8.0f));
+                            for (int k = 1; k <= wide; ++k)
+                            {
+                                const float w = 1.0f - (float) k / (float) (wide + 1);
+                                if (i0 - k >= 0) { sum += live->held[(size_t) (i0 - k)] * w; weight += w; }
+                                if (i0 + k < RackLive::bands) { sum += live->held[(size_t) (i0 + k)] * w; weight += w; }
+                            }
+                            level = sum / weight;
+                        }
+                    }
+                    const float x = r.getX() + r.getWidth() * t;
+                    const float y = r.getBottom() - r.getHeight() * level * juce::jmax (0.2f, mix);
+                    if (b == 0) shape.startNewSubPath (x, y); else shape.lineTo (x, y);
+                }
+                glowStroke (g, shape, c, holding ? 1.8f : 1.2f, holding ? 0.9f : 0.5f);
+                g.setColour (holding ? c : Colours::textDim.get());
+                g.setFont (mono (8.5f).boldened().withExtraKerningFactor (0.14f));
+                g.drawText (holding ? "HELD" : "LISTENING", r.reduced (3.0f, 2.0f), juce::Justification::topLeft, false);
+                return;
+            }
             case FxSpeaker:
             {
                 // The band this box passes, with its honk: the response curve over the live spectrum.
@@ -751,6 +793,7 @@ public:
             case FxChorus: return 190; case FxFlanger: return 250; case FxFilter: return 250; case FxGate: return 250;
             case FxDelay: return 250;  case FxReverb: return 210;  case FxEq: return 310;    case FxCrush: return 200;
             case FxSpeaker: return 210;
+            case FxFreeze: return 252;
             default: return 208; // the output stage
         }
     }
@@ -822,6 +865,11 @@ public:
             const float target = juce::jlimit (0.0f, 1.0f, (db + 70.0f) / 64.0f);
             auto& v = live.spectrum[(size_t) b];
             v = target > v ? target : v + (target - v) * 0.3f;
+        }
+        // While the freeze unit isn't holding, the held shape follows the sound; when it is, it stands still.
+        {
+            auto* holdParam = proc.apvts.getRawParameterValue ("frzHold");
+            if (holdParam == nullptr || holdParam->load() < 0.5f) live.held = live.spectrum;
         }
         // The latest ~20 ms of the waveform, normalised, starting on a rising zero crossing so it stands still.
         const int span = (int) (0.02 * sr);

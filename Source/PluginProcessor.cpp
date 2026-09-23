@@ -316,6 +316,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
     }
 
+    // Event Horizon (appended): hold a moment of the sound open.
+    add<Bool> (l, pid ("frzOn"), "Freeze On", true);
+    add<Bool> (l, pid ("frzHold"), "Freeze Hold", false);
+    addFloat (l, "frzBlur", "Freeze Blur", { 0.0f, 1.0f }, 0.3f, pctText);
+    addFloat (l, "frzShift", "Freeze Shift", { -24.0f, 24.0f, 1.0f }, 0.0f, semiText);
+    addFloat (l, "frzSpread", "Freeze Spread", { 0.0f, 1.0f }, 0.0f, pctText);
+    addFloat (l, "frzMix", "Freeze Mix", { 0.0f, 1.0f }, 0.0f, pctText);
+
     // Grains (appended): the sampler read as a cloud of short windowed grains instead of one playhead.
     add<Bool> (l, pid ("grainOn"), "Grains", false);
     addFloat (l, "grainPos", "Grain Position", { 0.0f, 1.0f }, 0.0f, pctText);
@@ -699,6 +707,12 @@ FxSettings HypernovaAudioProcessor::readFxSettings()
     f.crushBits = param ("crushBits");
     f.crushRate = param ("crushRate");
     f.crushMix = param ("crushMix");
+    f.freezeOn = param ("frzOn") > 0.5f;
+    f.freeze.hold = param ("frzHold") > 0.5f;
+    f.freeze.blur = param ("frzBlur");
+    f.freeze.shift = param ("frzShift");
+    f.freeze.spread = param ("frzSpread");
+    f.freeze.mix = param ("frzMix");
     f.speakerOn = param ("spkOn") > 0.5f;
     f.speakerType = (int) param ("spkType");
     f.speakerDrive = param ("spkDrive");
@@ -921,7 +935,19 @@ void HypernovaAudioProcessor::applyQuality (int q)
     for (auto& v : voices) v.prepare (sampleRateNow * osFactor);
     auto* os = osFactor > 1 ? voiceOversampler[(size_t) (osFactor == 2 ? 0 : 1)].get() : nullptr;
     if (os != nullptr) os->reset();
-    setLatencySamples ((os != nullptr ? juce::roundToInt (os->getLatencyInSamples()) : 0) + limiterLen);
+    baseLatency = (os != nullptr ? juce::roundToInt (os->getLatencyInSamples()) : 0) + limiterLen;
+    reportLatency();
+}
+
+// The freeze unit works on whole windows, so it runs a little behind; the host is told, and only while it
+// is actually in use.
+void HypernovaAudioProcessor::reportLatency()
+{
+    const bool freezing = fxAudible (FxFreeze) && apvts.getRawParameterValue ("frzOn")->load() > 0.5f;
+    const int want = baseLatency + (freezing ? ab::dsp::Freeze::latencySamples() : 0);
+    if (want == reportedLatency) return;
+    reportedLatency = want;
+    setLatencySamples (want);
 }
 
 void HypernovaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -984,6 +1010,7 @@ void HypernovaAudioProcessor::processChunk (juce::AudioBuffer<float>& buffer, ju
     shownBeats = hostPlaying ? hostPpq : freeBeats;
     shownBpm = bpm;
 
+    reportLatency();
     updateOrbit (numSamples);   // the blend is worked out first: every setting below is read through it
     blockSettings = readSynthSettings();
     applyQuality ((int) param ("quality"));
@@ -2133,7 +2160,8 @@ void HypernovaAudioProcessor::setFxOrder (const FxOrder& order)
 
 const char* HypernovaAudioProcessor::fxOnParam (int id)
 {
-    static const char* ids[] = { "distOn", "tapeOn", "ottOn", "shiftOn", "chorusOn", "flangOn", "fxFltOn", "gateOn", "dlyOn", "verbOn", "eqOn", "crushOn", "spkOn" };
+    static const char* ids[] = { "distOn", "tapeOn", "ottOn", "shiftOn", "chorusOn", "flangOn", "fxFltOn", "gateOn", "dlyOn", "verbOn", "eqOn", "crushOn", "spkOn", "frzOn" };
+    static_assert (sizeof (ids) / sizeof (ids[0]) == (size_t) NumFx, "every effect needs its on/off parameter here");
     return ids[juce::jlimit (0, NumFx - 1, id)];
 }
 
@@ -2157,6 +2185,7 @@ bool HypernovaAudioProcessor::fxAudible (int id) const
                                || v ("eqLowCut") > 21.0f || v ("eqHighCut") < 19900.0f;
         case FxCrush:   return v ("crushMix") > 0.001f;
         case FxSpeaker: return v ("spkMix") > 0.001f;
+        case FxFreeze: return v ("frzMix") > 0.001f;
         default:        return false;
     }
 }
@@ -2196,6 +2225,7 @@ void HypernovaAudioProcessor::addToRack (int id)
         case FxEq:      setParam ("eqHigh", 3.0f); break;
         case FxCrush:   setParam ("crushMix", 0.5f); setParam ("crushBits", 8.0f); setParam ("crushRate", 8000.0f); break;
         case FxSpeaker: setParam ("spkMix", 0.7f); break;
+        case FxFreeze: setParam ("frzMix", 1.0f); break;
         default: break;
     }
 }

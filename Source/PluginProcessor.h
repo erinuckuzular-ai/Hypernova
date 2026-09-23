@@ -359,6 +359,8 @@ private:
     std::array<juce::String, ab::NumOsc> userTableSlot;
     juce::SmoothedValue<float> masterGain;
     int lastMode = -1;
+    int baseLatency = 0, reportedLatency = -1;
+    void reportLatency();
 
     // Every parameter, in one order, so Orbit can blend whole sounds by index instead of by name.
     std::unordered_map<std::string, int> raw;                 // parameter id -> index

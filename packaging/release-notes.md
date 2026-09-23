@@ -1,5 +1,10 @@
 Download **Hypernova-0.14.0.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Apple Silicon + Intel, macOS 10.13 and later.
 
+## freeze
+- **a new rack unit: hold a moment of the sound open.** press **HOLD** and whatever is playing right then keeps playing, for as long as you like: a chord becomes a pad, a crash becomes a wash.
+- **shift** moves what's held by up to two octaves, **spread** smears it sideways into texture, **blur** decides how quickly it can change, **mix** blends it with what's going through.
+- it only adds delay while it's in use, and the host is told about it.
+
 ## sound dna
 - **breed new sounds from the ones you have.** capture two sounds in orbit's corners, then press **BREED**: six children, each taking whole parts — the oscillators, the filter, the envelopes, the effects — from one parent or the other.
 - **gentle, mixed or wild** decides how far they're allowed to wander.
