@@ -747,6 +747,167 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // The resonator: a string, a tube, a bell, a plate or a drum head, struck by whatever is sent into it.
+    if (argc == 2 && juce::String (argv[1]) == "--resonator")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        auto render = [&] (HypernovaAudioProcessor& p, int note, double seconds, double offAt)
+        {
+            p.panic();
+            const int total = (int) (seconds * rate), off = (int) (offAt * rate);
+            std::vector<float> out ((size_t) total, 0.0f);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 110), 0);
+                if (offAt > 0 && off >= pos && off < pos + 256) midi.addEvent (juce::MidiMessage::noteOff (1, note), off - pos);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256 && pos + i < total; ++i) out[(size_t) (pos + i)] = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            }
+            return out;
+        };
+        auto rms = [&] (const std::vector<float>& x, double from, double to)
+        {
+            double sum = 0; int n = 0;
+            for (int i = (int) (from * rate); i < (int) (to * rate) && i < (int) x.size(); ++i) { sum += (double) x[(size_t) i] * x[(size_t) i]; ++n; }
+            return n > 0 ? std::sqrt (sum / juce::jmax (1, n)) : 0.0;
+        };
+        // What note a stretch of the ringing is, by the same pitch detector the sampler uses on a recording.
+        auto pitch = [&] (const std::vector<float>& x, double from, double to)
+        {
+            std::vector<float> part (x.begin() + juce::jmin ((size_t) (from * rate), x.size()),
+                                     x.begin() + juce::jmin ((size_t) (to * rate), x.size()));
+            const float note = ab::dsp::detectPitch (part, rate, 0);
+            return note < 0 ? 0.0 : 440.0 * std::pow (2.0, (note - 69.0) / 12.0);
+        };
+        auto anyNaN = [] (const std::vector<float>& x)
+        {
+            for (float v : x) if (! std::isfinite (v)) return true;
+            return false;
+        };
+
+        // A short click of noise as the hit, sent into the resonator, with nothing else playing.
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        p.applyPresetValues ({});
+        auto strike = [&] (HypernovaAudioProcessor& q)
+        {
+            q.setParam ("aOn", 0.0f);
+            q.setParam ("bOn", 0.0f);
+            q.setParam ("subOn", 0.0f);
+            q.setParam ("fltOn", 0.0f);
+            q.setParam ("noiseLevel", 0.8f);
+            q.setParam ("noiseBus", 2.0f);       // the noise goes into the resonator
+            q.setParam ("ampA", 0.0005f);
+            q.setParam ("ampD", 0.004f);          // a click, not a note
+            q.setParam ("ampS", 0.0f);
+            q.setParam ("ampR", 0.01f);
+            q.setParam ("resOn", 1.0f);
+            q.setParam ("resMix", 1.0f);
+            q.setParam ("resDecay", 0.6f);
+            q.setParam ("resBright", 0.7f);
+        };
+        strike (p);
+
+        // A struck string rings at the note played, long after the click has gone.
+        const auto a3 = render (p, 57, 1.0, 0.02);   // A3, 220 Hz
+        check (! anyNaN (a3), "nothing blows up");
+        check (rms (a3, 0.3, 0.6) > 0.002, "the string rings on after the hit (" + juce::String (rms (a3, 0.3, 0.6), 4) + ")");
+        const double heard = pitch (a3, 0.2, 0.5);
+        check (std::abs (heard - 220.0) < 220.0 * 0.06, "and it rings at the note played ("
+               + juce::String (juce::roundToInt (heard)) + " Hz, wanted 220)");
+        const auto a4 = render (p, 69, 1.0, 0.02);
+        check (std::abs (pitch (a4, 0.2, 0.5) - 440.0) < 440.0 * 0.06, "an octave up rings an octave up ("
+               + juce::String (juce::roundToInt (pitch (a4, 0.2, 0.5))) + " Hz)");
+
+        // Decay does what it says.
+        p.setParam ("resDecay", 0.15f);
+        const auto shortOne = render (p, 57, 1.0, 0.02);
+        p.setParam ("resDecay", 0.85f);
+        const auto longOne = render (p, 57, 1.0, 0.02);
+        check (rms (longOne, 0.5, 0.9) > rms (shortOne, 0.5, 0.9) * 3.0, "a longer decay rings longer ("
+               + juce::String (rms (shortOne, 0.5, 0.9), 4) + " -> " + juce::String (rms (longOne, 0.5, 0.9), 4) + ")");
+        p.setParam ("resDecay", 0.6f);
+
+        // Brightness changes what survives: a dull string has less high end.
+        auto brightness = [&] (const std::vector<float>& x)
+        {
+            // Zero crossings per second: a rough but honest measure of how much high end is left.
+            int crossings = 0;
+            for (int i = (int) (0.2 * rate) + 1; i < (int) (0.5 * rate) && i < (int) x.size(); ++i)
+                if ((x[(size_t) i - 1] < 0.0f) != (x[(size_t) i] < 0.0f)) ++crossings;
+            return crossings;
+        };
+        p.setParam ("resBright", 0.05f);
+        const auto dull = render (p, 57, 0.8, 0.02);
+        p.setParam ("resBright", 0.95f);
+        const auto bright = render (p, 57, 0.8, 0.02);
+        check (brightness (bright) >= brightness (dull), "brighter keeps more of the top ("
+               + juce::String (brightness (dull)) + " -> " + juce::String (brightness (bright)) + " crossings)");
+        p.setParam ("resBright", 0.7f);
+
+        // Every model runs, rings, and stays sane at the extremes.
+        for (int model = 0; model < ab::dsp::Resonator::NumModels; ++model)
+        {
+            p.setParam ("resModel", (float) model);
+            p.setParam ("resStruct", 0.9f);
+            p.setParam ("resDecay", 1.0f);
+            const auto out = render (p, 45, 1.0, 0.02);
+            float loudest = 0;
+            for (float v : out) loudest = juce::jmax (loudest, std::abs (v));
+            check (! anyNaN (out) && loudest < 4.0f && rms (out, 0.2, 0.6) > 0.0005,
+                   ab::dsp::Resonator::modelNames()[model] + " rings and stays in bounds (peak "
+                   + juce::String (loudest, 2) + ")");
+        }
+        p.setParam ("resModel", 0.0f);
+        p.setParam ("resStruct", 0.3f);
+        p.setParam ("resDecay", 0.6f);
+
+        // Switched off, what was sent to it simply plays: nothing is lost.
+        {
+            p.setParam ("resOn", 0.0f);
+            p.setParam ("ampD", 0.3f);
+            p.setParam ("ampS", 0.6f);
+            const auto dry = render (p, 57, 0.4, 0.0);
+            check (rms (dry, 0.05, 0.3) > 0.002, "with the resonator off, a source aimed at it is still heard ("
+                   + juce::String (rms (dry, 0.05, 0.3), 4) + ")");
+            p.setParam ("resOn", 1.0f);
+            p.setParam ("ampD", 0.004f);
+            p.setParam ("ampS", 0.0f);
+        }
+
+        // It can come out on the alt bus, where its own effects can colour it.
+        {
+            p.setParam ("resBus", 1.0f);
+            const auto out = render (p, 57, 0.6, 0.02);
+            check (rms (out, 0.1, 0.5) > 0.002, "it can come out on the alt bus (" + juce::String (rms (out, 0.1, 0.5), 4) + ")");
+            p.setParam ("resBus", 0.0f);
+        }
+
+        // What it costs: eight notes ringing at once.
+        {
+            HypernovaAudioProcessor q;
+            q.prepareToPlay (rate, 256);
+            q.applyPresetValues ({});
+            strike (q);
+            q.setParam ("resDecay", 0.9f);
+            juce::MidiBuffer midi;
+            for (int k = 0; k < 8; ++k) midi.addEvent (juce::MidiMessage::noteOn (1, 45 + k * 3, (juce::uint8) 100), 0);
+            juce::AudioBuffer<float> buf (2, 256);
+            const int blocks = (int) (2.0 * rate / 256);
+            const auto t0 = juce::Time::getHighResolutionTicks();
+            for (int b = 0; b < blocks; ++b) { q.processBlock (buf, midi); midi.clear(); }
+            const double cost = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) / 2.0 * 100.0;
+            check (cost < 40.0, "eight ringing at once cost " + juce::String (cost, 1) + "% of realtime");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // Resample: the sound plays itself into the sampler.
     if (argc == 2 && juce::String (argv[1]) == "--resample")
     {

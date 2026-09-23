@@ -30,6 +30,8 @@ cmake --build build --target SmokeTest && ./build/SmokeTest_artefacts/Release/Sm
 ./build/SmokeTest_artefacts/Release/SmokeTest --orbit                                                   # morphing between captured sounds
 ./build/SmokeTest_artefacts/Release/SmokeTest --chop                                                    # slicing a sample across the keyboard
 ./build/SmokeTest_artefacts/Release/SmokeTest --routing                                                 # the two buses
+./build/SmokeTest_artefacts/Release/SmokeTest --resonator                                               # the physical models
+./build/SmokeTest_artefacts/Release/SmokeTest --resample                                                # the sound recorded into the sampler
 ./build/UISnapshot_artefacts/Release/UISnapshot dist/shots --paintbench                                # UI draw cost per component
 cmake --build build --target UISnapshot && ./build/UISnapshot_artefacts/Release/UISnapshot dist/shots # editor PNGs (all three deck tabs)
 auval -v aumu ArBs Arrw

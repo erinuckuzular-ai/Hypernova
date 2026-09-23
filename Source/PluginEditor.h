@@ -11,6 +11,7 @@
 #include "UI/FxRack.h"
 #include "UI/SourcesView.h"
 #include "UI/OrbitView.h"
+#include "UI/ResonatorView.h"
 #include "UI/LowEndView.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -206,6 +207,7 @@ private:
     std::vector<std::unique_ptr<ab::ui::WavetableView>> extraViews; // oscillators C to H
     ab::ui::SourcesView sources { processor };
     ab::ui::OrbitPad orbitPad { processor };
+    ab::ui::ResonatorView resonatorView { processor };
     juce::TextButton addOscButton { "+ OSC" };
     juce::TextButton keepBlendButton { "KEEP BLEND" };
     juce::TextButton chopButton { "CHOP" };

@@ -14,14 +14,21 @@ public:
     BusPill (HypernovaAudioProcessor& p, juce::String parameter, ThemeColour c)
         : proc (p), param (std::move (parameter)), colour (c)
     {
-        setTooltip ("Which bus this source plays into. Effects can sit on either one, so the two run side by side.");
+        setTooltip ("Where this source plays: the main bus, the alt bus (each with its own effects), or into the resonator.");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
 
     int bus() const
     {
         auto* v = proc.apvts.getRawParameterValue (param);
-        return v != nullptr ? juce::jlimit (0, NumBus - 1, (int) v->load()) : 0;
+        return v != nullptr ? juce::jlimit (0, choices() - 1, (int) v->load()) : 0;
+    }
+
+    int choices() const
+    {
+        if (auto* c = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (param)))
+            return juce::jmax (2, c->choices.size());
+        return 2;
     }
 
     void mouseEnter (const juce::MouseEvent&) override { over = true; repaint(); }
@@ -29,8 +36,8 @@ public:
     void mouseUp (const juce::MouseEvent& e) override
     {
         if (! getLocalBounds().contains (e.getPosition())) return;
-        const int next = (bus() + 1) % NumBus;
-        proc.undoManager.beginNewTransaction (next == 0 ? "To the main bus" : "To the alt bus");
+        const int next = (bus() + 1) % choices();
+        proc.undoManager.beginNewTransaction (next == 0 ? "To the main bus" : next == 1 ? "To the alt bus" : "Into the resonator");
         proc.setParam (param, (float) next);
         proc.apvts.copyState();   // land it in this undo step now, not on the next timer tick
         repaint();
@@ -38,15 +45,17 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        const bool alt = bus() != 0;
+        const int where = bus();
+        const bool alt = where != 0;
         auto r = getLocalBounds().toFloat().reduced (0.5f);
-        g.setColour (alt ? colour.withAlpha (over ? 0.32f : 0.24f) : (over ? Colours::panelHi.brighter (0.06f) : Colours::panelHi.withAlpha (0.8f)));
+        const auto tint = where == 2 ? Palette::lfo.get() : colour.get();
+        g.setColour (alt ? tint.withAlpha (over ? 0.32f : 0.24f) : (over ? Colours::panelHi.brighter (0.06f) : Colours::panelHi.withAlpha (0.8f)));
         g.fillRoundedRectangle (r, 6.0f);
-        g.setColour (alt ? colour.withAlpha (0.8f) : Colours::line.get());
+        g.setColour (alt ? tint.withAlpha (0.8f) : Colours::line.get());
         g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
         g.setColour (alt ? Colours::text.get() : Colours::text.withAlpha (over ? 0.9f : 0.62f));
         g.setFont (mono (9.0f).boldened().withExtraKerningFactor (0.1f));
-        g.drawText (alt ? "ALT" : "MAIN", r, juce::Justification::centred, false);
+        g.drawText (where == 0 ? "MAIN" : where == 1 ? "ALT" : "RES", r, juce::Justification::centred, false);
     }
 
 private:

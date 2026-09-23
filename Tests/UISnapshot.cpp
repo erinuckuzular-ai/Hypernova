@@ -1131,6 +1131,21 @@ int main (int argc, char** argv)
     });
     proc.setParam ("orbitOn", 0.0f);
     for (int c = 0; c < ab::Orbit::NumCorners; ++c) proc.clearCorner (c);
+    snap ("ui_15_resonator.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        proc.setParam ("resOn", 1.0f);
+        proc.setParam ("resModel", (float) ab::dsp::Resonator::Bell);
+        proc.setParam ("resStruct", 0.8f);
+        proc.setParam ("resDecay", 0.7f);
+        proc.setParam ("resMix", 0.9f);
+        proc.setParam ("noiseLevel", 0.5f);
+        proc.setParam ("noiseBus", 2.0f);
+        e.addWidgetType ("resonator");
+    });
+    proc.setParam ("resOn", 0.0f);
+    proc.setParam ("resMix", 0.0f);
+    proc.setParam ("noiseLevel", 0.0f);
+    proc.setParam ("noiseBus", 0.0f);
     snap ("ui_11_lfo3.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
     {
         proc.setParam ("lfo3Shape", (float) ab::LDrawn);

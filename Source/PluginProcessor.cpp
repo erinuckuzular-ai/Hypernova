@@ -316,6 +316,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
         addFloat (l, p + "Fade", n + "Fade In", skewed (0.0f, 8.0f, 1.0f), 0.0f, timeText);
     }
 
+    // The resonator (appended): a string, a tube, a bell, a plate or a drum head, struck by whatever you send it.
+    add<Bool> (l, pid ("resOn"), "Resonator", false);
+    add<Choice> (l, pid ("resModel"), "Resonator Model", dsp::Resonator::modelNames(), 0);
+    addFloat (l, "resTune", "Resonator Tune", { -24.0f, 24.0f, 1.0f }, 0.0f, semiText);
+    addFloat (l, "resStruct", "Resonator Structure", { 0.0f, 1.0f }, 0.3f, pctText);
+    addFloat (l, "resBright", "Resonator Brightness", { 0.0f, 1.0f }, 0.6f, pctText);
+    addFloat (l, "resDecay", "Resonator Decay", { 0.0f, 1.0f }, 0.5f, pctText);
+    addFloat (l, "resPos", "Resonator Position", { 0.0f, 1.0f }, 0.3f, pctText);
+    addFloat (l, "resMix", "Resonator Mix", { 0.0f, 1.0f }, 0.0f, pctText);
+    add<Bool> (l, pid ("resTrack"), "Resonator Key Track", true);
+    add<Choice> (l, pid ("resBus"), "Resonator Bus", juce::StringArray { "Main", "Alt" }, 0);
+
     // Chop Lab (appended): the sample cut into slices, one per key.
     add<Bool> (l, pid ("chopOn"), "Chop", false);
     add<Int> (l, pid ("chopRoot"), "Chop Root Key", 0, 127, 60);
@@ -333,14 +345,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout HypernovaAudioProcessor::cre
     // Routing (appended): every source plays into a bus and every effect sits on one, so two chains can run
     // side by side and meet at the output. Everything defaults to the main bus, so older sounds are unchanged.
     {
-        const juce::StringArray busNames { "Main", "Alt" };
+        // Appending "Resonator" keeps Main and Alt where they were in older sounds.
+        const juce::StringArray busNames { "Main", "Alt", "Resonator" };
         for (int o = 0; o < NumOsc; ++o)
             add<Choice> (l, pid (oscPrefix (o) + "Bus"), "Osc " + oscPrefix (o).toUpperCase() + " Bus", busNames, 0);
         add<Choice> (l, pid ("subBus"), "Sub Bus", busNames, 0);
         add<Choice> (l, pid ("noiseBus"), "Noise Bus", busNames, 0);
         add<Choice> (l, pid ("smpBus"), "Sampler Bus", busNames, 0);
+        // Effects sit on one of the two buses; the resonator is a place for sources, not for effects.
+        const juce::StringArray fxBusNames { "Main", "Alt" };
         for (int fx = 0; fx < NumFx; ++fx)
-            add<Choice> (l, pid (fxParamPrefix (fx) + "Bus"), fxRackNames()[fx] + " Bus", busNames, 0);
+            add<Choice> (l, pid (fxParamPrefix (fx) + "Bus"), fxRackNames()[fx] + " Bus", fxBusNames, 0);
     }
 
     return l;
@@ -506,6 +521,16 @@ SynthSettings HypernovaAudioProcessor::readSynthSettings()
     s.noiseType = (int) param ("noiseType");
     s.noiseToFilter = param ("noiseFilter") > 0.5f;
     s.noiseBus = (int) param ("noiseBus");
+    s.resOn = param ("resOn") > 0.5f;
+    s.resTrack = param ("resTrack") > 0.5f;
+    s.resBus = (int) param ("resBus");
+    s.resTune = param ("resTune");
+    s.reso.model = (int) param ("resModel");
+    s.reso.structure = param ("resStruct");
+    s.reso.bright = param ("resBright");
+    s.reso.decay = param ("resDecay");
+    s.reso.position = param ("resPos");
+    s.reso.mix = param ("resMix");
     s.xFmAB = param ("xFmAB");
     s.xFmBA = param ("xFmBA");
     s.xRing = param ("xRing");

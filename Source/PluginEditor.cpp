@@ -463,6 +463,25 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (followerMeter, Spread::Stretch);
     }
 
+    // The resonator: whatever is sent into it rings as a string, a tube, a bell, a plate or a drum head.
+    {
+        const juce::Rectangle<int> design { 0, 0, 500, 224 };
+        auto& w = makeWidget ("resonator", "resonator", "RESONATOR", Palette::lfo, design, 38);
+        auto* W = &w.content;
+        toggle (std::make_unique<PowerLed> (Palette::lfo), "resOn", { 8, 8, 26, 26 }, "Resonator on/off", W);
+        toggle (std::make_unique<PillToggle> ("TRACK KEYS", Palette::lfo), "resTrack", { 150, 12, 114, 22 },
+                "On: it rings at the note you play. Off: it stays where TUNE puts it.", W);
+        combo ("resModel", ab::dsp::Resonator::modelNames(), { 272, 11, 104, 24 }, W);
+        combo ("resBus", juce::StringArray { "Main", "Alt" }, { 384, 11, 104, 24 }, W);
+        W->addAndMakeVisible (resonatorView);
+        resonatorView.setBounds (12, 44, design.getWidth() - 24, 92);
+        const char* ids[] = { "resTune", "resStruct", "resBright", "resDecay", "resPos", "resMix" };
+        const char* names[] = { "TUNE", "STRUCTURE", "BRIGHT", "DECAY", "STRIKE", "MIX" };
+        for (int i = 0; i < 6; ++i) knob (ids[i], names[i], Palette::lfo, { 10 + i * 81, 140, 80, 68 }, 42, W);
+        w.finishBuilding();
+        w.spread.setFlags (resonatorView, Spread::Stretch);
+    }
+
     // Orbit: four captured sounds, and a point that morphs between them.
     {
         const juce::Rectangle<int> design { 0, 0, 420, 300 };
@@ -942,6 +961,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (sources.isVisible()) sources.refresh();
     if (followerMeter.isVisible()) followerMeter.refresh();
     if (orbitPad.isVisible()) orbitPad.refresh();   // the point follows the engine, however it is being moved
+    if (resonatorView.isVisible()) resonatorView.refresh();
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();

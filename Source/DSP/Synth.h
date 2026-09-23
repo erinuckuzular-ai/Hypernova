@@ -4,6 +4,7 @@
 
 #include "Wavetables.h"
 #include "Sampler.h"
+#include "Resonator.h"
 #include <atomic>
 
 // Voice engine: two unison wavetable oscillators, sub, noise, pitch drop, glide, filter, two envelopes,
@@ -47,7 +48,9 @@ enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DC
                DCPos, DDPos, DEPos, DFPos, DGPos, DHPos, DCLevel, DDLevel, DELevel, DFLevel, DGLevel, DHLevel,
                DLfo3Rate, DLfo4Rate, DRackMix, DCrushMix, DCrushBits, DSpeakerMix,
                // Orbit (appended): the morph point itself can be modulated.
-               DMorphX, DMorphY, NumDest };
+               DMorphX, DMorphY,
+               // The resonator (appended).
+               DResTune, DResBright, DResDecay, DResMix, NumDest };
 constexpr int FirstGlobalDest = DDistFx;
 constexpr int FirstFxParamDest = DFxFltFreq;
 // The effects are applied once per block from the newest voice's sources; the sampler, oscillators C-H
@@ -68,7 +71,8 @@ inline juce::StringArray modDestNames()
              "Gate Shape", "Auto Pan", "Pitch Shift Mix", "EQ Low", "EQ High", "Stereo Width", "Chorus Rate", "Distortion Mix",
              "Low End Level", "Low End Duck", "Low End Warmth", "EQ Mid", "EQ Mid Freq",
              "C Position", "D Position", "E Position", "F Position", "G Position", "H Position",
-             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level", "LFO 3 Rate", "LFO 4 Rate", "Rack Mix", "Crush Mix", "Crush Bits", "Speaker Mix", "Morph X", "Morph Y" };
+             "C Level", "D Level", "E Level", "F Level", "G Level", "H Level", "LFO 3 Rate", "LFO 4 Rate", "Rack Mix", "Crush Mix", "Crush Bits", "Speaker Mix", "Morph X", "Morph Y",
+             "Resonator Tune", "Resonator Bright", "Resonator Decay", "Resonator Mix" };
 }
 
 // The knob each destination corresponds to, so a modulation source can be dropped straight onto a control
@@ -84,7 +88,7 @@ inline juce::String modDestParam (int dest)
                                  "eqHigh", "width", "chorusRate", "distMix", "lowLevel", "lowDuck", "lowDrive",
                                  "eqMidGain", "eqMidFreq",
                                  "cPos", "dPos", "ePos", "fPos", "gPos", "hPos", "cLevel", "dLevel", "eLevel", "fLevel", "gLevel", "hLevel",
-                                 "lfo3Rate", "lfo4Rate", "fxMix", "crushMix", "crushBits", "spkMix", "orbitX", "orbitY" };
+                                 "lfo3Rate", "lfo4Rate", "fxMix", "crushMix", "crushBits", "spkMix", "orbitX", "orbitY", "resTune", "resBright", "resDecay", "resMix" };
     static_assert (sizeof (ids) / sizeof (ids[0]) == (size_t) NumDest, "every modulation destination needs its parameter id here");
     return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
@@ -107,6 +111,9 @@ constexpr int NumModSlots = 8;
 constexpr int MaxUnison = 7;
 constexpr int NumOsc = 8; // A and B, plus C to H that a sound can switch on
 constexpr int NumBus = 2; // every source picks a bus: the main one, or the alt one with its own half of the rack
+// Inside a voice there is a third path: what is sent into the resonator, which then joins one of the buses.
+constexpr int NumVoiceBus = 3;
+constexpr int ResonatorBus = 2;
 inline juce::String oscPrefix (int o) { return juce::String::charToString ((juce::juce_wchar) ('a' + o)); }
 constexpr int MaxVoices = 20;   // 16 playable + spares so a stolen/retriggered voice can fade out instead of clicking
 constexpr int PolyLimit = 16;
@@ -159,6 +166,11 @@ struct SynthSettings
 {
     std::array<OscSettings, NumOsc> osc;
     int subBus = 0, noiseBus = 0;      // the sub and the noise pick a bus too
+    // The resonator: what is sent into it rings as a string, a tube, a bell, a plate or a drum head.
+    bool resOn = false, resTrack = true;
+    int resBus = 0;                    // where it comes out
+    float resTune = 0;                 // semitones from the note (or from middle C with tracking off)
+    dsp::Resonator::Settings reso;
     bool subOn = false, subToFilter = false;
     int subShape = SubSine, subOct = -1;
     float subLevel = 0.6f;
@@ -493,8 +505,10 @@ public:
     int trigger = -1; // the key that started this voice (chord voices share their root's key)
     bool held = false;
     bool chopping = false, playingOut = false;   // a chopped slice, and one still playing after the key went up
+    int resTail = 0;                             // how much longer this voice stays alive for the ringing
 
-    bool isActive() const { return ampEnv.active(); }
+    // Still playing: the envelope is open, or the resonator is still ringing with what it was struck by.
+    bool isActive() const { return ampEnv.active() || resTail > 0; }
     float ampLevel() const { return ampEnv.value; }
 
     // Modulated values of the last rendered sub-block, for the UI.
@@ -508,7 +522,9 @@ public:
     void prepare (double sampleRate)
     {
         sr = sampleRate;
-        combBuf.assign ((size_t) NumBus * 2 * (size_t) combSize, 0.0f);
+        combBuf.assign ((size_t) NumVoiceBus * 2 * (size_t) combSize, 0.0f);
+        resonator.prepare (sampleRate);
+        resonator2.prepare (sampleRate);
         rng.s = 0x12345u + (juce::uint32) (reinterpret_cast<juce::pointer_sized_uint> (this) & 0xffff) * 2654435761u;
         reset();
     }
@@ -558,6 +574,8 @@ public:
             fmPrev[0] = fmPrev[1] = 0;
             for (auto& bus : svf) for (auto& f : bus) for (auto& sv : f) sv.reset();
             std::fill (combBuf.begin(), combBuf.end(), 0.0f);
+            resonator.reset();
+            resonator2.reset();
             driftValue = 0.3f * rng.next();
         }
         for (int l = 0; l < NumLfo; ++l)
@@ -570,6 +588,7 @@ public:
         ampEnv.noteOn();
         modEnv.noteOn();
         // Chop Lab: each key from the root up plays its own slice, at the sample's own speed.
+        resTail = 0;
         chopping = s.smp.chop && s.smp.slices.any() && s.smp.on;
         playingOut = false;
         smpPlay.start (s.smp, chopping ? midiNote - s.smp.chopRoot : -1);
@@ -613,9 +632,15 @@ public:
             if (altL != nullptr) { altL += skip; altR += skip; }
             if (numSamples <= 0) return;
         }
-        // With no second bus every source plays into the first, whatever it asks for.
+        // With no second bus every source plays into the first, whatever it asks for, and a source aimed at
+        // the resonator falls back to the main bus when the resonator is off.
         const bool twoBuses = altL != nullptr && altR != nullptr;
-        const auto busOf = [twoBuses] (int b) { return twoBuses ? juce::jlimit (0, NumBus - 1, b) : 0; };
+        const bool resonatorOn = s.resOn && s.reso.mix > 0.0001f;
+        const auto busOf = [twoBuses, resonatorOn] (int b)
+        {
+            if (b == ResonatorBus) return resonatorOn ? ResonatorBus : 0;
+            return twoBuses && b == 1 ? 1 : 0;
+        };
         ampEnv.set (s.env[0], sr);
         modEnv.set (s.env[1], sr);
         smpEnv.set ({ s.smp.a, s.smp.d, s.smp.s, s.smp.r }, sr);
@@ -797,7 +822,7 @@ public:
             const float gF = std::tan (juce::MathConstants<float>::pi * cutoff / (float) sr);
             const bool twoStage = s.filterType == FLp24 || s.filterType == FDirty;
             const float kRes = 2.0f - 1.96f * res;
-            for (int b = 0; b < NumBus; ++b)
+            for (int b = 0; b < NumVoiceBus; ++b)
                 for (int c = 0; c < 2; ++c)
                 {
                     svf[b][c][0].set (gF, twoStage ? 1.414f : kRes);
@@ -812,7 +837,7 @@ public:
                 const float vf = v - (float) vi;
                 const float F1 = f1[vi] + (f1[vi + 1] - f1[vi]) * vf, F2 = f2[vi] + (f2[vi + 1] - f2[vi]) * vf;
                 const float kF = 1.2f - 1.0f * std::sqrt (res);
-                for (int b = 0; b < NumBus; ++b)
+                for (int b = 0; b < NumVoiceBus; ++b)
                     for (int c = 0; c < 2; ++c)
                     {
                         svf[b][c][0].set (std::tan (juce::MathConstants<float>::pi * F1 / (float) sr), kF);
@@ -846,9 +871,22 @@ public:
             }
             else shownSample = -1.0f;
 
+            // The resonator rings at the note being played (or at a note of its own with tracking off).
+            if (s.resOn)
+            {
+                auto rs = s.reso;
+                const float noteFor = s.resTrack ? basePitch : 60.0f;
+                rs.freq = 440.0f * std::exp2 ((noteFor + s.resTune + dst[DResTune] * 24.0f - 69.0f) / 12.0f);
+                rs.bright = juce::jlimit (0.0f, 1.0f, rs.bright + dst[DResBright]);
+                rs.decay = juce::jlimit (0.0f, 1.0f, rs.decay + dst[DResDecay]);
+                rs.mix = juce::jlimit (0.0f, 1.0f, rs.mix + dst[DResMix]);
+                resSettings = rs;
+                resonator.update (resSettings);
+            }
+
             // Which bus each source plays into, and which buses have anything going through the filter.
             int oscBus[NumOsc] {};
-            bool filtered[NumBus] {};
+            bool filtered[NumVoiceBus] {};
             for (int o = 0; o < NumOsc; ++o)
             {
                 oscBus[o] = busOf (s.osc[(size_t) o].bus);
@@ -862,7 +900,7 @@ public:
             // ---- audio rate ----
             for (int i = 0; i < n; ++i)
             {
-                float fL[NumBus] {}, fR[NumBus] {}, dL[NumBus] {}, dR[NumBus] {}; // filtered path / direct path, per bus
+                float fL[NumVoiceBus] {}, fR[NumVoiceBus] {}, dL[NumVoiceBus] {}, dR[NumVoiceBus] {}; // filtered path / direct path, per bus
                 float oscOut[NumOsc] {};
 
                 float oscL[NumOsc] {}, oscR[NumOsc] {};
@@ -977,7 +1015,7 @@ public:
                 {
                     // Filter FM: osc A shifts the cutoff at audio rate, which buzzes and growls.
                     const float g2 = juce::jlimit (0.0005f, 1.4f, gF * (1.0f + s.xFltFm * 3.0f * oscOut[0]));
-                    for (int b = 0; b < NumBus; ++b)
+                    for (int b = 0; b < NumVoiceBus; ++b)
                         for (int c = 0; c < 2; ++c)
                         {
                             svf[b][c][0].set (g2, twoStage ? 1.414f : kRes);
@@ -988,7 +1026,7 @@ public:
                 if (s.filterOn)
                 {
                   // Each bus runs its own copy of the filter, with the same settings, so the two paths never smear together.
-                  for (int b = 0; b < NumBus; ++b)
+                  for (int b = 0; b < NumVoiceBus; ++b)
                   {
                     if (! filtered[b]) continue;
                     float* ch[2] = { &fL[b], &fR[b] };
@@ -1065,12 +1103,26 @@ public:
                     altL[start + i] += (fL[1] + dL[1]) * amp;
                     altR[start + i] += (fR[1] + dR[1]) * amp;
                 }
+                // The resonator is struck by what was sent into it — the envelope shapes the hit, not the
+                // ringing — so its output joins the bus without the envelope over it, and keeps ringing
+                // after the note has gone.
+                if (resonatorOn)
+                {
+                    const float rl = resonator.tick ((fL[ResonatorBus] + dL[ResonatorBus]) * amp, resSettings);
+                    const float rr = resonator2.tick ((fR[ResonatorBus] + dR[ResonatorBus]) * amp, resSettings);
+                    if (twoBuses && s.resBus == 1) { altL[start + i] += rl; altR[start + i] += rr; }
+                    else                           { outL[start + i] += rl; outR[start + i] += rr; }
+                    const float loud = juce::jmax (std::abs (rl), std::abs (rr));
+                    if (loud > 0.0002f) resTail = (int) juce::jmin (8.0 * sr, (double) resSettings.mix * 0 + juce::jmax (0.05f, resonator.ringingSeconds()) * sr);
+                    else if (resTail > 0) --resTail;
+                }
             }
 
-            if (! ampEnv.active())
+            if (! ampEnv.active() && ! (resonatorOn && resTail > 0))
             {
                 note = -1;
                 fading = false;
+                resTail = 0;
                 break;
             }
         }
@@ -1090,15 +1142,17 @@ private:
     int driftTimer = 0, startDelay = 0, fadeLen = 1, fadeLeft = 0;
     static constexpr int combSize = 4096;
     std::vector<float> combBuf;            // NumBus * 2 lines, allocated once the voice is prepared
-    float combDamp[NumBus][2] {};
+    float combDamp[NumVoiceBus][2] {};
     float* combLine (int b, int c) { return combBuf.data() + ((size_t) b * 2 + (size_t) c) * (size_t) combSize; }
     int combPos = 0;
     float slotSmoothed[NumModSlots] {};
     double lfoPhase[NumLfo] {};
     float lfoHeld[NumLfo] {}, lfoPrevHeld[NumLfo] {};
     dsp::Env ampEnv, modEnv, smpEnv;
+    dsp::Resonator resonator, resonator2;          // one per channel, so a stereo hit stays stereo
+    dsp::Resonator::Settings resSettings;
     dsp::SamplePlayer smpPlay;
-    dsp::SVF svf[NumBus][2][2];
+    dsp::SVF svf[NumVoiceBus][2][2];
     dsp::Rng rng;
 };
 
