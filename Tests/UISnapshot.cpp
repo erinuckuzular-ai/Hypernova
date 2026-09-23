@@ -1131,6 +1131,16 @@ int main (int argc, char** argv)
     });
     proc.setParam ("orbitOn", 0.0f);
     for (int c = 0; c < ab::Orbit::NumCorners; ++c) proc.clearCorner (c);
+    snap ("ui_17_dna.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        // Two sounds captured, then a litter bred from them.
+        proc.captureCorner (0);
+        proc.loadFactoryPreset (40);
+        proc.captureCorner (1);
+        proc.breedFromCorners (0.35f);
+        e.addWidgetType ("dna");
+    });
+    for (int c = 0; c < ab::Orbit::NumCorners; ++c) proc.clearCorner (c);
     snap ("ui_15_resonator.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
     {
         proc.setParam ("resOn", 1.0f);

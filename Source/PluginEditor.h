@@ -13,6 +13,7 @@
 #include "UI/OrbitView.h"
 #include "UI/ResonatorView.h"
 #include "UI/GrainsView.h"
+#include "UI/DnaView.h"
 #include "UI/LowEndView.h"
 
 class HypernovaAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -210,9 +211,12 @@ private:
     ab::ui::OrbitPad orbitPad { processor };
     ab::ui::ResonatorView resonatorView { processor };
     ab::ui::GrainsView grainsView { processor };
+    ab::ui::DnaView dnaView { processor };
     juce::TextButton addOscButton { "+ OSC" };
     juce::TextButton keepBlendButton { "KEEP BLEND" };
     juce::TextButton chopButton { "CHOP" };
+    juce::TextButton breedButton { "BREED" };
+    std::array<juce::TextButton, 3> mutateButtons { juce::TextButton ("GENTLE"), juce::TextButton ("MIXED"), juce::TextButton ("WILD") };
     ab::ui::SoundSpace space;
     ab::ui::SamplerView samplerView;
     ab::ui::EffectsRack rack;

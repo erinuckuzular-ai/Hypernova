@@ -34,6 +34,7 @@ namespace
         { "orbit",    "Orbit",          "MODULATION", "Four captured sounds, and a point that morphs between them",    false, SlotOscB },
         { "resonator", "Resonator",     "SOUND",      "Strings, tubes, bells, plates and drum heads, struck by your sources", false, SlotLfo },
         { "grains",   "Grains",         "SOUND",      "Read the sample as a cloud of grains: hold it, scatter it, smear it", false, SlotOscA },
+        { "dna",      "Sound DNA",      "SOUND",      "Breed new sounds from the ones you have captured",               false, SlotOscB },
         { "xy",       "XY Pad",         "MODULATION", "Two macros on one pad: drag to move both",                      true,  SlotMod },
         { "modmon",   "Mod Monitor",    "MODULATION", "Every active modulation source, live, and what it moves",       true,  SlotLfo },
         { "rack",     "Effects Rack",   "EFFECTS",    "Every effect as its own module: drag them along the chain",     false, SlotFx },

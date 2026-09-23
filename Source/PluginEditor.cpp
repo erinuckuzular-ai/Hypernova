@@ -463,6 +463,46 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
         w.spread.setFlags (followerMeter, Spread::Stretch);
     }
 
+    // Sound DNA: children of the sounds you have.
+    {
+        const juce::Rectangle<int> design { 0, 0, 470, 180 };
+        auto& w = makeWidget ("dna", "dna", "SOUND DNA", Palette::oscB, design);
+        auto* W = &w.content;
+        W->addAndMakeVisible (breedButton);
+        breedButton.setBounds (design.getWidth() - 86, 10, 74, 24);
+        breedButton.setTooltip ("Cross the sounds captured in Orbit's corners, or this sound with a factory one");
+        breedButton.onClick = [this]
+        {
+            dnaView.newGeneration();
+            if (processor.breedFromCorners (dnaView.mutation) > 0)
+            {
+                showMessage ("Six children of the sounds in Orbit's corners. Click one to hear it.");
+                return;
+            }
+            if (processor.breedFromSound (dnaView.mutation) > 0)
+                showMessage ("Nothing captured in Orbit, so this sound was crossed with a factory one.");
+        };
+        // How far the children may wander from their parents.
+        const float amounts[] = { 0.15f, 0.35f, 0.8f };
+        for (int i = 0; i < 3; ++i)
+        {
+            auto& b = mutateButtons[(size_t) i];
+            W->addAndMakeVisible (b);
+            b.setBounds (110 + i * 76, 10, 72, 24);
+            b.setClickingTogglesState (true);
+            b.setRadioGroupId (8271);
+            b.setColour (juce::TextButton::buttonOnColourId, Palette::oscB.get().withAlpha (0.35f));
+            b.setTooltip ("How far the children are allowed to wander from their parents");
+            b.onClick = [this, i, amounts] { dnaView.mutation = amounts[i]; };
+        }
+        mutateButtons[1].setToggleState (true, juce::dontSendNotification);
+        W->addAndMakeVisible (dnaView);
+        dnaView.setBounds (12, 44, design.getWidth() - 24, 124);
+        dnaView.onMessage = [this] (const juce::String& m) { showMessage (m); };
+        w.finishBuilding();
+        w.spread.setFlags (dnaView, Spread::Stretch);
+    }
+
     // Grains: the sampler read as a cloud instead of one playhead.
     {
         const juce::Rectangle<int> design { 0, 0, 500, 224 };
@@ -979,6 +1019,7 @@ void HypernovaAudioProcessorEditor::timerCallback()
     if (orbitPad.isVisible()) orbitPad.refresh();   // the point follows the engine, however it is being moved
     if (resonatorView.isVisible()) resonatorView.refresh();
     if (grainsView.isVisible()) grainsView.refresh();
+    if (dnaView.isVisible()) dnaView.refresh();
     if (lowEndView.isVisible()) lowEndView.refresh (sounding);
     // Small views: while sound plays (their values move), or when a parameter changed.
     const int changes = processor.parameterChanges.load();

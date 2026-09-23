@@ -207,6 +207,16 @@ public:
     std::atomic<int> shownSlice { -1 };               // the slice playing right now, for the waveform view
 
     void bakeOrbit();                                // the blend becomes the sound, and Orbit switches off
+
+    // --- Sound DNA: breeding new sounds from the ones you have -----------------------------------------
+    static constexpr int NumChildren = 6;
+    int breedFromCorners (float mutation);           // children from the captured Orbit corners; returns how many
+    int breedFromSound (float mutation);             // children from this sound and a random factory one
+    int breedFromChild (int child, float mutation);  // that child becomes a parent, and it goes again
+    bool hasChildren() const { return ! children.empty(); }
+    juce::String childName (int child) const;
+    void hearChild (int child);                      // apply it to the sound (undoable, one step)
+    int childPlaying() const { return heard; }
     float soundValue (const juce::String& id) const; // what the engine is using: the knob, or Orbit's blend
     bool orbitLive() const;                          // Orbit is on and has a sound to morph
     juce::Point<float> orbitPoint() const;           // where the morph sits right now, travel included
@@ -360,6 +370,17 @@ private:
     std::atomic<bool> morphActive { false };
     std::atomic<bool> morphSeen { false };   // the engine has worked out a point at least once
     std::array<std::atomic<float>*, ab::NumFx> fxBusRaw {};   // each effect's bus, looked up once
+
+    // Sound DNA: the parents this generation came from, and the children themselves. They live only as
+    // long as the plugin is open: keeping one means keeping the sound it makes.
+    std::vector<std::vector<float>> children;
+    std::vector<juce::String> childNames;
+    std::vector<std::vector<float>> parents;
+    std::vector<juce::String> parentNames;
+    int heard = -1;
+    std::vector<float> valuesNow() const;                       // this sound, as a row of parameter values
+    void applyValues (const std::vector<float>& v, const juce::String& what);
+    int breed (float mutation);                                 // from whatever is in `parents`
 
     // The slices live in the state tree; this is the copy the audio thread reads.
     std::array<ab::Slices, 2> sliceTable;

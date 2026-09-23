@@ -747,6 +747,116 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Sound DNA: children take after their parents.
+    if (argc == 2 && juce::String (argv[1]) == "--dna")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        auto settle = [&] (HypernovaAudioProcessor& p)
+        {
+            juce::AudioBuffer<float> buf (2, 256);
+            juce::MidiBuffer none;
+            for (int i = 0; i < 20; ++i) { buf.clear(); p.processBlock (buf, none); }
+        };
+        auto render = [&] (HypernovaAudioProcessor& p, double seconds)
+        {
+            p.panic();
+            const int total = (int) (seconds * rate);
+            std::vector<float> out;
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, 52, (juce::uint8) 110), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256; ++i) out.push_back (buf.getSample (0, i));
+            }
+            return out;
+        };
+        auto diff = [] (const std::vector<float>& a, const std::vector<float>& b)
+        {
+            double d = 0, e = 0;
+            for (size_t i = 0; i < juce::jmin (a.size(), b.size()); ++i) { d += (double) (a[i] - b[i]) * (a[i] - b[i]); e += (double) a[i] * a[i]; }
+            return std::sqrt (d / juce::jmax (1e-12, e));
+        };
+        auto anyNaN = [] (const std::vector<float>& x)
+        {
+            for (float v : x) if (! std::isfinite (v)) return true;
+            return false;
+        };
+
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        // Two parents with clearly different settings, captured into Orbit's corners.
+        p.applyPresetValues ({});
+        p.setParam ("aTable", 2.0f);
+        p.setParam ("cutoff", 400.0f);
+        p.setParam ("fltOn", 1.0f);
+        p.setParam ("ampD", 0.2f);
+        p.captureCorner (0);
+        p.applyPresetValues ({});
+        p.setParam ("aTable", 9.0f);
+        p.setParam ("cutoff", 8000.0f);
+        p.setParam ("fltOn", 1.0f);
+        p.setParam ("ampD", 1.2f);
+        p.captureCorner (1);
+
+        check (p.breedFromCorners (0.3f) == HypernovaAudioProcessor::NumChildren, "breeding the captured corners makes a litter");
+        check (p.hasChildren(), "and there are children to hear");
+
+        // Each child carries something of each parent, and they aren't all the same.
+        std::vector<std::vector<float>> heard;
+        for (int c = 0; c < HypernovaAudioProcessor::NumChildren; ++c)
+        {
+            p.hearChild (c);
+            settle (p);
+            const float table = p.apvts.getRawParameterValue ("aTable")->load();
+            const float cut = p.apvts.getRawParameterValue ("cutoff")->load();
+            check (std::abs (table - 2.0f) < 0.01f || std::abs (table - 9.0f) < 0.01f || table >= 0.0f,
+                   "child " + juce::String (c + 1) + " has a wavetable from one parent or a mutation (" + juce::String (table, 0) + ")");
+            check (cut >= 20.0f && cut <= 20000.0f, "and a cutoff inside its range (" + juce::String (juce::roundToInt (cut)) + " Hz)");
+            auto out = render (p, 0.4);
+            check (! anyNaN (out), "child " + juce::String (c + 1) + " makes a sound without blowing up");
+            heard.push_back (std::move (out));
+        }
+        int same = 0;
+        for (size_t a = 0; a < heard.size(); ++a)
+            for (size_t b = a + 1; b < heard.size(); ++b)
+                if (diff (heard[a], heard[b]) < 0.01) ++same;
+        check (same < 4, "the litter isn't all the same sound (" + juce::String (same) + " pairs alike)");
+
+        // Breeding from a child again keeps going.
+        check (p.breedFromChild (2, 0.4f) == HypernovaAudioProcessor::NumChildren, "a child can be bred from in turn");
+
+        // With nothing captured, it breeds the sound with a factory one instead.
+        {
+            HypernovaAudioProcessor q;
+            q.prepareToPlay (rate, 256);
+            check (q.breedFromCorners (0.3f) == 0, "with nothing captured, there is nothing to cross");
+            check (q.breedFromSound (0.3f) == HypernovaAudioProcessor::NumChildren,
+                   "so it crosses this sound with a factory one instead");
+            q.hearChild (0);
+            settle (q);
+            const auto out = render (q, 0.4);
+            check (! anyNaN (out), "and that child plays");
+        }
+
+        // Hearing a child is one undo step, and undo puts the sound back.
+        {
+            const float before = p.apvts.getRawParameterValue ("cutoff")->load();
+            p.hearChild (1);
+            settle (p);
+            p.undoManager.undo();
+            settle (p);
+            check (std::abs (p.apvts.getRawParameterValue ("cutoff")->load() - before) < 1.0f,
+                   "undo takes a child back off (" + juce::String (juce::roundToInt (before)) + " Hz)");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // Grains: the sampler read as a cloud instead of one playhead.
     if (argc == 2 && juce::String (argv[1]) == "--grains")
     {

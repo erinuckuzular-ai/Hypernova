@@ -1317,6 +1317,168 @@ void HypernovaAudioProcessor::applyExpressionToVoices (int channel)
 // The envelope follower: how loud the synth is right now, smoothed with its own attack and release.
 // It's taken from the voices (before the effects), so feeding it back into them can't run away.
 // ---------------------------------------------------------------------------------------------------
+// Sound DNA: children take after their parents. Each child inherits whole sections — the oscillators, the
+// filter, the envelopes, the effects — from one parent or the other, so it sounds like a cross rather than
+// a mush, with a little crossover inside a section and a mutation on top.
+std::vector<float> HypernovaAudioProcessor::valuesNow() const
+{
+    std::vector<float> v ((size_t) rawValue.size());
+    for (size_t i = 0; i < rawValue.size(); ++i)
+        v[i] = morphActive.load() && rawMorphs[i] != 0 ? morphed[i].load() : rawValue[i]->load();
+    return v;
+}
+
+void HypernovaAudioProcessor::applyValues (const std::vector<float>& v, const juce::String& what)
+{
+    if (v.size() != rawValue.size()) return;
+    undoManager.beginNewTransaction (what);
+    for (size_t i = 0; i < rawValue.size(); ++i)
+    {
+        if (rawMorphs[i] == 0) continue;   // the morph controls, the macros and the machine settings stay put
+        const float want = rawParam[i]->convertTo0to1 (v[i]);
+        if (std::abs (rawParam[i]->getValue() - want) > 1.0e-7f) rawParam[i]->setValueNotifyingHost (want);
+    }
+    {
+        const juce::ScopedLock sl (nameLock);
+        if (! presetName.endsWith ("*")) presetName << " *";
+    }
+    apvts.copyState();
+    ++presetVersion;
+}
+
+// Which section a parameter belongs to, so a child can take a whole one at a time.
+static int sectionOfParam (const juce::String& id)
+{
+    static const std::pair<const char*, int> starts[] =
+    {
+        { "a", 0 }, { "b", 1 }, { "c", 2 }, { "d", 2 }, { "e", 2 }, { "f", 2 }, { "g", 2 }, { "h", 2 },
+        { "sub", 3 }, { "noise", 3 }, { "smp", 4 }, { "grain", 4 }, { "chop", 4 },
+        { "flt", 5 }, { "cutoff", 5 }, { "res", 6 }, { "amp", 7 }, { "mod", 8 }, { "lfo", 8 },
+        { "macro", 9 }, { "x", 10 }, { "drop", 10 }, { "glide", 10 }, { "arp", 11 }, { "chord", 11 },
+        { "low", 12 }, { "orbit", 13 }
+    };
+    for (auto& [prefix, section] : starts)
+        if (id.startsWith (prefix)) return section;
+    return 14;   // everything else: the effects
+}
+
+int HypernovaAudioProcessor::breed (float mutation)
+{
+    if (parents.size() < 2) return 0;
+    children.clear();
+    childNames.clear();
+    heard = -1;
+    juce::Random rng ((juce::int64) juce::Time::getHighResolutionTicks());
+    const float amount = juce::jlimit (0.0f, 1.0f, mutation);
+    for (int c = 0; c < NumChildren; ++c)
+    {
+        // Which parent each section takes after. Every child gets its own draw, so a litter is varied.
+        std::array<int, 16> takesAfter {};
+        for (auto& who : takesAfter) who = rng.nextInt ((int) parents.size());
+        std::vector<float> child ((size_t) rawValue.size());
+        for (size_t i = 0; i < rawValue.size(); ++i)
+        {
+            const auto id = rawParam[i]->getParameterID();
+            const int section = juce::jlimit (0, 15, sectionOfParam (id));
+            int from = takesAfter[(size_t) section];
+            if (rng.nextFloat() < 0.15f) from = rng.nextInt ((int) parents.size());   // a little crossover inside a section
+            child[i] = parents[(size_t) from][i];
+            // Continuous controls can land between two parents instead of on one of them.
+            if (rawDiscrete[i] == 0 && parents.size() > 1 && rng.nextFloat() < 0.25f)
+            {
+                const int other = (from + 1 + rng.nextInt ((int) parents.size() - 1)) % (int) parents.size();
+                const float mix = rng.nextFloat();
+                child[i] = child[i] * (1.0f - mix) + parents[(size_t) other][i] * mix;
+            }
+            // Mutation: a nudge through the control's own range, or now and then a whole new setting.
+            if (amount > 0.001f && rng.nextFloat() < 0.25f * amount + 0.02f)
+            {
+                if (rawDiscrete[i] != 0)
+                {
+                    if (rng.nextFloat() < amount * 0.5f) child[i] = rawParam[i]->convertFrom0to1 (rng.nextFloat());
+                }
+                else
+                {
+                    const float normalised = juce::jlimit (0.0f, 1.0f, rawParam[i]->convertTo0to1 (child[i])
+                                                                      + (rng.nextFloat() * 2.0f - 1.0f) * amount * 0.35f);
+                    child[i] = rawParam[i]->convertFrom0to1 (normalised);
+                }
+            }
+        }
+        children.push_back (std::move (child));
+        childNames.push_back (juce::String (c + 1));
+    }
+    return (int) children.size();
+}
+
+int HypernovaAudioProcessor::breedFromCorners (float mutation)
+{
+    parents.clear();
+    parentNames.clear();
+    const auto& corners = orbitCorners[(size_t) orbitSide.load (std::memory_order_acquire)];
+    for (int c = 0; c < ab::Orbit::NumCorners; ++c)
+        if (corners.filled[(size_t) c] && corners.values[(size_t) c].size() == rawValue.size())
+        {
+            parents.push_back (corners.values[(size_t) c]);
+            parentNames.push_back (cornerName (c).isNotEmpty() ? cornerName (c) : ab::Orbit::cornerNames()[c]);
+        }
+    if (parents.size() < 2) return 0;
+    return breed (mutation);
+}
+
+int HypernovaAudioProcessor::breedFromSound (float mutation)
+{
+    parents.clear();
+    parentNames.clear();
+    parents.push_back (valuesNow());
+    {
+        const juce::ScopedLock sl (nameLock);
+        parentNames.push_back (presetName);
+    }
+    // The other parent: a factory sound, picked at random.
+    const auto& presets = ab::factoryPresets();
+    if (presets.size() < 2) return 0;
+    juce::Random rng ((juce::int64) juce::Time::getHighResolutionTicks());
+    const int pick = 1 + rng.nextInt (juce::jmax (1, (int) presets.size() - 1));
+    std::vector<float> other ((size_t) rawValue.size());
+    for (size_t k = 0; k < rawValue.size(); ++k) other[k] = rawParam[k]->convertFrom0to1 (rawParam[k]->getDefaultValue());
+    for (const auto& [id, value] : presets[(size_t) pick].values)
+    {
+        auto it = raw.find (id);
+        if (it != raw.end()) other[(size_t) it->second] = value;
+    }
+    parents.push_back (std::move (other));
+    parentNames.push_back (presets[(size_t) pick].name);
+    return breed (mutation);
+}
+
+int HypernovaAudioProcessor::breedFromChild (int child, float mutation)
+{
+    if (! juce::isPositiveAndBelow (child, (int) children.size())) return 0;
+    auto chosen = children[(size_t) child];
+    auto partner = parents.empty() ? chosen : parents[(size_t) (child % parents.size())];
+    parents.clear();
+    parentNames.clear();
+    parents.push_back (std::move (chosen));
+    parentNames.push_back ("this one");
+    parents.push_back (std::move (partner));
+    parentNames.push_back ("its parent");
+    return breed (mutation);
+}
+
+juce::String HypernovaAudioProcessor::childName (int child) const
+{
+    return juce::isPositiveAndBelow (child, (int) childNames.size()) ? childNames[(size_t) child] : juce::String();
+}
+
+void HypernovaAudioProcessor::hearChild (int child)
+{
+    if (! juce::isPositiveAndBelow (child, (int) children.size())) return;
+    heard = child;
+    applyValues (children[(size_t) child], "Hear child " + juce::String (child + 1));
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Chop Lab: the sample cut into slices, one per key from the chop root up. The edges are kept with the
 // sound as a list of positions; the audio thread reads a copy that is swapped in whole.
 void HypernovaAudioProcessor::setSlices (const juce::String& text)

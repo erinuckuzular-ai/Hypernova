@@ -1,5 +1,11 @@
 Download **Hypernova-0.14.0.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Apple Silicon + Intel, macOS 10.13 and later.
 
+## sound dna
+- **breed new sounds from the ones you have.** capture two sounds in orbit's corners, then press **BREED**: six children, each taking whole parts — the oscillators, the filter, the envelopes, the effects — from one parent or the other.
+- **gentle, mixed or wild** decides how far they're allowed to wander.
+- click a child to hear it, right-click it to breed six more from that one. undo puts the sound back, so nothing is lost by trying.
+- with nothing captured, it crosses the sound you're on with a factory one.
+
 ## grains
 - **the sampler can read a recording as a cloud** instead of one playhead: a second of sound holds for as long as you hold the key.
 - **position** is where the grains come from — drag it on the display — **spray** scatters them, **size** and **rate** set how long each one lasts and how often they come, **pitch** spreads them, **reverse** turns some of them round and **drift** walks the position on by itself.
