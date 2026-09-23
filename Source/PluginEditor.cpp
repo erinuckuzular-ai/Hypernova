@@ -1690,16 +1690,43 @@ void HypernovaAudioProcessorEditor::chooseSample()
 void HypernovaAudioProcessorEditor::showSampleMenu()
 {
     const auto current = processor.sampleForUi();
-    if (current == nullptr) { chooseSample(); return; }
-    juce::PopupMenu m;
+    juce::PopupMenu m, lengths, sliced;
     m.setLookAndFeel (&lookAndFeel);
-    m.addSectionHeader (current->name.toUpperCase());
-    m.addItem (1, "Replace with another sample...");
-    m.addItem (2, "Remove the sample");
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&sampleButton), [this] (int r)
+    m.addSectionHeader (current != nullptr ? current->name.toUpperCase() : juce::String ("SAMPLER"));
+    m.addItem (1, current != nullptr ? "Replace with another sample..." : "Load a sample...");
+    // Resample: the sound plays itself in, so it can then be chopped, stretched or played as one hit.
+    const double seconds[] = { 1.0, 2.0, 4.0, 8.0 };
+    for (int i = 0; i < 4; ++i)
     {
-        if (r == 1) chooseSample();
-        else if (r == 2) { processor.clearSample(); processor.setParam ("smpOn", 0.0f); showMessage ("Sample removed"); }
+        lengths.addItem (10 + i, juce::String (seconds[i], seconds[i] < 2.0 ? 1 : 0) + " seconds");
+        sliced.addItem (20 + i, juce::String (seconds[i], seconds[i] < 2.0 ? 1 : 0) + " seconds");
+    }
+    m.addSubMenu ("Record this sound into the sampler", lengths);
+    m.addSubMenu ("Record it and cut it into slices", sliced);
+    if (current != nullptr)
+    {
+        m.addSeparator();
+        m.addItem (2, "Remove the sample");
+    }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&sampleButton), [this, seconds] (int r)
+    {
+        if (r == 1) { chooseSample(); return; }
+        if (r == 2) { processor.clearSample(); processor.setParam ("smpOn", 0.0f); showMessage ("Sample removed"); return; }
+        if (r < 10 || r >= 30) return;
+        const bool slice = r >= 20;
+        const double length = seconds[(r - (slice ? 20 : 10))];
+        // The key it was last played at, so a resampled sound comes back in tune with how you played it.
+        const int note = juce::jlimit (0, 127, processor.shownNote.load() >= 0 ? processor.shownNote.load() : 60);
+        juce::String error;
+        if (! processor.resampleSelf (note, length, error)) { showMessage (error); return; }
+        if (slice) processor.chopSample (0);
+        samplerView.repaint();
+        const juce::String where = slice ? juce::String (processor.slicesForUi().count()) + " slices, one per key from "
+                                              + juce::MidiMessage::getMidiNoteName (60, true, true, 4) + " up"
+                                         : juce::String ("in the sampler, in tune at ")
+                                              + juce::MidiMessage::getMidiNoteName (note, true, true, 4);
+        showMessage (juce::String (length, length < 2.0 ? 1 : 0) + " seconds recorded: " + where
+                     + ". The sources are still playing too.");
     });
 }
 

@@ -2703,6 +2703,76 @@ bool HypernovaAudioProcessor::loadSample (const juce::File& file, juce::String& 
     return true;
 }
 
+// Resample: the sound plays itself into the sampler. A second copy of the plugin renders it offline with
+// this sound's own state, so whatever is playing here carries on untouched.
+bool HypernovaAudioProcessor::resampleSelf (int note, double seconds, juce::String& error)
+{
+    const double rate = sampleRateNow > 8000.0 ? sampleRateNow : 48000.0;
+    seconds = juce::jlimit (0.25, 20.0, seconds);
+    note = juce::jlimit (0, 127, note);
+
+    juce::MemoryBlock state;
+    getStateInformation (state);
+    auto copy = std::make_unique<HypernovaAudioProcessor>();
+    copy->setStateInformation (state.getData(), (int) state.getSize());
+    copy->bpm = bpm;                       // synced effects and arps keep the session's tempo
+    copy->prepareToPlay (rate, 512);
+
+    const int total = (int) (seconds * rate);
+    juce::AudioBuffer<float> out (2, total);
+    out.clear();
+    const int off = (int) (total * 0.75);  // the key is held for three quarters, then it rings out
+    for (int pos = 0; pos < total; pos += 512)
+    {
+        const int n = juce::jmin (512, total - pos);
+        float* chans[2] = { out.getWritePointer (0, pos), out.getWritePointer (1, pos) };
+        juce::AudioBuffer<float> chunk (chans, 2, n);
+        juce::MidiBuffer midi;
+        if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+        if (off >= pos && off < pos + n) midi.addEvent (juce::MidiMessage::noteOff (1, note), off - pos);
+        copy->processBlock (chunk, midi);
+    }
+    copy->releaseResources();
+
+    // Trim the silence at the end, and refuse to make a sample out of nothing.
+    int last = total - 1;
+    while (last > 0 && juce::jmax (std::abs (out.getSample (0, last)), std::abs (out.getSample (1, last))) < 0.0005f) --last;
+    if (last < (int) (0.02 * rate) || out.getMagnitude (0, total) < 0.001f)
+    {
+        error = "There was nothing to record: play the sound first, or give it longer";
+        return false;
+    }
+    juce::AudioBuffer<float> trimmed (2, last + 1);
+    for (int c = 0; c < 2; ++c) trimmed.copyFrom (c, 0, out, c, 0, last + 1);
+
+    juce::String name;
+    {
+        const juce::ScopedLock sl (nameLock);
+        name = presetName.isEmpty() ? juce::String ("Resample") : presetName + " (resampled)";
+    }
+    installSample (makeSample (trimmed, rate, name), encodeFlac (trimmed, rate));
+    undoManager.beginNewTransaction ("Resample");
+    setParam ("smpOn", 1.0f);
+    setParam ("smpStart", 0.0f);
+    setParam ("smpEnd", 1.0f);
+    setParam ("smpTrack", 1.0f);
+    setParam ("smpRoot", (float) note);
+    setParam ("smpSemi", 0.0f);
+    setParam ("smpFine", 0.0f);
+    setParam ("smpLoop", 0.0f);
+    // The recording already has the sound's shape in it, so the sampler's own envelope opens straight up
+    // and stays out of the way.
+    setParam ("smpLevel", 1.0f);
+    setParam ("smpA", 0.001f);
+    setParam ("smpD", 0.1f);
+    setParam ("smpS", 1.0f);
+    setParam ("smpR", 0.05f);
+    setParam ("chopOn", 0.0f);
+    setSlices ("");
+    apvts.copyState();
+    return true;
+}
+
 void HypernovaAudioProcessor::addSampleTo (juce::ValueTree& state) const
 {
     if (sampleHeld == nullptr || sampleFlac.isEmpty()) return;

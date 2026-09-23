@@ -747,6 +747,111 @@ int main (int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
 
+    // Resample: the sound plays itself into the sampler.
+    if (argc == 2 && juce::String (argv[1]) == "--resample")
+    {
+        int failures = 0;
+        auto check = [&] (bool ok, const juce::String& what) { std::printf ("%s  %s\n", ok ? "pass" : "FAIL", what.toRawUTF8()); failures += ok ? 0 : 1; };
+        const double rate = 48000.0;
+        auto render = [&] (HypernovaAudioProcessor& p, int note, double seconds)
+        {
+            p.panic();
+            const int total = (int) (seconds * rate);
+            std::vector<float> out ((size_t) total, 0.0f);
+            for (int pos = 0; pos < total; pos += 256)
+            {
+                juce::AudioBuffer<float> buf (2, 256);
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (pos == 0) midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 100), 0);
+                p.processBlock (buf, midi);
+                for (int i = 0; i < 256 && pos + i < total; ++i) out[(size_t) (pos + i)] = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            }
+            return out;
+        };
+        auto frequency = [&] (const std::vector<float>& x, double from, double to)
+        {
+            int crossings = 0, first = -1, last = -1;
+            for (int i = (int) (from * rate) + 1; i < (int) (to * rate) && i < (int) x.size(); ++i)
+                if (x[(size_t) i - 1] < 0.0f && x[(size_t) i] >= 0.0f) { if (first < 0) first = i; last = i; ++crossings; }
+            return crossings > 1 ? (crossings - 1) * rate / (last - first) : 0.0;
+        };
+        auto rms = [&] (const std::vector<float>& x)
+        {
+            double sum = 0;
+            for (float v : x) sum += (double) v * v;
+            return std::sqrt (sum / juce::jmax ((size_t) 1, x.size()));
+        };
+
+        HypernovaAudioProcessor p;
+        p.prepareToPlay (rate, 256);
+        p.applyPresetValues ({});
+        p.setParam ("aTable", 0.0f);
+        p.setParam ("aPos", 0.3f);
+        p.setParam ("fltOn", 0.0f);
+        p.setParam ("ampR", 0.3f);
+        const auto before = render (p, 60, 0.4);
+        const double wanted = frequency (before, 0.05, 0.3);
+        check (wanted > 200.0 && wanted < 300.0, "the sound to record is middle C (" + juce::String (juce::roundToInt (wanted)) + " Hz)");
+
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        juce::String error;
+        const bool ok = p.resampleSelf (60, 1.0, error);
+        const double took = juce::Time::getMillisecondCounterHiRes() - t0;
+        check (ok, "resampling a second of it works (" + error + ")");
+        check (p.sampleForUi() != nullptr && p.sampleForUi()->length > (int) (0.2 * rate),
+               "and the recording has something in it (" + juce::String (p.sampleForUi() != nullptr ? p.sampleForUi()->length : 0) + " frames)");
+        check (took < 3000.0, "a second of sound takes " + juce::String (juce::roundToInt (took)) + " ms to record");
+        check (p.apvts.getRawParameterValue ("smpOn")->load() > 0.5f
+               && std::abs (p.apvts.getRawParameterValue ("smpRoot")->load() - 60.0f) < 0.5f,
+               "the sampler is switched on, in tune with the key it was played at");
+
+        // The sampler alone now plays what the synth played.
+        for (auto* id : { "aOn", "bOn", "subOn" }) p.setParam (id, 0.0f);
+        const auto after = render (p, 60, 0.4);
+        const double got = frequency (after, 0.05, 0.3);
+        check (std::abs (got - wanted) < wanted * 0.05, "the sampler plays it back at the same pitch ("
+               + juce::String (juce::roundToInt (got)) + " Hz)");
+        auto peak = [] (const std::vector<float>& x, size_t upTo)
+        {
+            float m = 0;
+            for (size_t i = 0; i < juce::jmin (upTo, x.size()); ++i) m = juce::jmax (m, std::abs (x[i]));
+            return m;
+        };
+        const float loudOriginal = peak (before, (size_t) (0.25 * rate)), loudBack = peak (after, (size_t) (0.25 * rate));
+        check (loudBack > loudOriginal * 0.5f && loudBack < loudOriginal * 1.6f, "and at about the same level ("
+               + juce::String (loudBack / juce::jmax (1.0e-6f, loudOriginal), 2) + "x)");
+        juce::ignoreUnused (rms);
+
+        // A key an octave up plays it an octave up: it went in as an ordinary sample.
+        const auto octave = render (p, 72, 0.4);
+        check (std::abs (frequency (octave, 0.05, 0.3) - got * 2.0) < got * 0.2, "and follows the keyboard from there");
+
+        // It travels with the session.
+        {
+            juce::MemoryBlock state;
+            p.getStateInformation (state);
+            HypernovaAudioProcessor q;
+            q.prepareToPlay (rate, 256);
+            q.setStateInformation (state.getData(), (int) state.getSize());
+            check (q.sampleForUi() != nullptr && q.sampleForUi()->length == p.sampleForUi()->length,
+                   "the recording is saved with the sound");
+        }
+
+        // Nothing playing: it says so instead of making an empty sample.
+        {
+            HypernovaAudioProcessor silent;
+            silent.prepareToPlay (rate, 256);
+            silent.applyPresetValues ({});
+            for (auto* id : { "aOn", "bOn", "subOn", "smpOn" }) silent.setParam (id, 0.0f);
+            silent.setParam ("noiseLevel", 0.0f);
+            juce::String why;
+            check (! silent.resampleSelf (60, 1.0, why) && why.isNotEmpty(), "a silent sound is refused, with a reason (" + why + ")");
+        }
+        std::printf ("%s (%d failures)\n", failures == 0 ? "ALL OK" : "FAILED", failures);
+        return failures == 0 ? 0 : 1;
+    }
+
     // Chop Lab: a sample cut into slices, one per key.
     if (argc == 2 && juce::String (argv[1]) == "--chop")
     {

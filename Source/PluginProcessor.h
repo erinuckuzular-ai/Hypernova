@@ -151,6 +151,9 @@ public:
     static constexpr double maxSampleSeconds = 60.0;
     bool loadSample (const juce::File& audioFile, juce::String& error); // message thread
     void clearSample();
+    // Resample: play this sound to itself. Renders the sound as it is (offline, in a copy of the plugin, so
+    // nothing playing is disturbed) and drops the result into the sampler.
+    bool resampleSelf (int note, double seconds, juce::String& error);
     std::shared_ptr<const ab::SampleData> sampleForUi() const { return sampleHeld; }
     std::atomic<int> sampleVersion { 0 };
     std::atomic<float> shownSample { -1.0f };

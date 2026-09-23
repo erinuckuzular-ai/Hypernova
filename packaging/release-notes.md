@@ -1,5 +1,10 @@
 Download **Hypernova-0.13.0.dmg**, open it and double-click **Install Hypernova**. It installs over any older version and keeps your saved sounds. Signed and notarized by Apple. Apple Silicon + Intel, macOS 10.13 and later.
 
+## resample
+- **the sound can play itself into the sampler**: in the sampler's menu, *record this sound into the sampler* (1, 2, 4 or 8 seconds), or *record it and cut it into slices* to go straight to chop lab.
+- it's recorded offline in a moment, so nothing you're playing is interrupted, and it comes back in tune with the key you last played.
+- the sources stay on afterwards: switch them off to hear only the recording.
+
 ## chop lab
 - **cut a sample into slices and play them from the keyboard.** press **CHOP** in the sampler: on the hits, or into 4, 8, 16 or 32 equal slices.
 - each key from the root up plays its own slice, at the sample's own speed, so a break comes back as it was cut.
