@@ -1366,7 +1366,7 @@ private:
 class IconButton : public juce::Button
 {
 public:
-    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear, Expand, PopOut, Close, Layout };
+    enum Kind { Dice, Prev, Next, Save, Undo, Redo, Gear, Expand, PopOut, Close, Layout, AddPanel };
     IconButton (Kind k, ThemeColour c = Colours::text) : juce::Button ({}), kind (k), colour (c) {}
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
@@ -1457,6 +1457,20 @@ public:
                 g.fillRoundedRectangle (front, 2.0f);
                 g.setColour (c);
                 g.drawRoundedRectangle (front, 2.0f, 1.6f);
+                return;
+            }
+            case AddPanel: // three tiles and a plus: add a panel from the library
+            {
+                const float gap = icon.getWidth() * 0.12f, cw = (icon.getWidth() - gap) * 0.5f;
+                for (int i = 0; i < 3; ++i)
+                {
+                    auto cell = juce::Rectangle<float> (icon.getX() + (float) (i % 2) * (cw + gap), icon.getY() + (float) (i / 2) * (cw + gap), cw, cw);
+                    g.drawRoundedRectangle (cell, 2.0f, 1.4f);
+                }
+                const auto plus = juce::Rectangle<float> (cw, cw).withPosition (icon.getX() + cw + gap, icon.getY() + cw + gap).getCentre();
+                const float arm = cw * 0.42f;
+                g.drawLine (plus.x - arm, plus.y, plus.x + arm, plus.y, 1.7f);
+                g.drawLine (plus.x, plus.y - arm, plus.x, plus.y + arm, 1.7f);
                 return;
             }
             case Layout: // four tiles, one of them lifted: arrange the panels

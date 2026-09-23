@@ -474,6 +474,69 @@ int main (int argc, char** argv)
             srcView.toggleSolo ("subOn");
         }
 
+        // The widget library opens from the main page, without going into layout mode first.
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            ed->setLayoutEditing (false);
+            settle();
+            ed->setLibraryOpen (true);
+            settle();
+            auto* panel = ed->libraryPanel();
+            check (panel != nullptr && panel->isVisible() && ! ed->isLayoutEditing(),
+                   "the widget library opens on the main page, with layout mode off");
+            check (panel != nullptr && panel->getWidth() > 180 && panel->getHeight() > 200,
+                   "and it has room to show the widgets (" + (panel != nullptr ? panel->getBounds().toString() : juce::String()) + ")");
+            const int before = ed->findWidget ("scope") != nullptr ? 1 : 0;
+            juce::ignoreUnused (before);
+            ed->addWidgetType ("meter");
+            settle();
+            check (ed->findWidget ("meter-1") != nullptr || ed->findWidget ("meter") != nullptr,
+                   "a widget added from the main page lands on screen");
+            tidy ("with the library open on the main page");
+            ed->setLibraryOpen (false);
+            settle();
+        }
+
+        // Every widget in the library, added the way a click adds it — then added again, which is the path
+        // that used to delete the card the click came from and leave the code holding freed memory.
+        {
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+            ed->setLibraryOpen (true);
+            settle();
+            int added = 0, refused = 0;
+            for (const auto& offer : ed->libraryOffers())
+            {
+                if (offer.type == "osc+") continue;   // that one adds an oscillator, covered elsewhere
+                const auto id = ed->addWidgetType (offer.type);
+                settle();
+                if (id.isEmpty()) { ++refused; continue; }
+                ++added;
+                // Again: the "already on screen" path, which is where it crashed.
+                ed->addWidgetType (offer.type);
+                settle();
+                if (ed->libraryPanel() != nullptr && ed->libraryPanel()->isVisible()) ed->libraryPanel()->refresh();
+                settle();
+            }
+            check (added > 20 && refused == 0, "every widget in the library adds, twice over ("
+                   + juce::String (added) + " added, " + juce::String (refused) + " refused)");
+            tidy ("with everything on screen");
+            // And every one of them hides again without taking anything with it.
+            int hidden = 0;
+            for (const auto& offer : ed->libraryOffers())
+            {
+                if (offer.type == "osc+") continue;
+                if (ed->findWidget (offer.type) == nullptr) continue;
+                ed->hideWidget (offer.type);
+                settle();
+                if (ed->findWidget (offer.type) == nullptr || ! ed->findWidget (offer.type)->isVisible()) ++hidden;
+            }
+            check (hidden > 15, "and every one of them hides again (" + juce::String (hidden) + ")");
+            ed->setLibraryOpen (false);
+            ed->loadWorkspace ("Sound Design", false);
+            settle();
+        }
+
         // Orbit: the pad can be added, and it lands somewhere you can see.
         {
             ed->loadWorkspace ("Sound Design", false);
@@ -1134,6 +1197,10 @@ int main (int argc, char** argv)
     });
     proc.setParam ("orbitOn", 0.0f);
     for (int c = 0; c < ab::Orbit::NumCorners; ++c) proc.clearCorner (c);
+    snap ("ui_18_library.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
+    {
+        e.setLibraryOpen (true);   // the widget library, open on the main page
+    });
     snap ("ui_17_dna.png", "Reese Wide", 0, 0, "Sound Design", false, [&] (HypernovaAudioProcessorEditor& e)
     {
         // Two sounds captured, then a litter bred from them.

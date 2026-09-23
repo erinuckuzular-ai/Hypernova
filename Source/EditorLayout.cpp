@@ -54,6 +54,13 @@ namespace
 
     juce::String typeOfId (const juce::String& id) { return id.upToFirstOccurrenceOf ("-", false, false); }
 
+    // What a widget is called, for messages. Never dereferences a lookup that could come back empty.
+    juce::String widgetName (const juce::String& type)
+    {
+        if (auto* info = infoFor (type)) return juce::String (info->name);
+        return type;
+    }
+
     // Design sizes of the tool widgets (the synth's own panels are sized in PluginEditor.cpp).
     juce::Rectangle<int> toolDesign (const juce::String& type)
     {
@@ -376,7 +383,7 @@ dock::MinSize HypernovaAudioProcessorEditor::dockMinSize() const
 
 //==============================================================================
 // Operations. Each one changes the arrangement, then records it for undo and saves the workspace.
-juce::String HypernovaAudioProcessorEditor::addWidgetType (const juce::String& type)
+juce::String HypernovaAudioProcessorEditor::addWidgetType (juce::String type)
 {
     if (type == "osc+") { addOscillator(); return {}; }
     if (infoFor (type) == nullptr) return {};
@@ -391,7 +398,7 @@ juce::String HypernovaAudioProcessorEditor::addWidgetType (const juce::String& t
     {
         // Already there: bring it to the front of its stack (and out of a maximised view).
         activateWidget (id);
-        showMessage (juce::String (infoFor (type)->name) + " is already on screen");
+        showMessage (widgetName (type) + " is already on screen");
         return id;
     }
     maximisedId.clear();
@@ -405,11 +412,11 @@ juce::String HypernovaAudioProcessorEditor::addWidgetType (const juce::String& t
     else tree.insertSomewhere (id, dockMinSize());
     relayoutWidgets (true);
     layoutChanged();
-    showMessage ("Added " + juce::String (infoFor (type)->name) + (layoutEditing ? "" : ". Turn on layout mode to move it."));
+    showMessage ("Added " + widgetName (type) + (layoutEditing ? "" : ". Turn on layout mode to move it."));
     return id;
 }
 
-void HypernovaAudioProcessorEditor::hideWidget (const juce::String& id)
+void HypernovaAudioProcessorEditor::hideWidget (juce::String id)
 {
     // Hiding is only about the screen: the module keeps running exactly as it was.
     auto* w = findWidget (id);
@@ -423,7 +430,7 @@ void HypernovaAudioProcessorEditor::hideWidget (const juce::String& id)
     showMessage (name + (isMultiType (typeOfId (id)) ? " removed" : " hidden. The sound is unchanged: add it back from the library."));
 }
 
-void HypernovaAudioProcessorEditor::replaceWidget (const juce::String& id, const juce::String& type)
+void HypernovaAudioProcessorEditor::replaceWidget (juce::String id, juce::String type)
 {
     if (! tree.contains (id) || infoFor (type) == nullptr) return;
     juce::String newId = type;
@@ -449,7 +456,7 @@ juce::String HypernovaAudioProcessorEditor::duplicateWidget (const juce::String&
     return newId;
 }
 
-void HypernovaAudioProcessorEditor::toggleCollapse (const juce::String& id)
+void HypernovaAudioProcessorEditor::toggleCollapse (juce::String id)
 {
     auto* leaf = tree.findLeaf (id);
     if (leaf == nullptr) return;
@@ -459,7 +466,7 @@ void HypernovaAudioProcessorEditor::toggleCollapse (const juce::String& id)
     layoutChanged();
 }
 
-void HypernovaAudioProcessorEditor::toggleMaximise (const juce::String& id)
+void HypernovaAudioProcessorEditor::toggleMaximise (juce::String id)
 {
     if (! tree.contains (id)) return;
     maximisedId = maximisedId == id ? juce::String() : id;
@@ -469,7 +476,7 @@ void HypernovaAudioProcessorEditor::toggleMaximise (const juce::String& id)
     if (maximisedId.isNotEmpty()) showMessage ("Maximised. Double-click the title again (or right-click) to restore.");
 }
 
-void HypernovaAudioProcessorEditor::activateWidget (const juce::String& id)
+void HypernovaAudioProcessorEditor::activateWidget (juce::String id)
 {
     if (! tree.contains (id)) return;
     tree.activate (id);
@@ -481,7 +488,7 @@ void HypernovaAudioProcessorEditor::activateWidget (const juce::String& id)
     layoutChanged();
 }
 
-void HypernovaAudioProcessorEditor::moveWidget (const juce::String& id, const juce::String& targetId, dock::Zone zone)
+void HypernovaAudioProcessorEditor::moveWidget (juce::String id, juce::String targetId, dock::Zone zone)
 {
     if (findWidget (id) == nullptr) return;
     dock::Drop d;
@@ -685,7 +692,7 @@ void HypernovaAudioProcessorEditor::redoLayout()
     if (library->isVisible()) library->refresh();
 }
 
-void HypernovaAudioProcessorEditor::loadWorkspace (const juce::String& name, bool recordHistory)
+void HypernovaAudioProcessorEditor::loadWorkspace (juce::String name, bool recordHistory)
 {
     // Only the arrangement changes. The sound, its parameters and the audio engine are untouched.
     workspaceName = name.isNotEmpty() ? name : juce::String ("Sound Design");
@@ -705,11 +712,11 @@ void HypernovaAudioProcessorEditor::setLayoutEditing (bool editing)
     overlay->setEditing (editing);
     for (auto& w : widgets) w->setEditing (editing);
     editBar.setVisible (editing);
-    for (auto* c : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &compare, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &compare, &diceButton, &saveButton, &undoButton, &redoButton, &widgetsButton, &layoutButton, &gearButton })
         c->setVisible (! editing);
     layoutButton.setToggleState (editing, juce::dontSendNotification);
     if (editing) showMessage ("layout mode: drag a widget, drop it mid-panel to stack or near an edge to split; drag the gaps to resize");
-    if (! editing && library->isVisible()) setLibraryOpen (false);
+    // The library belongs to the main page as much as to layout mode, so it stays open across the switch.
     else relayoutWidgets (false);
     canvas.repaint();
 }

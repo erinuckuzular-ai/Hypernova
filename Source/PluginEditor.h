@@ -42,20 +42,23 @@ public:
 
     // Widgets and workspaces (layout only; the sound is never touched).
     ab::ui::Widget* findWidget (const juce::String& id) const;
-    void loadWorkspace (const juce::String& name, bool recordHistory);
+    void loadWorkspace (juce::String name, bool recordHistory);
     void setLayoutEditing (bool editing);
     bool isLayoutEditing() const { return layoutEditing; }
     juce::ValueTree captureLayout() const;
     void applyLayout (const juce::ValueTree& layout);
     void applyTheme();
-    juce::String addWidgetType (const juce::String& type);   // from the library: returns the new widget's id
-    void hideWidget (const juce::String& id);                // off the screen; the sound is untouched
-    void replaceWidget (const juce::String& id, const juce::String& type);
+    // These take their strings by value on purpose: adding, hiding or moving a widget rebuilds the widget
+    // library and the panels, which deletes the very card or button the call came from. A reference would
+    // be left pointing at freed memory the moment that happens.
+    juce::String addWidgetType (juce::String type);          // from the library: returns the new widget's id
+    void hideWidget (juce::String id);                       // off the screen; the sound is untouched
+    void replaceWidget (juce::String id, juce::String type);
     juce::String duplicateWidget (const juce::String& id);
-    void toggleCollapse (const juce::String& id);
-    void toggleMaximise (const juce::String& id);
-    void activateWidget (const juce::String& id);
-    void moveWidget (const juce::String& id, const juce::String& targetId, ab::ui::dock::Zone zone);
+    void toggleCollapse (juce::String id);
+    void toggleMaximise (juce::String id);
+    void activateWidget (juce::String id);
+    void moveWidget (juce::String id, juce::String targetId, ab::ui::dock::Zone zone);
     void pinParameter (const juce::String& paramId, bool pin);
     bool isPinned (const juce::String& paramId) const;
     ab::ui::dock::Tree& layoutTree() { return tree; }
@@ -73,6 +76,9 @@ public:
     ab::ui::SourcesView& sourcesView() { return sources; }
     ab::ui::EffectsRack& rackView() { return rack; }
     ab::ui::OrbitPad& orbitView() { return orbitPad; }
+    // For the tests: the library as it is offered, and the library panel itself.
+    std::vector<ab::ui::WidgetLibrary::Entry> libraryOffers() const { return libraryEntries(); }
+    ab::ui::WidgetLibrary* libraryPanel() const { return library.get(); }
     void showCornerMenu (int corner, juce::Point<int> screenPos);
     void showChopMenu();
     ab::ui::ToolContent* toolFor (const juce::String& id) const { auto it = tools.find (id); return it != tools.end() ? it->second.get() : nullptr; }
@@ -256,6 +262,7 @@ private:
     std::vector<juce::ValueTree> layoutHistory;
     int layoutHistoryIndex = -1;
     ab::ui::IconButton layoutButton { ab::ui::IconButton::Layout };
+    ab::ui::IconButton widgetsButton { ab::ui::IconButton::AddPanel };   // the widget library, from the main page
     class EditBar : public juce::Component
     {
     public:

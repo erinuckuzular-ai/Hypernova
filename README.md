@@ -41,6 +41,19 @@ cmake --build build --target UISnapshot && ./build/UISnapshot_artefacts/Release/
 auval -v aumu ArBs Arrw
 ```
 
+Crash hunting: build the tests with AddressSanitizer and run them. This catches use-after-free and overruns
+that a release build hides (the widget-library crash in 0.14.0 was one of these):
+
+```bash
+cmake -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DHYPERNOVA_COPY_PLUGINS=OFF \
+      -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+      -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+      -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
+cmake --build build-asan --target UISnapshot SmokeTest -j8
+ASAN_OPTIONS=detect_leaks=0 ./build-asan/UISnapshot_artefacts/RelWithDebInfo/UISnapshot dist/shots --layouttest
+ASAN_OPTIONS=detect_leaks=0 ./build-asan/SmokeTest_artefacts/RelWithDebInfo/SmokeTest
+```
+
 Updates: the editor checks GitHub releases at most once a day (`Source/UI/Updater.h`; off switch in the gear menu) and
 shows a banner that downloads the new DMG and opens it. Keep the release asset name ending in `.dmg`.
 

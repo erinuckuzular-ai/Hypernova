@@ -81,7 +81,8 @@ public:
 
     // Solo: everything else is switched off until you click it again. It's one undo step, and it isn't
     // saved with the sound (it's a way of listening, not part of the patch).
-    void toggleSolo (const juce::String& onParam)
+    // By value: soloing rebuilds the rows, which deletes the button this call came from.
+    void toggleSolo (juce::String onParam)
     {
         proc.undoManager.beginNewTransaction (soloed == onParam ? "Unsolo" : "Solo");
         if (soloed == onParam)

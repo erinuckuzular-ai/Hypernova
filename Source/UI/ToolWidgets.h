@@ -1035,7 +1035,17 @@ private:
                 if (owner.onDragEnd) owner.onDragEnd (e);
                 return;
             }
-            if (getLocalBounds().contains (e.getPosition()) && owner.onAdd) owner.onAdd (entry.type);
+            // Adding a widget rebuilds this list, which deletes this card. Hand the click on after the
+            // event has finished, with a copy of the type, so nothing is destroyed while it is still in use.
+            if (getLocalBounds().contains (e.getPosition()) && owner.onAdd)
+            {
+                const auto type = entry.type;
+                juce::Component::SafePointer<WidgetLibrary> alive (&owner);
+                juce::MessageManager::callAsync ([alive, type]
+                {
+                    if (alive != nullptr && alive->onAdd) alive->onAdd (type);
+                });
+            }
         }
 
     private:

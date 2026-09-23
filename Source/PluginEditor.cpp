@@ -250,7 +250,10 @@ HypernovaAudioProcessorEditor::HypernovaAudioProcessorEditor (HypernovaAudioProc
     saveButton.onClick = [this] { showSaveDialog(); };
     layoutButton.setTooltip ("Arrange the panels: move, resize, stack, hide and add widgets, and switch workspaces");
     layoutButton.onClick = [this] { setLayoutEditing (! layoutEditing); };
-    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &compare, &diceButton, &saveButton, &undoButton, &redoButton, &layoutButton, &gearButton })
+    // The widget library without going into layout mode first: add a panel, and it lands somewhere sensible.
+    widgetsButton.setTooltip ("Add a panel: the widget library");
+    widgetsButton.onClick = [this] { setLibraryOpen (library == nullptr || ! library->isVisible()); };
+    for (auto* b : std::initializer_list<juce::Component*> { &presetPlate, &prevButton, &nextButton, &compare, &diceButton, &saveButton, &undoButton, &redoButton, &widgetsButton, &layoutButton, &gearButton })
         canvas.addAndMakeVisible (b);
     setupEditBar();
     loadWorkspace (ab::ui::WorkspaceStore::current(), false);
@@ -349,15 +352,16 @@ void HypernovaAudioProcessorEditor::layoutCanvas()
     int hx = headerLeft;
     auto place = [&] (juce::Component& c, int w, int gapAfter) { c.setBounds (hx, 22, w, 44); hx += w + gapAfter; };
     // Every icon button is the same size, with the same gaps inside a group and a wider one between groups.
-    constexpr int icon = 34, tight = 4, group = 9;
+    constexpr int icon = 34, tight = 4, group = 7;
     place (prevButton, icon, tight);
-    place (presetPlate, 194, tight);
+    place (presetPlate, 164, tight);
     place (nextButton, icon, group);
-    place (compare, 60, group);
+    place (compare, 54, group);
     place (diceButton, icon, tight);
     place (saveButton, icon, group);
     place (undoButton, icon, tight);
     place (redoButton, icon, group);
+    place (widgetsButton, icon, tight);
     place (layoutButton, icon, tight);
     place (gearButton, icon, 0);
     jassert (hx <= macroTray().getX() - 12);
