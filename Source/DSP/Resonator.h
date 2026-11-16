@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "Core.h"
 #include <array>
 #include <cmath>
 #include <vector>
@@ -21,7 +21,9 @@ class Resonator
 {
 public:
     enum Model { String, Tube, Bell, Plate, Drum, NumModels };
+#if HN_HAS_JUCE
     static juce::StringArray modelNames() { return { "String", "Tube", "Bell", "Plate", "Drum" }; }
+#endif
 
     struct Settings
     {
@@ -37,7 +39,7 @@ public:
     void prepare (double sampleRate)
     {
         sr = sampleRate;
-        line.assign ((size_t) juce::jmax (256, (int) (sr / 16.0) + 8), 0.0f);
+        line.assign ((size_t) hn::jmax (256, (int) (sr / 16.0) + 8), 0.0f);
         reset();
     }
 
@@ -55,31 +57,31 @@ public:
     {
         if (s.mix <= 0.0001f) return in;
         const float wet = isModal (s.model) ? modal (in, s) : waveguide (in, s);
-        return in + (wet - in) * juce::jlimit (0.0f, 1.0f, s.mix);
+        return in + (wet - in) * hn::jlimit (0.0f, 1.0f, s.mix);
     }
 
     // The settings change per block, not per sample: the coefficients are worked out here.
     void update (const Settings& s)
     {
-        const float f = juce::jlimit (20.0f, (float) (sr * 0.25), s.freq);
-        delaySamples = juce::jlimit (4.0, (double) line.size() - 4.0, sr / f);
+        const float f = hn::jlimit (20.0f, (float) (sr * 0.25), s.freq);
+        delaySamples = hn::jlimit (4.0, (double) line.size() - 4.0, sr / f);
 
         // Decay: 0.05 s to 20 s, as a loop gain for the waveguide and a pole radius for each mode.
-        seconds = 0.05f * std::pow (400.0f, juce::jlimit (0.0f, 1.0f, s.decay));
+        seconds = 0.05f * std::pow (400.0f, hn::jlimit (0.0f, 1.0f, s.decay));
         loopGain = (float) std::pow (0.001, delaySamples / (seconds * sr));
-        loopGain = juce::jlimit (0.0f, 0.9995f, loopGain);
+        loopGain = hn::jlimit (0.0f, 0.9995f, loopGain);
 
         // Brightness: how much of each pass survives the damping filter in the loop.
-        dampCoef = juce::jlimit (0.0f, 0.98f, 0.9f - 0.85f * juce::jlimit (0.0f, 1.0f, s.bright));
+        dampCoef = hn::jlimit (0.0f, 0.98f, 0.9f - 0.85f * hn::jlimit (0.0f, 1.0f, s.bright));
 
         // Stiffness: a first-order all-pass spreads the upper partials sharp, like a piano string or a bell.
-        const float stiffness = juce::jlimit (0.0f, 1.0f, s.structure);
+        const float stiffness = hn::jlimit (0.0f, 1.0f, s.structure);
         allpassCoef = -0.7f * stiffness;
 
         if (isModal (s.model))
         {
             const auto ratios = ratiosFor (s.model);
-            const float spread = juce::jlimit (0.0f, 1.0f, s.structure);
+            const float spread = hn::jlimit (0.0f, 1.0f, s.structure);
             for (int i = 0; i < NumModes; ++i)
             {
                 // Structure at zero is a harmonic series; turned up, each partial moves to the model's own ratio.
@@ -89,14 +91,14 @@ public:
                 auto& m = modes[(size_t) i];
                 m.on = hz > 20.0f && hz < sr * 0.45;
                 if (! m.on) continue;
-                const float w = juce::MathConstants<float>::twoPi * hz / (float) sr;
+                const float w = hn::MathConstants<float>::twoPi * hz / (float) sr;
                 // Higher partials die away sooner, and brightness decides how much sooner.
-                const float life = seconds * std::pow (1.0f / ratio, 1.6f - 1.2f * juce::jlimit (0.0f, 1.0f, s.bright));
-                m.radius = juce::jlimit (0.0f, 0.99995f, (float) std::exp (-1.0 / juce::jmax (0.001f, life) / sr));
+                const float life = seconds * std::pow (1.0f / ratio, 1.6f - 1.2f * hn::jlimit (0.0f, 1.0f, s.bright));
+                m.radius = hn::jlimit (0.0f, 0.99995f, (float) std::exp (-1.0 / hn::jmax (0.001f, life) / sr));
                 m.cosw = std::cos (w);
                 m.sinw = std::sin (w);
                 // Struck at `position`: a partial with a node there hardly rings at all.
-                m.gain = std::abs (std::sin (juce::MathConstants<float>::pi * ratio * juce::jlimit (0.02f, 0.98f, s.position)))
+                m.gain = std::abs (std::sin (hn::MathConstants<float>::pi * ratio * hn::jlimit (0.02f, 0.98f, s.position)))
                          / (0.6f + 0.9f * (float) i);
             }
         }
@@ -110,15 +112,15 @@ public:
         std::vector<std::pair<float, float>> out;
         const bool modal = isModal (s.model);
         const auto ratios = ratiosFor (s.model);
-        const float spread = juce::jlimit (0.0f, 1.0f, s.structure);
+        const float spread = hn::jlimit (0.0f, 1.0f, s.structure);
         for (int i = 0; i < NumModes; ++i)
         {
             const float harmonic = (float) (i + 1);
             const float ratio = modal ? harmonic + (ratios[(size_t) i] - harmonic) * spread
                                       : harmonic * (1.0f + spread * 0.06f * harmonic);   // a stiff string goes sharp
-            const float node = std::abs (std::sin (juce::MathConstants<float>::pi * ratio * juce::jlimit (0.02f, 0.98f, s.position)));
-            const float tilt = std::pow (1.0f / ratio, 1.4f - 1.1f * juce::jlimit (0.0f, 1.0f, s.bright));
-            out.push_back ({ ratio, juce::jlimit (0.0f, 1.0f, node * tilt) });
+            const float node = std::abs (std::sin (hn::MathConstants<float>::pi * ratio * hn::jlimit (0.02f, 0.98f, s.position)));
+            const float tilt = std::pow (1.0f / ratio, 1.4f - 1.1f * hn::jlimit (0.0f, 1.0f, s.bright));
+            out.push_back ({ ratio, hn::jlimit (0.0f, 1.0f, node * tilt) });
         }
         return out;
     }
@@ -173,7 +175,7 @@ private:
         if (s.model == Tube) fed = -fed;
 
         // Struck at `position`: the input goes in at two points, which cancels the partials with a node there.
-        const double tap = juce::jlimit (0.02, 0.98, (double) s.position) * delaySamples;
+        const double tap = hn::jlimit (0.02, 0.98, (double) s.position) * delaySamples;
         double second = (double) write - tap;
         if (second < 0.0) second += size;
         line[(size_t) write] = fed + in;
@@ -187,7 +189,7 @@ private:
         dcState = out;
         // A short hit puts very little energy into the line; this brings the ringing up to where the rest
         // of the sound sits, and it is held in bounds above.
-        return juce::jlimit (-8.0f, 8.0f, out * 3.0f);
+        return hn::jlimit (-8.0f, 8.0f, out * 3.0f);
     }
 
     // A bank of two-pole resonators: bells, plates and drum heads.
@@ -203,7 +205,7 @@ private:
             m.y1 = y;
             sum += y * m.gain;
         }
-        return juce::jlimit (-8.0f, 8.0f, sum * 0.6f);
+        return hn::jlimit (-8.0f, 8.0f, sum * 0.6f);
     }
 
     double sr = 44100.0, delaySamples = 200.0;

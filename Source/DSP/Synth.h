@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 
+#include "Core.h"
 #include "Wavetables.h"
 #include "Sampler.h"
 #include "Resonator.h"
@@ -13,29 +14,41 @@ namespace ab
 {
 
 enum Warp { WarpOff, WarpSync, WarpBend, WarpMirror, WarpPwm, WarpCrush, WarpFm, NumWarps };
+#if HN_HAS_JUCE
 inline juce::StringArray warpNames() { return { "Off", "Sync", "Bend", "Mirror", "PWM", "Crush", "FM" }; }
+#endif
 
 enum FilterType { FLp12, FLp24, FHp12, FBp, FNotch, FDirty, FComb, FFormant, NumFilterTypes }; // append only
+#if HN_HAS_JUCE
 inline juce::StringArray filterNames() { return { "Low Pass 12", "Low Pass 24", "High Pass", "Band Pass", "Notch", "Dirty LP", "Comb", "Formant" }; }
+#endif
 
 enum SubShape { SubSine, SubTri, SubSquare, SubPunch, NumSubShapes };
+#if HN_HAS_JUCE
 inline juce::StringArray subShapeNames() { return { "Sine", "Triangle", "Square", "Punch" }; }
+#endif
 
 enum LfoShape { LSine, LTri, LSaw, LRamp, LSquare, LSnH, LSmooth, LDrawn, NumLfoShapes };
+#if HN_HAS_JUCE
 inline juce::StringArray lfoShapeNames() { return { "Sine", "Triangle", "Saw Down", "Ramp Up", "Square", "Sample & Hold", "Smooth Random", "Drawn" }; }
+#endif
 
 constexpr int NumLfo = 4;           // LFO 1 and 2 on the modulation page, 3 and 4 as widgets
 constexpr int LfoTableSize = 256;   // a drawn LFO shape, sampled once per cycle (plus a wrap-around point)
 
 enum VoiceMode { ModePoly, ModeMono, ModeLegato, NumModes };
+#if HN_HAS_JUCE
 inline juce::StringArray voiceModeNames() { return { "Poly", "Mono", "Legato" }; }
+#endif
 
 enum ModSrc { SrcNone, SrcLfo1, SrcLfo2, SrcEnv2, SrcVelocity, SrcModWheel, SrcNote, SrcMacro1, SrcMacro2, SrcMacro3, SrcMacro4, SrcRandom,
               SrcLfo3, SrcLfo4, SrcFollow, SrcPressure, SrcSlide, NumSrc }; // append only
+#if HN_HAS_JUCE
 inline juce::StringArray modSrcNames()
 {
     return { "-", "LFO 1", "LFO 2", "Mod Env", "Velocity", "Mod Wheel", "Note", "Macro 1", "Macro 2", "Macro 3", "Macro 4", "Random", "LFO 3", "LFO 4", "Follower", "Pressure", "Slide" };
 }
+#endif
 
 // Append only (saved sessions store indices). Everything from DDistFx on is global: the processor applies it to the effects.
 enum ModDest { DNone, DAPos, DBPos, DAWarp, DBWarp, DALevel, DBLevel, DPitch, DCutoff, DRes, DDrive, DSub, DNoise, DADetune, DBDetune, DPan, DAmp,
@@ -60,6 +73,7 @@ inline bool isGlobalDest (int d)
     if (d == DRackMix || d == DCrushMix || d == DCrushBits || d == DSpeakerMix || d == DMorphX || d == DMorphY) return true;
     return (d >= FirstGlobalDest && d < DSmpLevel) || (d > DSmpLevel && d < DCPos);
 }
+#if HN_HAS_JUCE // names and parameter ids are for the UI and presets; hardware builds leave them out
 inline juce::StringArray modDestNames()
 {
     return { "-", "A Position", "B Position", "A Warp", "B Warp", "A Level", "B Level", "Pitch", "Cutoff", "Resonance",
@@ -90,7 +104,7 @@ inline juce::String modDestParam (int dest)
                                  "cPos", "dPos", "ePos", "fPos", "gPos", "hPos", "cLevel", "dLevel", "eLevel", "fLevel", "gLevel", "hLevel",
                                  "lfo3Rate", "lfo4Rate", "fxMix", "crushMix", "crushBits", "spkMix", "orbitX", "orbitY", "resTune", "resBright", "resDecay", "resMix" };
     static_assert (sizeof (ids) / sizeof (ids[0]) == (size_t) NumDest, "every modulation destination needs its parameter id here");
-    return juce::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
+    return hn::isPositiveAndBelow (dest, (int) (sizeof (ids) / sizeof (ids[0]))) ? juce::String (ids[dest]) : juce::String();
 }
 
 inline int modDestForParam (const juce::String& paramId)
@@ -106,6 +120,7 @@ inline int modDestForParam (const juce::String& paramId)
     const auto it = lookup.find (paramId);
     return it != lookup.end() ? it->second : 0;
 }
+#endif
 
 constexpr int NumModSlots = 8;
 constexpr int MaxUnison = 7;
@@ -114,7 +129,9 @@ constexpr int NumBus = 2; // every source picks a bus: the main one, or the alt 
 // Inside a voice there is a third path: what is sent into the resonator, which then joins one of the buses.
 constexpr int NumVoiceBus = 3;
 constexpr int ResonatorBus = 2;
+#if HN_HAS_JUCE
 inline juce::String oscPrefix (int o) { return juce::String::charToString ((juce::juce_wchar) ('a' + o)); }
+#endif
 constexpr int MaxVoices = 20;   // 16 playable + spares so a stolen/retriggered voice can fade out instead of clicking
 constexpr int PolyLimit = 16;
 constexpr int SubBlock = 16;
@@ -143,11 +160,13 @@ struct LfoSettings
 
 // How a modulation is shaped on its way to the knob, and how quickly it's allowed to move.
 enum ModShape { ShapeLinear, ShapeExp, ShapeLog, ShapeS, ShapeSteps4, ShapeSteps8, ShapeSteps16, NumModShapes };
+#if HN_HAS_JUCE
 inline juce::StringArray modShapeNames() { return { "Linear", "Exponential", "Logarithmic", "S-Curve", "4 Steps", "8 Steps", "16 Steps" }; }
+#endif
 
 inline float shapeMod (int shape, float v)
 {
-    const float sign = v < 0.0f ? -1.0f : 1.0f, a = std::abs (juce::jlimit (-1.0f, 1.0f, v));
+    const float sign = v < 0.0f ? -1.0f : 1.0f, a = std::abs (hn::jlimit (-1.0f, 1.0f, v));
     switch (shape)
     {
         case ShapeExp:  return sign * a * a;
@@ -252,9 +271,9 @@ namespace dsp
 
         void set (const EnvSettings& e, double sr)
         {
-            attInc = (float) (1.0 / juce::jmax (1.0, juce::jmax (0.0015, (double) e.a) * sr)); // 1.5 ms floor: an instant step onto a random phase clicks
-            decCoef = (float) std::exp (-6.9078 / juce::jmax (1.0, e.d * sr));
-            relCoef = (float) std::exp (-6.9078 / juce::jmax (1.0, e.r * sr));
+            attInc = (float) (1.0 / hn::jmax (1.0, hn::jmax (0.0015, (double) e.a) * sr)); // 1.5 ms floor: an instant step onto a random phase clicks
+            decCoef = (float) std::exp (-6.9078 / hn::jmax (1.0, e.d * sr));
+            relCoef = (float) std::exp (-6.9078 / hn::jmax (1.0, e.r * sr));
             sus = e.s;
         }
         void noteOn() { stage = Attack; fast = false; }
@@ -291,20 +310,14 @@ namespace dsp
 
     // Noise flavours. Appended only: saved sessions store the index.
     enum NoiseType { NWhite, NPink, NBrown, NBlue, NCrackle, NHiss, NDigital, NWind, NumNoiseTypes };
+#if HN_HAS_JUCE
     inline juce::StringArray noiseNames()
     {
         return { "White", "Pink", "Brown", "Blue", "Vinyl Crackle", "Tape Hiss", "Digital", "Wind" };
     }
+#endif
 
-    struct Rng
-    {
-        juce::uint32 s = 0x9e3779b9u;
-        inline float next() // -1..1
-        {
-            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-            return (float) s * (2.0f / 4294967295.0f) - 1.0f;
-        }
-    };
+    using Rng = hn::Rng; // xorshift, -1..1 (now in Core.h)
 
     // One noise voice per channel: white through a flavour-specific colouring stage.
     struct NoiseGen
@@ -313,7 +326,7 @@ namespace dsp
         float pink[3] {}, brown = 0, last = 0, held = 0, bp1 = 0, bp2 = 0, crackleEnv = 0, windPhase = 0;
         int holdCount = 0;
 
-        void reset (juce::uint32 seed)
+        void reset (hn::uint32 seed)
         {
             *this = NoiseGen();
             rng.s = seed | 1u;
@@ -330,7 +343,7 @@ namespace dsp
                     pink[2] = 0.57000f * pink[2] + w * 1.0526913f;
                     return (pink[0] + pink[1] + pink[2] + w * 0.1848f) * 0.55f;
                 case NBrown: // leaky integrator: -6 dB/octave rumble
-                    brown = juce::jlimit (-1.0f, 1.0f, brown + w * 0.035f) * 0.999f;
+                    brown = hn::jlimit (-1.0f, 1.0f, brown + w * 0.035f) * 0.999f;
                     return brown * 3.2f;
                 case NBlue: // differentiated white: airy top end
                 {
@@ -350,7 +363,7 @@ namespace dsp
                     bp2 += 0.012f * (bp1 - bp2);
                     windPhase += (float) (0.7 / sr);
                     if (windPhase >= 1.0f) windPhase -= 1.0f;
-                    const float breathe = 0.85f + 0.15f * std::sin (juce::MathConstants<float>::twoPi * windPhase);
+                    const float breathe = 0.85f + 0.15f * std::sin (hn::MathConstants<float>::twoPi * windPhase);
                     return (bp1 - bp2) * 2.6f * breathe;
                 }
                 case NDigital: // sample and hold: gritty, aliased
@@ -362,7 +375,7 @@ namespace dsp
                 {
                     windPhase += (float) (0.13 / sr);
                     if (windPhase >= 1.0f) windPhase -= 1.0f;
-                    const float c = 0.03f + 0.12f * (0.5f + 0.5f * std::sin (juce::MathConstants<float>::twoPi * windPhase));
+                    const float c = 0.03f + 0.12f * (0.5f + 0.5f * std::sin (hn::MathConstants<float>::twoPi * windPhase));
                     bp1 += c * (w - bp1);
                     bp2 += c * 0.25f * (bp1 - bp2);
                     return (bp1 - bp2) * 4.0f;
@@ -379,12 +392,12 @@ namespace dsp
             case LDrawn:
             {
                 if (table == nullptr) return 0.0f;
-                const double x = juce::jlimit (0.0, 1.0, p) * LfoTableSize;
-                const int i = juce::jmin (LfoTableSize - 1, (int) x);
+                const double x = hn::jlimit (0.0, 1.0, p) * LfoTableSize;
+                const int i = hn::jmin (LfoTableSize - 1, (int) x);
                 const float t = (float) (x - i);
                 return table[i] + (table[i + 1] - table[i]) * t;
             }
-            case LSine:   return (float) std::sin (juce::MathConstants<double>::twoPi * p);
+            case LSine:   return (float) std::sin (hn::MathConstants<double>::twoPi * p);
             case LTri:    return (float) (p < 0.25 ? 4.0 * p : (p < 0.75 ? 2.0 - 4.0 * p : 4.0 * p - 4.0));
             case LSaw:    return (float) (1.0 - 2.0 * p);
             case LRamp:   return (float) (2.0 * p - 1.0);
@@ -412,7 +425,7 @@ namespace dsp
             case WarpMirror:
             {
                 const double tri = p < 0.5 ? 2.0 * p : 2.0 - 2.0 * p;
-                return juce::jlimit (0.0, 0.999999, p + amt * (tri - p));
+                return hn::jlimit (0.0, 0.999999, p + amt * (tri - p));
             }
             case WarpPwm:
             {
@@ -440,14 +453,14 @@ struct FrameCursor
 
     void set (const Wavetable& wt, double exactLevel, float pos)
     {
-        const float fp = juce::jlimit (0.0f, 1.0f, pos) * (wtFrames - 1);
-        const int f0 = juce::jmin (wtFrames - 2, (int) fp);
+        const float fp = hn::jlimit (0.0f, 1.0f, pos) * (wtFrames - 1);
+        const int f0 = hn::jmin (wtFrames - 2, (int) fp);
         mix = fp - (float) f0;
-        const int lo = juce::jlimit (0, wtLevels - 1, (int) std::ceil (exactLevel));
-        const int hi = juce::jmin (wtLevels - 1, lo + 1);
+        const int lo = hn::jlimit (0, wtLevels - 1, (int) std::ceil (exactLevel));
+        const int hi = hn::jmin (wtLevels - 1, lo + 1);
         // Only the last quarter-octave before a switch reads both levels; elsewhere one level is enough.
-        const float t = hi == lo ? 0.0f : juce::jlimit (0.0f, 1.0f, (float) (exactLevel - (double) lo + 1.0));
-        levelMix = juce::jlimit (0.0f, 1.0f, (t - 0.75f) * 4.0f);
+        const float t = hi == lo ? 0.0f : hn::jlimit (0.0f, 1.0f, (float) (exactLevel - (double) lo + 1.0));
+        levelMix = hn::jlimit (0.0f, 1.0f, (t - 0.75f) * 4.0f);
         a = wt.frame (f0, lo);  b = wt.frame (f0 + 1, lo);
         a2 = wt.frame (f0, hi); b2 = wt.frame (f0 + 1, hi);
         size = wtLevelSize (lo);  mask = size - 1;
@@ -469,7 +482,7 @@ struct FrameCursor
     inline float readLevel (const float* fa, const float* fb, int sz, int m, double phase) const
     {
         const float p = (float) phase * (float) sz;
-        const int i = juce::jlimit (0, sz - 1, (int) p);
+        const int i = hn::jlimit (0, sz - 1, (int) p);
         const float f = p - (float) i;
         const int im1 = (i - 1) & m, i1 = (i + 1) & m, i2 = (i + 2) & m;
         const float xm1 = fa[im1] + mix * (fb[im1] - fa[im1]);
@@ -501,7 +514,7 @@ public:
     float noteBend = 0;           // semitones, from that channel's pitch bend
     float pressure = 0, slide = 0; // how hard it's pressed and where along the key, 0..1 and -1..1
     float velocity = 0;
-    juce::uint64 age = 0;
+    hn::uint64 age = 0;
     int trigger = -1; // the key that started this voice (chord voices share their root's key)
     bool held = false;
     bool chopping = false, playingOut = false;   // a chopped slice, and one still playing after the key went up
@@ -525,7 +538,7 @@ public:
         combBuf.assign ((size_t) NumVoiceBus * 2 * (size_t) combSize, 0.0f);
         resonator.prepare (sampleRate);
         resonator2.prepare (sampleRate);
-        rng.s = 0x12345u + (juce::uint32) (reinterpret_cast<juce::pointer_sized_uint> (this) & 0xffff) * 2654435761u;
+        rng.s = 0x12345u + (hn::uint32) (reinterpret_cast<hn::pointer_sized_uint> (this) & 0xffff) * 2654435761u;
         reset();
     }
 
@@ -539,7 +552,7 @@ public:
 
     // glideFrom < 0 = start straight on the note.
     // delaySamples > 0 holds the note back (chord strum).
-    void start (int midiNote, float vel, float glideFrom, bool retrigger, const SynthSettings& s, const GlobalMod& g, juce::uint64 stamp,
+    void start (int midiNote, float vel, float glideFrom, bool retrigger, const SynthSettings& s, const GlobalMod& g, hn::uint64 stamp,
                 int delaySamples = 0)
     {
         const bool wasActive = isActive();
@@ -558,8 +571,8 @@ public:
 
         pitchEnv = 1.0f;
         noteRandom = rng.next();
-        noise[0].reset ((juce::uint32) (noteRandom * 1.0e6f) + 0x2545f491u);
-        noise[1].reset ((juce::uint32) (noteRandom * 1.0e6f) + 0x9e3779b1u);
+        noise[0].reset ((hn::uint32) (noteRandom * 1.0e6f) + 0x2545f491u);
+        noise[1].reset ((hn::uint32) (noteRandom * 1.0e6f) + 0x9e3779b1u);
         noteAge = 0;
         if (s.phaseRetrig || ! wasActive)
         {
@@ -616,7 +629,7 @@ public:
     }
     // Hand the note over: this voice fades out in ~4 ms while the new note starts on another voice.
     // Smooth raised-cosine fade (~12 ms): no corner in the waveform, so no click even on a deep sub.
-    void fadeOut() { held = false; fading = true; trigger = -1; fadeLen = fadeLeft = juce::jmax (1, (int) (0.012 * sr)); }
+    void fadeOut() { held = false; fading = true; trigger = -1; fadeLen = fadeLeft = hn::jmax (1, (int) (0.012 * sr)); }
     bool fading = false;
     float pitchNow() const { return currentPitch; }
 
@@ -627,7 +640,7 @@ public:
         if (! isActive()) return;
         if (startDelay > 0)
         {
-            const int skip = juce::jmin (startDelay, numSamples);
+            const int skip = hn::jmin (startDelay, numSamples);
             startDelay -= skip;
             outL += skip; outR += skip; numSamples -= skip;
             if (altL != nullptr) { altL += skip; altR += skip; }
@@ -648,11 +661,11 @@ public:
 
         const auto& bank = WavetableBank::get();
         const double glideCoef = s.glide > 0.0005f ? std::exp (-4.6 * SubBlock / (s.glide * sr)) : 0.0;
-        const float pitchEnvCoef = (float) std::exp (-4.6 * SubBlock / (juce::jmax (0.001f, s.pitchEnvDecay) * sr));
+        const float pitchEnvCoef = (float) std::exp (-4.6 * SubBlock / (hn::jmax (0.001f, s.pitchEnvDecay) * sr));
 
         for (int start = 0; start < numSamples; start += SubBlock)
         {
-            const int n = juce::jmin (SubBlock, numSamples - start);
+            const int n = hn::jmin (SubBlock, numSamples - start);
 
             // ---- control rate ----
             currentPitch = (float) (targetPitch + (currentPitch - targetPitch) * glideCoef);
@@ -661,15 +674,15 @@ public:
             for (int l = 0; l < NumLfo; ++l)
             {
                 const auto& ls = s.lfo[(size_t) l];
-                const float fade = ls.fade > 0.001f ? juce::jmin (1.0f, noteAge / ls.fade) : 1.0f;
+                const float fade = ls.fade > 0.001f ? hn::jmin (1.0f, noteAge / ls.fade) : 1.0f;
                 // "Once" holds on the last point of the shape rather than running into the wrap back to the start.
-                const double ph = ls.once ? juce::jmin ((double) ls.drawnEnd, lfoPhase[l]) : lfoPhase[l];
+                const double ph = ls.once ? hn::jmin ((double) ls.drawnEnd, lfoPhase[l]) : lfoPhase[l];
                 lfoVal[l] = dsp::lfoShape (ls.shape, ph, lfoHeld[l], lfoPrevHeld[l], ls.table) * fade;
                 shownLfo[l] = lfoVal[l];
                 shownModEnv = modEnv.value;
                 shownVelocity = velocity;
                 shownLfoPhase[l] = lfoPhase[l];
-                lfoPhase[l] += ls.rateHz * std::exp2 (juce::jlimit (-1.0f, 1.0f, lfoRateMod[l]) * 3.0f) * n / sr;
+                lfoPhase[l] += ls.rateHz * std::exp2 (hn::jlimit (-1.0f, 1.0f, lfoRateMod[l]) * 3.0f) * n / sr;
                 if (lfoPhase[l] >= 1.0)
                 {
                     // "Once" holds the end of the shape instead of starting again: one pass per note.
@@ -754,17 +767,17 @@ public:
                 const auto& os = s.osc[(size_t) o];
                 auto& r = run[o];
                 if (! os.on) { r.on = false; continue; }
-                const float level = juce::jlimit (0.0f, 1.5f, os.level + dst[levelDest[o]]);
+                const float level = hn::jlimit (0.0f, 1.5f, os.level + dst[levelDest[o]]);
                 r.on = os.on && level > 0.0001f;
                 if (! r.on) continue;
                 r.level = level;
-                const float pos = juce::jlimit (0.0f, 1.0f, os.pos + dst[posDest[o]]);
+                const float pos = hn::jlimit (0.0f, 1.0f, os.pos + dst[posDest[o]]);
                 shownPos[o] = pos;
                 r.warp = os.warp;
-                r.warpAmt = juce::jlimit (0.0f, 1.0f, os.warpAmt + (o < 2 ? dst[o == 0 ? DAWarp : DBWarp] : 0.0f));
+                r.warpAmt = hn::jlimit (0.0f, 1.0f, os.warpAmt + (o < 2 ? dst[o == 0 ? DAWarp : DBWarp] : 0.0f));
                 r.crush = std::exp2 (8.0f - r.warpAmt * 6.0f);
-                r.n = juce::jlimit (1, MaxUnison, os.unison);
-                const float det = juce::jlimit (0.0f, 1.0f, os.detune + (o < 2 ? dst[o == 0 ? DADetune : DBDetune] : 0.0f));
+                r.n = hn::jlimit (1, MaxUnison, os.unison);
+                const float det = hn::jlimit (0.0f, 1.0f, os.detune + (o < 2 ? dst[o == 0 ? DADetune : DBDetune] : 0.0f));
                 const double freq = 440.0 * std::exp2 ((basePitch + os.pitch - 69.0) / 12.0);
                 const float spreadCents = det * 25.0f + det * det * 35.0f;
                 const float maxDetRatio = std::exp2 (spreadCents / 1200.0f);
@@ -778,12 +791,12 @@ public:
                     r.inc[u] = freq * std::exp2 (spread * spreadCents / 1200.0f) / sr;
                     const float gain = 1.0f - std::abs (spread) * (1.0f - os.blend);
                     norm += gain * gain;
-                    const float p = juce::jlimit (-1.0f, 1.0f, spread * os.width + os.pan + dst[DPan]);
-                    const float ang = (p + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+                    const float p = hn::jlimit (-1.0f, 1.0f, spread * os.width + os.pan + dst[DPan]);
+                    const float ang = (p + 1.0f) * hn::MathConstants<float>::pi * 0.25f;
                     r.gl[u] = gain * std::cos (ang) * 1.41421356f;
                     r.gr[u] = gain * std::sin (ang) * 1.41421356f;
                 }
-                const float k = level / std::sqrt (juce::jmax (norm, 1.0e-4f));
+                const float k = level / std::sqrt (hn::jmax (norm, 1.0e-4f));
                 for (int u = 0; u < r.n; ++u) { r.gl[u] *= k; r.gr[u] *= k; }
             }
 
@@ -794,7 +807,7 @@ public:
                 if (run[o].on && run[o].warp == WarpFm)
                 {
                     const int m = o == 0 ? 1 : 0;
-                    run[o].fmScale = run[o].warpAmt * 1.5 * juce::MathConstants<double>::twoPi * (run[m].on ? run[m].inc[0] : 0.0);
+                    run[o].fmScale = run[o].warpAmt * 1.5 * hn::MathConstants<double>::twoPi * (run[m].on ? run[m].inc[0] : 0.0);
                 }
 
             // Cross modulation: the same index scaling as the warp, but on its own knobs so a patch can use
@@ -802,7 +815,7 @@ public:
             const float xFm[2] = { s.xFmBA, s.xFmAB }; // [0] = B modulates A, [1] = A modulates B
             for (int o = 0; o < 2; ++o)
                 run[o].xScale = run[o].on && xFm[o] > 0.0001f
-                                    ? xFm[o] * 1.5 * juce::MathConstants<double>::twoPi * (run[1 - o].on ? run[1 - o].inc[0] : 0.0)
+                                    ? xFm[o] * 1.5 * hn::MathConstants<double>::twoPi * (run[1 - o].on ? run[1 - o].inc[0] : 0.0)
                                     : 0.0;
             // Only the oscillators that are on get visited per sample.
             int active[NumOsc], numActive = 0;
@@ -811,16 +824,16 @@ public:
                                  || run[0].xScale != 0.0 || run[1].xScale != 0.0;
 
             const double subInc = s.subOn ? 440.0 * std::exp2 ((basePitch + 12.0f * s.subOct - 69.0) / 12.0) / sr : 0.0;
-            const float subLevel = s.subOn ? juce::jlimit (0.0f, 1.5f, s.subLevel + dst[DSub]) : 0.0f;
-            const float noiseLevel = juce::jlimit (0.0f, 1.0f, s.noiseLevel + dst[DNoise]);
-            const float noiseCoef = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * (200.0f * std::pow (100.0f, s.noiseTone)) / (float) sr);
+            const float subLevel = s.subOn ? hn::jlimit (0.0f, 1.5f, s.subLevel + dst[DSub]) : 0.0f;
+            const float noiseLevel = hn::jlimit (0.0f, 1.0f, s.noiseLevel + dst[DNoise]);
+            const float noiseCoef = 1.0f - std::exp (-hn::MathConstants<float>::twoPi * (200.0f * std::pow (100.0f, s.noiseTone)) / (float) sr);
 
             // Filter coefficients for this sub-block.
-            const float cutoff = juce::jlimit (20.0f, (float) sr * 0.45f,
+            const float cutoff = hn::jlimit (20.0f, (float) sr * 0.45f,
                 s.cutoff * std::exp2 (s.filterEnv * 6.0f * modEnv.value + s.keytrack * ((float) note - 60.0f) / 12.0f + dst[DCutoff] * 5.0f));
             shownCutoff = cutoff;
-            const float res = juce::jlimit (0.0f, 1.0f, s.res + dst[DRes]);
-            const float gF = std::tan (juce::MathConstants<float>::pi * cutoff / (float) sr);
+            const float res = hn::jlimit (0.0f, 1.0f, s.res + dst[DRes]);
+            const float gF = std::tan (hn::MathConstants<float>::pi * cutoff / (float) sr);
             const bool twoStage = s.filterType == FLp24 || s.filterType == FDirty;
             const float kRes = 2.0f - 1.96f * res;
             for (int b = 0; b < NumVoiceBus; ++b)
@@ -833,7 +846,7 @@ public:
             {
                 // Cutoff sweeps the vowel a > e > i > o > u; resonance narrows the formants.
                 static const float f1[] = { 730, 530, 270, 570, 300 }, f2[] = { 1090, 1840, 2290, 840, 870 };
-                const float v = juce::jlimit (0.0f, 0.999f, std::log2 (cutoff / 20.0f) / std::log2 (1000.0f)) * 4.0f;
+                const float v = hn::jlimit (0.0f, 0.999f, std::log2 (cutoff / 20.0f) / std::log2 (1000.0f)) * 4.0f;
                 const int vi = (int) v;
                 const float vf = v - (float) vi;
                 const float F1 = f1[vi] + (f1[vi + 1] - f1[vi]) * vf, F2 = f2[vi] + (f2[vi + 1] - f2[vi]) * vf;
@@ -841,16 +854,16 @@ public:
                 for (int b = 0; b < NumVoiceBus; ++b)
                     for (int c = 0; c < 2; ++c)
                     {
-                        svf[b][c][0].set (std::tan (juce::MathConstants<float>::pi * F1 / (float) sr), kF);
-                        svf[b][c][1].set (std::tan (juce::MathConstants<float>::pi * F2 / (float) sr), kF);
+                        svf[b][c][0].set (std::tan (hn::MathConstants<float>::pi * F1 / (float) sr), kF);
+                        svf[b][c][1].set (std::tan (hn::MathConstants<float>::pi * F2 / (float) sr), kF);
                     }
             }
-            const float combDelay = juce::jlimit (2.0f, (float) combSize - 2.0f, (float) sr / cutoff);
+            const float combDelay = hn::jlimit (2.0f, (float) combSize - 2.0f, (float) sr / cutoff);
             const float combFb = res * 0.995f;
-            const float drive = juce::jlimit (0.0f, 1.0f, s.filterDrive + dst[DDrive]);
+            const float drive = hn::jlimit (0.0f, 1.0f, s.filterDrive + dst[DDrive]);
             const float driveGain = 1.0f + drive * drive * 15.0f + (s.filterType == FDirty ? 2.0f : 0.0f);
             const float driveNorm = 1.0f / std::sqrt (driveGain);
-            const float ampMod = juce::jlimit (0.0f, 2.0f, 1.0f + dst[DAmp]);
+            const float ampMod = hn::jlimit (0.0f, 2.0f, 1.0f + dst[DAmp]);
             const float velGain = 1.0f - s.velSens + s.velSens * velocity;
 
             // Sampler: pitch follows the voice (glide, bend, drop, drift) unless key tracking is off.
@@ -864,12 +877,12 @@ public:
                 const float notePart = sm.track ? basePitch : basePitch - currentPitch + (float) sm.root;
                 smpInc = chopping ? std::exp2 ((sm.semi + sm.fine * 0.01f) / 12.0) * sm.data->rate / sr
                                   : std::exp2 ((notePart + sm.semi + sm.fine * 0.01f - (float) sm.root) / 12.0) * sm.data->rate / sr;
-                const float lvl = juce::jlimit (0.0f, 1.5f, sm.level + dst[DSmpLevel]);
-                const float p = juce::jlimit (-1.0f, 1.0f, sm.pan + dst[DPan]);
-                const float ang = (p + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+                const float lvl = hn::jlimit (0.0f, 1.5f, sm.level + dst[DSmpLevel]);
+                const float p = hn::jlimit (-1.0f, 1.0f, sm.pan + dst[DPan]);
+                const float ang = (p + 1.0f) * hn::MathConstants<float>::pi * 0.25f;
                 smpGL = lvl * std::cos (ang) * 1.41421356f;
                 smpGR = lvl * std::sin (ang) * 1.41421356f;
-                shownSample = (float) (smpPlay.pos / juce::jmax (1, sm.data->length));
+                shownSample = (float) (smpPlay.pos / hn::jmax (1, sm.data->length));
             }
             else shownSample = -1.0f;
 
@@ -879,9 +892,9 @@ public:
                 auto rs = s.reso;
                 const float noteFor = s.resTrack ? basePitch : 60.0f;
                 rs.freq = 440.0f * std::exp2 ((noteFor + s.resTune + dst[DResTune] * 24.0f - 69.0f) / 12.0f);
-                rs.bright = juce::jlimit (0.0f, 1.0f, rs.bright + dst[DResBright]);
-                rs.decay = juce::jlimit (0.0f, 1.0f, rs.decay + dst[DResDecay]);
-                rs.mix = juce::jlimit (0.0f, 1.0f, rs.mix + dst[DResMix]);
+                rs.bright = hn::jlimit (0.0f, 1.0f, rs.bright + dst[DResBright]);
+                rs.decay = hn::jlimit (0.0f, 1.0f, rs.decay + dst[DResDecay]);
+                rs.mix = hn::jlimit (0.0f, 1.0f, rs.mix + dst[DResMix]);
                 resSettings = rs;
                 resonator.update (resSettings);
             }
@@ -988,8 +1001,8 @@ public:
                             v *= 0.7f;
                             break;
                         }
-                        case SubPunch:  v = std::tanh (2.2f * (float) std::sin (juce::MathConstants<double>::twoPi * subPhase)) * 1.02f; break;
-                        default:        v = (float) std::sin (juce::MathConstants<double>::twoPi * subPhase); break;
+                        case SubPunch:  v = std::tanh (2.2f * (float) std::sin (hn::MathConstants<double>::twoPi * subPhase)) * 1.02f; break;
+                        default:        v = (float) std::sin (hn::MathConstants<double>::twoPi * subPhase); break;
                     }
                     v *= subLevel;
                     if (s.subToFilter) { fL[subBusIdx] += v; fR[subBusIdx] += v; } else { dL[subBusIdx] += v; dR[subBusIdx] += v; }
@@ -1025,7 +1038,7 @@ public:
                 if (crossOn && s.xFltFm > 0.0001f && s.filterOn && s.filterType != FFormant)
                 {
                     // Filter FM: osc A shifts the cutoff at audio rate, which buzzes and growls.
-                    const float g2 = juce::jlimit (0.0005f, 1.4f, gF * (1.0f + s.xFltFm * 3.0f * oscOut[0]));
+                    const float g2 = hn::jlimit (0.0005f, 1.4f, gF * (1.0f + s.xFltFm * 3.0f * oscOut[0]));
                     for (int b = 0; b < NumVoiceBus; ++b)
                         for (int c = 0; c < 2; ++c)
                         {
@@ -1103,7 +1116,7 @@ public:
                 if (fading)
                 {
                     const float t = (float) fadeLeft / (float) fadeLen;
-                    amp *= 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi * t);
+                    amp *= 0.5f - 0.5f * std::cos (hn::MathConstants<float>::pi * t);
                     if (--fadeLeft <= 0) { ampEnv.kill(); modEnv.kill(); fading = false; }
                 }
                 modEnv.tick();
@@ -1123,8 +1136,8 @@ public:
                     const float rr = resonator2.tick ((fR[ResonatorBus] + dR[ResonatorBus]) * amp, resSettings);
                     if (twoBuses && s.resBus == 1) { altL[start + i] += rl; altR[start + i] += rr; }
                     else                           { outL[start + i] += rl; outR[start + i] += rr; }
-                    const float loud = juce::jmax (std::abs (rl), std::abs (rr));
-                    if (loud > 0.0002f) resTail = (int) juce::jmin (8.0 * sr, (double) resSettings.mix * 0 + juce::jmax (0.05f, resonator.ringingSeconds()) * sr);
+                    const float loud = hn::jmax (std::abs (rl), std::abs (rr));
+                    if (loud > 0.0002f) resTail = (int) hn::jmin (8.0 * sr, (double) resSettings.mix * 0 + hn::jmax (0.05f, resonator.ringingSeconds()) * sr);
                     else if (resTail > 0) --resTail;
                 }
             }

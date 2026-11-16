@@ -85,3 +85,19 @@ juce_add_console_app(MakeInstallerArt PRODUCT_NAME "MakeInstallerArt")
 target_sources(MakeInstallerArt PRIVATE Tests/MakeInstallerArt.cpp)
 target_compile_definitions(MakeInstallerArt PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(MakeInstallerArt PRIVATE HypernovaFonts juce::juce_gui_basics PUBLIC juce::juce_recommended_config_flags)
+
+# Hardware port, step 0 (HARDWARE_AUDIT.md): the DSP headers built twice, once with JUCE and once with no JUCE
+# at all (HN_HAS_JUCE=0, Source/DSP/Core.h). Both write the same workout to a file; the files must match bit for bit.
+#   cmake --build build --target DspCoreCheckJuce DspCoreCheckNoJuce
+#   ./build/DspCoreCheckJuce_artefacts/Release/DspCoreCheckJuce juce.bin
+#   ./build/DspCoreCheckNoJuce nojuce.bin
+#   python3 scripts/compare_dsp_core.py juce.bin nojuce.bin
+# Neither links the recommended JUCE flags, so the two differ only in HN_HAS_JUCE.
+add_executable(DspCoreCheckNoJuce Tests/DspCoreCheck.cpp)
+target_compile_definitions(DspCoreCheckNoJuce PRIVATE HN_HAS_JUCE=0)
+target_compile_options(DspCoreCheckNoJuce PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra>)
+
+juce_add_console_app(DspCoreCheckJuce PRODUCT_NAME "DspCoreCheckJuce")
+target_sources(DspCoreCheckJuce PRIVATE Tests/DspCoreCheck.cpp)
+target_compile_definitions(DspCoreCheckJuce PRIVATE HN_HAS_JUCE=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(DspCoreCheckJuce PRIVATE juce::juce_dsp)

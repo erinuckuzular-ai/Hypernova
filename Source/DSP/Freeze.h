@@ -1,7 +1,8 @@
 #pragma once
 
-#include <juce_dsp/juce_dsp.h>
+#include "Core.h"
 #include <array>
+#include <cstring>
 #include <vector>
 
 // Event Horizon: hold a moment of the sound open. The input is taken apart into a spectrum every few
@@ -26,7 +27,7 @@ public:
         output.assign ((size_t) (Size * 2), 0.0f);
         window.assign ((size_t) Size, 0.0f);
         for (int i = 0; i < Size; ++i)
-            window[(size_t) i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) Size);
+            window[(size_t) i] = 0.5f - 0.5f * std::cos (hn::MathConstants<float>::twoPi * (float) i / (float) Size);
         frame.assign ((size_t) Size * 2, 0.0f);
         held.assign ((size_t) Size / 2 + 1, 0.0f);
         smoothed.assign ((size_t) Size / 2 + 1, 0.0f);
@@ -40,7 +41,7 @@ public:
         std::fill (output.begin(), output.end(), 0.0f);
         std::fill (held.begin(), held.end(), 0.0f);
         std::fill (smoothed.begin(), smoothed.end(), 0.0f);
-        for (auto& p : phase) p = rng.nextFloat() * juce::MathConstants<float>::twoPi;
+        for (auto& p : phase) p = rng.nextFloat() * hn::MathConstants<float>::twoPi;
         fill = 0;
         readAt = 0;
         holding = false;
@@ -59,7 +60,7 @@ public:
     void process (float* L, float* R, int n, const Settings& s)
     {
         if (s.mix <= 0.0001f && ! holding && ! s.hold) { passThrough (L, R, n); return; }
-        const float mix = juce::jlimit (0.0f, 1.0f, s.mix);
+        const float mix = hn::jlimit (0.0f, 1.0f, s.mix);
         for (int i = 0; i < n; ++i)
         {
             const float in = 0.5f * (L[i] + R[i]);
@@ -131,7 +132,7 @@ private:
         for (int i = 0; i < Size; ++i) frame[(size_t) i] = input[(size_t) i] * window[(size_t) i];
         fft.performRealOnlyForwardTransform (frame.data(), true);
 
-        const float keep = juce::jlimit (0.0f, 0.995f, 0.3f + 0.69f * juce::jlimit (0.0f, 1.0f, s.blur));
+        const float keep = hn::jlimit (0.0f, 0.995f, 0.3f + 0.69f * hn::jlimit (0.0f, 1.0f, s.blur));
         if (! s.hold)
         {
             // Not holding: keep following the sound, so HOLD catches whatever is there at that moment.
@@ -152,9 +153,9 @@ private:
         // Rebuild a frame from what is held: the same magnitudes every time, with phases that move on, so
         // it sounds like the sound going on rather than a loop.
         std::fill (frame.begin(), frame.end(), 0.0f);
-        const float semis = juce::jlimit (-24.0f, 24.0f, s.shift);
+        const float semis = hn::jlimit (-24.0f, 24.0f, s.shift);
         const float ratio = std::pow (2.0f, semis / 12.0f);
-        const int smear = juce::jlimit (0, 64, (int) (juce::jlimit (0.0f, 1.0f, s.spread) * 40.0f));
+        const int smear = hn::jlimit (0, 64, (int) (hn::jlimit (0.0f, 1.0f, s.spread) * 40.0f));
         for (int b = 1; b < bins - 1; ++b)
         {
             float magnitude = 0;
@@ -185,9 +186,9 @@ private:
             }
             // The phase moves on by what this bin's frequency would do in one hop, with a little wander so
             // it never sounds like a machine.
-            phase[(size_t) b] += juce::MathConstants<float>::twoPi * (float) b * (float) Hop / (float) Size
+            phase[(size_t) b] += hn::MathConstants<float>::twoPi * (float) b * (float) Hop / (float) Size
                                  + (rng.nextFloat() - 0.5f) * 0.4f;
-            if (phase[(size_t) b] > juce::MathConstants<float>::twoPi) phase[(size_t) b] -= juce::MathConstants<float>::twoPi;
+            if (phase[(size_t) b] > hn::MathConstants<float>::twoPi) phase[(size_t) b] -= hn::MathConstants<float>::twoPi;
             frame[(size_t) (b * 2)] = magnitude * std::cos (phase[(size_t) b]);
             frame[(size_t) (b * 2 + 1)] = magnitude * std::sin (phase[(size_t) b]);
         }
@@ -206,7 +207,7 @@ private:
     size_t dryAt = 0, readAt = 0;
     int fill = 0;
     bool holding = false;
-    juce::Random rng { 0x5eed };
+    hn::Random rng { 0x5eed };
 };
 
 } // namespace ab::dsp

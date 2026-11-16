@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "Core.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -14,7 +14,7 @@ namespace ab
 
 struct SampleData
 {
-    juce::String name;
+    hn::Text name;
     double rate = 44100.0;
     int length = 0;                  // frames
     std::vector<float> l, r;         // length + 4 frames: guard samples for interpolation at both ends
@@ -47,12 +47,14 @@ struct Slices
 {
     int edges = 0;                                   // 0 or 2..MaxSlices+1
     std::array<float, MaxSlices + 1> at {};
-    int count() const { return juce::jmax (0, edges - 1); }
+    int count() const { return hn::jmax (0, edges - 1); }
     bool any() const { return edges >= 2; }
 };
 
 enum SampleLoop { LoopOff, LoopForward, LoopPingPong, NumLoopModes };
+#if HN_HAS_JUCE
 inline juce::StringArray sampleLoopNames() { return { "No loop", "Loop", "Ping-pong" }; }
+#endif
 
 // Grains: instead of one playhead, a cloud of short windowed reads. Each one starts somewhere near POSITION,
 // lasts SIZE, and is scattered by SPRAY (where) and PITCH (how fast), so a recording becomes a texture.
@@ -113,12 +115,12 @@ namespace dsp
             const double len = (double) s.data->length;
             if (s.chop && s.slices.any() && slice >= 0 && slice + 1 < s.slices.edges)
             {
-                a = juce::jlimit (0.0, len - 8.0, (double) s.slices.at[(size_t) slice] * len);
-                b = juce::jlimit (a + 8.0, len, (double) s.slices.at[(size_t) slice + 1] * len);
+                a = hn::jlimit (0.0, len - 8.0, (double) s.slices.at[(size_t) slice] * len);
+                b = hn::jlimit (a + 8.0, len, (double) s.slices.at[(size_t) slice + 1] * len);
                 return;
             }
-            a = juce::jlimit (0.0, len - 8.0, (double) juce::jmin (s.start, s.end) * len);
-            b = juce::jlimit (a + 8.0, len, (double) juce::jmax (s.start, s.end) * len);
+            a = hn::jlimit (0.0, len - 8.0, (double) hn::jmin (s.start, s.end) * len);
+            b = hn::jlimit (a + 8.0, len, (double) hn::jmax (s.start, s.end) * len);
         }
 
         // Adds one frame (already scaled by gainL/gainR) and advances by `inc` frames.
@@ -132,8 +134,8 @@ namespace dsp
             double la = a, lb = b;
             if (looping)
             {
-                la = juce::jlimit (a, b - 8.0, a + (double) juce::jmin (s.loopStart, s.loopEnd) * (b - a));
-                lb = juce::jlimit (la + 8.0, b, a + (double) juce::jmax (s.loopStart, s.loopEnd) * (b - a));
+                la = hn::jlimit (a, b - 8.0, a + (double) hn::jmin (s.loopStart, s.loopEnd) * (b - a));
+                lb = hn::jlimit (la + 8.0, b, a + (double) hn::jmax (s.loopStart, s.loopEnd) * (b - a));
             }
 
             float L, R;
@@ -141,7 +143,7 @@ namespace dsp
             // Forward loops crossfade into the loop start over the last few ms so the seam doesn't click.
             if (looping && s.loop == LoopForward && dir > 0)
             {
-                const double xf = juce::jmin (0.012 * d.rate, (lb - la) * 0.5, la);
+                const double xf = hn::jmin (0.012 * d.rate, (lb - la) * 0.5, la);
                 if (xf > 4.0 && pos > lb - xf)
                 {
                     const float t = (float) ((pos - (lb - xf)) / xf);
@@ -156,7 +158,7 @@ namespace dsp
             {
                 const double left = dir > 0 ? b - pos : pos - a;
                 const double fade = 0.003 * d.rate;
-                if (left < fade) { const float g = (float) juce::jmax (0.0, left / fade); L *= g; R *= g; }
+                if (left < fade) { const float g = (float) hn::jmax (0.0, left / fade); L *= g; R *= g; }
             }
             outL += L * gainL;
             outR += R * gainR;
@@ -175,7 +177,7 @@ namespace dsp
                     else if (dir < 0 && pos < la) { pos = la + (la - pos); dir = 1; }
                 }
                 // The loop was moved while playing: bring the playhead back inside.
-                if (pos < a || pos >= b) pos = juce::jlimit (la, lb - 1.0, pos);
+                if (pos < a || pos >= b) pos = hn::jlimit (la, lb - 1.0, pos);
             }
             else if (pos >= b || pos < a) done = true;
         }
@@ -214,25 +216,25 @@ namespace dsp
             // Start another grain when its turn comes round.
             if (--next <= 0)
             {
-                const double every = sr / juce::jlimit (0.5f, 200.0f, gs.rate);
-                next = juce::jmax (1, (int) every);
+                const double every = sr / hn::jlimit (0.5f, 200.0f, gs.rate);
+                next = hn::jmax (1, (int) every);
                 for (auto& g : grains)
                 {
                     if (g.on) continue;
-                    const double centre = juce::jlimit (0.0, 1.0, (double) gs.position + walked);
+                    const double centre = hn::jlimit (0.0, 1.0, (double) gs.position + walked);
                     const double spray = (double) gs.spray * (rng.nextDouble() * 2.0 - 1.0);
-                    const double at = juce::jlimit (0.0, 0.999, centre + spray) * len;
+                    const double at = hn::jlimit (0.0, 0.999, centre + spray) * len;
                     const double semis = gs.pitchSpread * (float) (rng.nextDouble() * 2.0 - 1.0);
                     g.on = true;
-                    g.length = juce::jmax (16, (int) (juce::jlimit (0.002f, 2.0f, gs.size) * sr));
+                    g.length = hn::jmax (16, (int) (hn::jlimit (0.002f, 2.0f, gs.size) * sr));
                     g.left = g.length;
                     g.inc = speed * std::pow (2.0, semis / 12.0);
-                    const bool back = rng.nextFloat() < juce::jlimit (0.0f, 1.0f, gs.reverse);
+                    const bool back = rng.nextFloat() < hn::jlimit (0.0f, 1.0f, gs.reverse);
                     if (back) g.inc = -g.inc;
-                    g.pos = juce::jlimit (4.0, len - 4.0, back ? at + g.length * std::abs (g.inc) : at);
+                    g.pos = hn::jlimit (4.0, len - 4.0, back ? at + g.length * std::abs (g.inc) : at);
                     // A little of the stereo field per grain, so a cloud isn't a single point.
                     const float pan = (float) (rng.nextDouble() * 2.0 - 1.0) * 0.35f;
-                    const float ang = (pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f;
+                    const float ang = (pan + 1.0f) * hn::MathConstants<float>::pi * 0.25f;
                     g.gainL = std::cos (ang) * 1.41421356f;
                     g.gainR = std::sin (ang) * 1.41421356f;
                     break;
@@ -248,7 +250,7 @@ namespace dsp
                 if (! g.on) continue;
                 // A raised-cosine window, so every grain fades in and out instead of clicking.
                 const float t = 1.0f - (float) g.left / (float) g.length;
-                const float w = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * t);
+                const float w = 0.5f - 0.5f * std::cos (hn::MathConstants<float>::twoPi * t);
                 float L = 0, R = 0;
                 d.read (g.pos, L, R);
                 outL += L * w * g.gainL * gainL;
@@ -261,7 +263,7 @@ namespace dsp
         std::array<Grain, MaxGrains> grains {};
         int next = 0;
         double walked = 0;
-        juce::Random rng { 0x9e3779b9 };
+        hn::Random rng { 0x9e3779b9 };
     };
 
     // Where a recording's hits are: the loudness rises sharply, then doesn't rise again for a moment. Used
@@ -270,8 +272,8 @@ namespace dsp
     {
         std::vector<float> out { 0.0f };
         const int n = (int) mono.size();
-        const int hop = juce::jmax (64, (int) (0.005 * rate));       // 5 ms steps
-        const int window = juce::jmax (hop, (int) (0.02 * rate));    // 20 ms of sound per step
+        const int hop = hn::jmax (64, (int) (0.005 * rate));       // 5 ms steps
+        const int window = hn::jmax (hop, (int) (0.02 * rate));    // 20 ms of sound per step
         if (n < window * 4 || maxCount < 2) return out;
 
         std::vector<float> energy;
@@ -287,7 +289,7 @@ namespace dsp
 
         // How much louder each step is than the one before it: a hit is a peak in that.
         std::vector<float> rise ((size_t) steps, 0.0f);
-        for (int i = 1; i < steps; ++i) rise[(size_t) i] = juce::jmax (0.0f, energy[(size_t) i] - energy[(size_t) i - 1]);
+        for (int i = 1; i < steps; ++i) rise[(size_t) i] = hn::jmax (0.0f, energy[(size_t) i] - energy[(size_t) i - 1]);
         double mean = 0;
         for (float v : rise) mean += v;
         mean /= steps;
@@ -295,19 +297,19 @@ namespace dsp
         for (float v : rise) spread += (v - mean) * (v - mean);
         spread = std::sqrt (spread / steps);
         float loudest = 0;
-        for (float v : rise) loudest = juce::jmax (loudest, v);
+        for (float v : rise) loudest = hn::jmax (loudest, v);
         if (loudest < 1.0e-6f) return out;
-        const float threshold = juce::jmax ((float) (mean + 1.2 * spread), loudest * 0.15f);
+        const float threshold = hn::jmax ((float) (mean + 1.2 * spread), loudest * 0.15f);
 
-        const int neighbourhood = juce::jmax (2, (int) (0.02 * rate / hop));   // the peak of its own 40 ms
-        const int apart = juce::jmax (neighbourhood, (int) (0.06 * rate / hop)); // no two hits within 60 ms
+        const int neighbourhood = hn::jmax (2, (int) (0.02 * rate / hop));   // the peak of its own 40 ms
+        const int apart = hn::jmax (neighbourhood, (int) (0.06 * rate / hop)); // no two hits within 60 ms
         std::vector<std::pair<float, int>> hits;
         int last = -apart;
         for (int i = 1; i < steps; ++i)
         {
             if (rise[(size_t) i] < threshold || i - last < apart) continue;
             bool peak = true;
-            for (int k = juce::jmax (0, i - neighbourhood); k <= juce::jmin (steps - 1, i + neighbourhood); ++k)
+            for (int k = hn::jmax (0, i - neighbourhood); k <= hn::jmin (steps - 1, i + neighbourhood); ++k)
                 if (rise[(size_t) k] > rise[(size_t) i]) { peak = false; break; }
             if (! peak) continue;
             hits.push_back ({ rise[(size_t) i], i });
@@ -330,8 +332,8 @@ namespace dsp
     inline float detectPitch (const std::vector<float>& mono, double rate, int from)
     {
         const int n = (int) mono.size();
-        const int win = juce::jmin ((int) (0.12 * rate), n - from - 1);
-        const int minLag = (int) (rate / 1500.0), maxLag = juce::jmin ((int) (rate / 30.0), win / 2);
+        const int win = hn::jmin ((int) (0.12 * rate), n - from - 1);
+        const int minLag = (int) (rate / 1500.0), maxLag = hn::jmin ((int) (rate / 30.0), win / 2);
         if (win < 512 || maxLag <= minLag + 2) return -1.0f;
         const float* x = mono.data() + from;
         std::vector<double> nsdf ((size_t) maxLag + 1, 0.0);
@@ -347,7 +349,7 @@ namespace dsp
         }
         // McLeod: the first peak that gets within 90% of the highest one.
         double best = 0;
-        for (int lag = minLag; lag <= maxLag; ++lag) best = juce::jmax (best, nsdf[(size_t) lag]);
+        for (int lag = minLag; lag <= maxLag; ++lag) best = hn::jmax (best, nsdf[(size_t) lag]);
         if (best < 0.8) return -1.0f;
         for (int lag = minLag + 1; lag < maxLag; ++lag)
         {
@@ -357,7 +359,7 @@ namespace dsp
                 // Parabolic interpolation around the peak.
                 const double a = nsdf[(size_t) lag - 1], c = nsdf[(size_t) lag + 1];
                 const double denom = a - 2.0 * v + c; // negative at a peak
-                const double shift = std::abs (denom) > 1.0e-12 ? juce::jlimit (-1.0, 1.0, 0.5 * (a - c) / denom) : 0.0;
+                const double shift = std::abs (denom) > 1.0e-12 ? hn::jlimit (-1.0, 1.0, 0.5 * (a - c) / denom) : 0.0;
                 const double hz = rate / ((double) lag + shift);
                 return (float) (69.0 + 12.0 * std::log2 (hz / 440.0));
             }

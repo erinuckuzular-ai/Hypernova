@@ -1,6 +1,9 @@
 #pragma once
 
-#include <juce_dsp/juce_dsp.h>
+#include "Core.h"
+#include <array>
+#include <cmath>
+#include <vector>
 
 // The second half of the effect rack: movement (flanger, gate, auto-pan, swept filter), character
 // (tape and vinyl wear), and pitch shifting. Each one costs nothing while its mix or depth is zero.
@@ -8,11 +11,13 @@ namespace ab::dsp
 {
 
 // Tempo-synced rates, matching the delay's list so the UI reads the same everywhere.
+#if HN_HAS_JUCE
 inline juce::StringArray syncRateNames() { return { "1 bar", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32" }; }
+#endif
 inline double syncRateBeats (int i)
 {
     static const double beats[] = { 4.0, 2.0, 1.0, 2.0 / 3.0, 0.5, 1.0 / 3.0, 0.25, 1.0 / 6.0, 0.125 };
-    return beats[juce::jlimit (0, 8, i)];
+    return beats[hn::jlimit (0, 8, i)];
 }
 
 //==============================================================================
@@ -33,7 +38,7 @@ public:
     void process (float* L, float* R, int n, float rateHz, float depth, float feedback, float mix)
     {
         const int size = (int) line[0].size();
-        const float fb = juce::jlimit (-0.95f, 0.95f, feedback);
+        const float fb = hn::jlimit (-0.95f, 0.95f, feedback);
         const double inc = rateHz / sr;
         for (int i = 0; i < n; ++i)
         {
@@ -44,7 +49,7 @@ public:
             {
                 // The two channels sweep a quarter cycle apart, which widens the sound.
                 const double p = phase + (c == 0 ? 0.0 : 0.25);
-                const float lfo = 0.5f + 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * (p - std::floor (p)));
+                const float lfo = 0.5f + 0.5f * (float) std::sin (hn::MathConstants<double>::twoPi * (p - std::floor (p)));
                 const float delaySamples = (float) (sr * (0.0005 + 0.006 * depth * lfo)) + 1.0f;
                 float rp = (float) write - delaySamples;
                 if (rp < 0) rp += (float) size;
@@ -92,8 +97,8 @@ public:
             flutterPhase += flutInc;
             if (wowPhase >= 1.0) wowPhase -= 1.0;
             if (flutterPhase >= 1.0) flutterPhase -= 1.0;
-            const float wow = (float) std::sin (juce::MathConstants<double>::twoPi * wowPhase);
-            const float flutter = (float) std::sin (juce::MathConstants<double>::twoPi * flutterPhase);
+            const float wow = (float) std::sin (hn::MathConstants<double>::twoPi * wowPhase);
+            const float flutter = (float) std::sin (hn::MathConstants<double>::twoPi * flutterPhase);
             const float offset = (float) (sr * 0.012) + (float) (sr * 0.008) * wobble * (wow + 0.35f * flutter);
 
             // Surface noise: steady hiss plus the occasional crackle.
@@ -128,7 +133,7 @@ private:
     std::vector<float> line[2];
     int write = 0;
     float crackle = 0;
-    juce::uint32 rngState = 0x1234567u;
+    hn::uint32 rngState = 0x1234567u;
 };
 
 //==============================================================================
@@ -136,11 +141,13 @@ private:
 class GateAndPan
 {
 public:
+#if HN_HAS_JUCE
     static juce::StringArray patternNames() { return { "Steady", "Off-beat", "Gallop", "Sixteenths", "Triplet feel" }; }
-    static juce::uint16 patternMask (int pattern)
+#endif
+    static hn::uint16 patternMask (int pattern)
     {
-        static const juce::uint16 patterns[] = { 0xFFFF, 0xAAAA, 0xCCDD, 0xFFFF, 0xDB6D };
-        return patterns[juce::jlimit (0, 4, pattern)];
+        static const hn::uint16 patterns[] = { 0xFFFF, 0xAAAA, 0xCCDD, 0xFFFF, 0xDB6D };
+        return patterns[hn::jlimit (0, 4, pattern)];
     }
 
     void prepare (double sampleRate) { sr = sampleRate; env = 1.0f; panPhase = 0; }
@@ -149,9 +156,9 @@ public:
                   float gateDepth, int gateRate, int pattern, float shape,
                   float panDepth, int panRate)
     {
-        static const juce::uint16 patterns[] = { 0xFFFF, 0xAAAA, 0xCCDD, 0xFFFF, 0xDB6D };
-        const juce::uint16 mask = patterns[juce::jlimit (0, 4, pattern)];
-        const double beatsPerSample = juce::jmax (20.0, bpm) / 60.0 / sr;
+        static const hn::uint16 patterns[] = { 0xFFFF, 0xAAAA, 0xCCDD, 0xFFFF, 0xDB6D };
+        const hn::uint16 mask = patterns[hn::jlimit (0, 4, pattern)];
+        const double beatsPerSample = hn::jmax (20.0, bpm) / 60.0 / sr;
         const double gateBeats = syncRateBeats (gateRate), panBeats = syncRateBeats (panRate);
         const float smooth = 1.0f - std::exp (-1.0f / ((0.0004f + 0.02f * shape) * (float) sr));
 
@@ -172,10 +179,10 @@ public:
             if (panDepth > 0.0001f)
             {
                 const double p = beats / (panBeats * 2.0);
-                const float lfo = (float) std::sin (juce::MathConstants<double>::twoPi * (p - std::floor (p)));
+                const float lfo = (float) std::sin (hn::MathConstants<double>::twoPi * (p - std::floor (p)));
                 const float pan = lfo * panDepth;
-                L[i] *= 1.0f - juce::jmax (0.0f, pan);
-                R[i] *= 1.0f + juce::jmin (0.0f, pan);
+                L[i] *= 1.0f - hn::jmax (0.0f, pan);
+                R[i] *= 1.0f + hn::jmin (0.0f, pan);
             }
         }
         if (! playing) freeBeats += n * beatsPerSample;
@@ -194,7 +201,9 @@ class FxFilter
 {
 public:
     enum Type { Low, High, Band, NumTypes };
+#if HN_HAS_JUCE
     static juce::StringArray typeNames() { return { "Low Pass", "High Pass", "Band Pass" }; }
+#endif
 
     void prepare (double sampleRate)
     {
@@ -206,9 +215,9 @@ public:
 
     void process (float* L, float* R, int n, int type, float freq, float res, float depth, int rate, double ppqStart, double bpm, bool playing)
     {
-        const double beatsPerSample = juce::jmax (20.0, bpm) / 60.0 / sr;
+        const double beatsPerSample = hn::jmax (20.0, bpm) / 60.0 / sr;
         const double lfoBeats = syncRateBeats (rate) * 2.0;
-        const float k = 2.0f - 1.9f * juce::jlimit (0.0f, 1.0f, res);
+        const float k = 2.0f - 1.9f * hn::jlimit (0.0f, 1.0f, res);
         for (int i = 0; i < n; ++i)
         {
             float f = freq;
@@ -216,10 +225,10 @@ public:
             {
                 const double beats = (playing ? ppqStart : freeBeats) + i * beatsPerSample;
                 const double p = beats / lfoBeats;
-                const float lfo = (float) std::sin (juce::MathConstants<double>::twoPi * (p - std::floor (p)));
+                const float lfo = (float) std::sin (hn::MathConstants<double>::twoPi * (p - std::floor (p)));
                 f *= std::exp2 (lfo * depth * 3.0f);
             }
-            const float g = std::tan (juce::MathConstants<float>::pi * juce::jlimit (20.0f, (float) sr * 0.45f, f) / (float) sr);
+            const float g = std::tan (hn::MathConstants<float>::pi * hn::jlimit (20.0f, (float) sr * 0.45f, f) / (float) sr);
             for (int c = 0; c < 2; ++c)
             {
                 float* x = c == 0 ? &L[i] : &R[i];
@@ -250,12 +259,14 @@ class Speaker
 {
 public:
     enum Type { Phone, Laptop, Car, Boombox, Club, NumTypes };
+#if HN_HAS_JUCE
     static juce::StringArray typeNames() { return { "Phone", "Laptop", "Car", "Boombox", "Club" }; }
+#endif
 
     struct Voicing { float hp, lp, bumpHz, bumpDb, bumpQ, grit; };
     static Voicing voicingFor (int type)
     {
-        switch (juce::jlimit (0, NumTypes - 1, type))
+        switch (hn::jlimit (0, NumTypes - 1, type))
         {
             case Phone:   return { 520.0f, 4200.0f, 1900.0f, 7.0f, 1.3f, 0.35f };
             case Laptop:  return { 320.0f, 8000.0f, 3000.0f, 5.0f, 1.0f, 0.2f };
@@ -282,7 +293,7 @@ public:
             for (int c = 0; c < 2; ++c)
             {
                 filters[(size_t) (c * 3)].setHighPass (sr, v.hp, 0.707f);
-                filters[(size_t) (c * 3 + 1)].setLowPass (sr, juce::jmin ((float) sr * 0.45f, v.lp), 0.707f);
+                filters[(size_t) (c * 3 + 1)].setLowPass (sr, hn::jmin ((float) sr * 0.45f, v.lp), 0.707f);
                 filters[(size_t) (c * 3 + 2)].setPeak (sr, v.bumpHz, v.bumpQ, v.bumpDb);
             }
         }
@@ -318,20 +329,20 @@ private:
         }
         void setHighPass (double sr, double f, double q)
         {
-            const double w = juce::MathConstants<double>::twoPi * juce::jlimit (10.0, sr * 0.45, f) / sr;
+            const double w = hn::MathConstants<double>::twoPi * hn::jlimit (10.0, sr * 0.45, f) / sr;
             const double c = std::cos (w), s = std::sin (w), al = s / (2.0 * q);
             setFrom ((1 + c) / 2, -(1 + c), (1 + c) / 2, 1 + al, -2 * c, 1 - al);
         }
         void setLowPass (double sr, double f, double q)
         {
-            const double w = juce::MathConstants<double>::twoPi * juce::jlimit (10.0, sr * 0.45, f) / sr;
+            const double w = hn::MathConstants<double>::twoPi * hn::jlimit (10.0, sr * 0.45, f) / sr;
             const double c = std::cos (w), s = std::sin (w), al = s / (2.0 * q);
             setFrom ((1 - c) / 2, 1 - c, (1 - c) / 2, 1 + al, -2 * c, 1 - al);
         }
         void setPeak (double sr, double f, double q, double db)
         {
             const double A = std::pow (10.0, db / 40.0);
-            const double w = juce::MathConstants<double>::twoPi * juce::jlimit (10.0, sr * 0.45, f) / sr;
+            const double w = hn::MathConstants<double>::twoPi * hn::jlimit (10.0, sr * 0.45, f) / sr;
             const double c = std::cos (w), s = std::sin (w), al = s / (2.0 * q);
             setFrom (1 + al * A, -2 * c, 1 - al * A, 1 + al / A, -2 * c, 1 - al / A);
         }

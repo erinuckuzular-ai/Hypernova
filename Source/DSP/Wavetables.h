@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_dsp/juce_dsp.h>
+#include "Core.h"
 #include <array>
 #include <cmath>
 #include <complex>
@@ -18,12 +18,12 @@ constexpr int wtBaseSize = 2048;
 constexpr int wtLevels = 10;         // level l keeps harmonics 1..(512 >> l)
 constexpr int wtMaxHarmonics = 512;
 
-inline int wtLevelSize (int level)     { return juce::jmax (256, wtBaseSize >> level); }
+inline int wtLevelSize (int level)     { return hn::jmax (256, wtBaseSize >> level); }
 inline int wtLevelHarmonics (int level) { return wtMaxHarmonics >> level; }
 
 struct Wavetable
 {
-    juce::String name, blurb;
+    hn::Text name, blurb;
     std::vector<float> data;                    // every frame at every level, each with one guard sample
     std::array<size_t, wtLevels> levelOffset {}; // start of level l inside a frame block
     size_t frameStride = 0;
@@ -41,20 +41,27 @@ enum TableId
 class WavetableBank
 {
 public:
+#if HN_HAS_JUCE
     static const WavetableBank& get()
     {
         static WavetableBank bank;
         return bank;
     }
+#else
+    // Hardware builds can't build tables (that needs an FFT and seconds of work). They will be generated on the
+    // desktop and shipped as data, which defines this; until then it is only declared.
+    static const WavetableBank& get();
+#endif
 
-    const Wavetable& table (int i) const { return tables[(size_t) juce::jlimit (0, NumTables - 1, i)]; }
+    const Wavetable& table (int i) const { return tables[(size_t) hn::jlimit (0, NumTables - 1, i)]; }
 
+#if HN_HAS_JUCE
     // Builds a table from an audio file's samples: 32 single cycles taken evenly across the file, each
     // resampled to one cycle. Works for wavetable files (2048-sample cycles) and for any other audio.
     static Wavetable fromAudio (const juce::String& name, const float* samples, int numSamples, int cycleLength = 0)
     {
         Plans plans = makePlans();
-        const int cycle = cycleLength > 0 ? cycleLength : juce::jmax (2, juce::jmin (wtBaseSize, numSamples / wtFrames));
+        const int cycle = cycleLength > 0 ? cycleLength : hn::jmax (2, hn::jmin (wtBaseSize, numSamples / wtFrames));
         return buildFrames (name, "imported wavetable", plans, [&] (int f, float* dst)
         {
             const double start = numSamples <= cycle ? 0.0
@@ -65,8 +72,8 @@ public:
                 const double x = start + (double) i / wtBaseSize * cycle;
                 const int i0 = (int) x;
                 const double fr = x - i0;
-                const float a = samples[juce::jlimit (0, numSamples - 1, i0)];
-                const float b = samples[juce::jlimit (0, numSamples - 1, i0 + 1)];
+                const float a = samples[hn::jlimit (0, numSamples - 1, i0)];
+                const float b = samples[hn::jlimit (0, numSamples - 1, i0 + 1)];
                 dst[i] = (float) (a + (b - a) * fr);
             }
         });
@@ -76,29 +83,31 @@ public:
     {
         return { "Analog", "Sync Saw", "Pulse", "808 Body", "Log Drum", "Growl", "Vowel", "Digital", "Fold", "Harmonic", "Metal", "Scream", "Rich Sine", "Glass", "Air" };
     }
+#endif
 
     // Smallest mip level whose harmonics all stay under the limit at this frequency.
     static int levelFor (double freq, double sampleRate)
     {
-        return juce::jlimit (0, wtLevels - 1, (int) std::ceil (exactLevel (freq, sampleRate)));
+        return hn::jlimit (0, wtLevels - 1, (int) std::ceil (exactLevel (freq, sampleRate)));
     }
 
     // Continuous level: harmonics up to `limit` Hz. When running oversampled there's room above 20 kHz
     // (the downsampler removes it), so tables can stay full-bright right up the keyboard.
     static double exactLevel (double freq, double sampleRate)
     {
-        const double limit = sampleRate > 60000.0 ? juce::jmin (0.45 * sampleRate, 36000.0) : juce::jmin (0.45 * sampleRate, 19500.0);
-        const double h = limit / juce::jmax (1.0, freq);
+        const double limit = sampleRate > 60000.0 ? hn::jmin (0.45 * sampleRate, 36000.0) : hn::jmin (0.45 * sampleRate, 19500.0);
+        const double h = limit / hn::jmax (1.0, freq);
         if (h >= wtMaxHarmonics) return 0.0;
         if (h < 1.0) return (double) (wtLevels - 1);
-        return juce::jlimit (0.0, (double) (wtLevels - 1), std::log2 ((double) wtMaxHarmonics / h));
+        return hn::jlimit (0.0, (double) (wtLevels - 1), std::log2 ((double) wtMaxHarmonics / h));
     }
 
 private:
-    using Gen = std::function<double (double t, double x)>;
-    static constexpr double twoPi = juce::MathConstants<double>::twoPi;
-
     std::vector<Wavetable> tables;
+
+#if HN_HAS_JUCE // the table builder: desktop only
+    using Gen = std::function<double (double t, double x)>;
+    static constexpr double twoPi = hn::MathConstants<double>::twoPi;
 
     WavetableBank()
     {
@@ -169,7 +178,7 @@ private:
             static const double f1[] = { 730, 530, 270, 570, 300 };
             static const double f2[] = { 1090, 1840, 2290, 840, 870 };
             const double s = t * 4.0;
-            const int i = juce::jmin (3, (int) s);
+            const int i = hn::jmin (3, (int) s);
             const double fr = s - i;
             const double F1 = f1[i] + (f1[i + 1] - f1[i]) * fr, F2 = f2[i] + (f2[i + 1] - f2[i]) * fr;
             double v = 0.0;
@@ -193,7 +202,7 @@ private:
         gens[TFold] = [] (double t, double x)
         {
             const double g = 1.0 + t * 5.0;
-            return std::sin (g * std::sin (twoPi * x) * juce::MathConstants<double>::halfPi);
+            return std::sin (g * std::sin (twoPi * x) * hn::MathConstants<double>::halfPi);
         };
         blurbs[TFold] = "wavefolder, buzzy and bright";
 
@@ -216,7 +225,7 @@ private:
         {
             const double g = 1.0 + t * 8.0;
             const double r = 1.0 + t * 1.5;
-            return juce::jlimit (-1.0, 1.0, g * saw (frac (x * r)) * (1.0 - 0.4 * x));
+            return hn::jlimit (-1.0, 1.0, g * saw (frac (x * r)) * (1.0 - 0.4 * x));
         };
         blurbs[TScream] = "clipped sync saw, trap lead";
 
@@ -249,7 +258,7 @@ private:
             static const auto table = []
             {
                 std::array<std::pair<double, double>, 96> hp {};
-                juce::Random r (1984);
+                hn::Random r (1984);
                 for (auto& e : hp) e = { 0.5 + 0.5 * r.nextDouble(), r.nextDouble() * twoPi };
                 return hp;
             }();
@@ -350,7 +359,7 @@ private:
                 {
                     float peak = 0.0f;
                     for (int i = 0; i < size; ++i)
-                        peak = juce::jmax (peak, std::abs (dst[i]));
+                        peak = hn::jmax (peak, std::abs (dst[i]));
                     gain = peak > 1.0e-6f ? 1.0f / peak : 1.0f;
                 }
                 for (int i = 0; i < size; ++i)
@@ -370,6 +379,7 @@ private:
         inv.perform (s.data(), out.data(), true);
         return out[0].real() != 0.0f ? 1.0f / out[0].real() : 1.0f;
     }
+#endif
 };
 
 } // namespace ab
