@@ -88,7 +88,7 @@ namespace
             d.push_back (hn::jmin (x, 0.5, -0.5));
             d.push_back ((double) hn::jlimit (-1.0f, 1.0f, (float) x));
             d.push_back ((double) hn::isPositiveAndBelow (x, 1.0));
-            d.push_back ((double) hn::isPositiveAndBelow ((int) hn::jlimit (-5.0, 5.0, x), 3));
+            if (! std::isnan (x)) d.push_back ((double) hn::isPositiveAndBelow ((int) hn::jlimit (-5.0, 5.0, x), 3)); // NaN to int is undefined
             d.push_back (hn::decibelsToGain (x * 40.0));
         }
         d.push_back (hn::MathConstants<double>::pi);

@@ -18,6 +18,7 @@
  #include <cstdint>
  #include <limits>
  #include <string>
+ #include <type_traits>
 #endif
 
 #include <cmath>
@@ -86,7 +87,7 @@ using uint16 = unsigned short;
 using uint32 = unsigned int;
 using uint64 = unsigned long long;
 using int64  = long long;
-using pointer_sized_uint = std::uintptr_t;
+using pointer_sized_uint = std::conditional_t<sizeof (void*) == 8, unsigned long long, unsigned int>;
 
 // juce::Random's 48-bit linear congruential generator, reproduced exactly (juce_Random.cpp), so seeded
 // randomness (grain scatter, freeze phases) matches the plug-in sample for sample.
@@ -94,7 +95,8 @@ class Random
 {
 public:
     explicit Random (int64 seedValue) noexcept : seed (seedValue) {}
-    Random() noexcept : seed (1) {}
+    // No default constructor: juce::Random's seeds itself from the clock, which can't be reproduced. Seed it.
+    Random() = delete;
 
     void setSeed (int64 newSeed) noexcept { seed = newSeed; }
 

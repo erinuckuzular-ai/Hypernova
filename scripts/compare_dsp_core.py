@@ -29,6 +29,9 @@ def main():
     order_a, a = read_sections(sys.argv[1])
     order_b, b = read_sections(sys.argv[2])
     bad = 0
+    if not order_a or not order_b:
+        print("no sections: did a check binary fail to run?")
+        return 1
     if order_a != order_b:
         print("section lists differ:", sorted(set(order_a) ^ set(order_b)))
         bad += 1
@@ -41,6 +44,9 @@ def main():
             diff = sum(1 for x, y in zip(a[name], b[name]) if x != y) + abs(len(a[name]) - len(b[name]))
             print(f"MISMATCH {name}: {diff} of {len(a[name])} bytes differ")
             bad += 1
+    if len(order_a) < 70:
+        print(f"only {len(order_a)} sections (expected 76): output looks truncated")
+        bad += 1
     print(f"{len(order_a)} sections, {total:,} bytes compared: " + ("all identical" if bad == 0 else f"{bad} differ"))
     return 0 if bad == 0 else 1
 
